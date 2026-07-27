@@ -7,6 +7,7 @@ import {
 import {
   Bot, Check, ChevronLeft, CircleDollarSign, Download, FilePlus2, Image, LayoutDashboard,
   LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
+  Upload,
 } from 'lucide-react'
 import { api, session, User } from './api'
 
@@ -46,10 +47,45 @@ function makeDraft(baseVersion: number, name: string, nodes: CanvasNode[], edges
     }),
   }
 }
+function parseDraft(value: unknown): CanvasDraft | null {
+  if (!value || typeof value !== 'object') return null
+  const draft = value as Record<string, unknown>
+  if (!Number.isInteger(draft.baseVersion) || typeof draft.name !== 'string' || draft.name.length > 80 || !Array.isArray(draft.nodes) || draft.nodes.length > 1000 || !Array.isArray(draft.edges) || draft.edges.length > 2000) return null
+  const kinds = new Set<CanvasData['kind']>(['note', 'text', 'ai', 'image'])
+  const nodes: CanvasNode[] = []
+  for (const value of draft.nodes) {
+    if (!value || typeof value !== 'object') return null
+    const node = value as Record<string, unknown>
+    const position = node.position as Record<string, unknown> | undefined
+    const data = node.data as Record<string, unknown> | undefined
+    if (typeof node.id !== 'string' || !node.id || node.id.length > 200 || !position || typeof position.x !== 'number' || !Number.isFinite(position.x) || typeof position.y !== 'number' || !Number.isFinite(position.y) || !data || !kinds.has(data.kind as CanvasData['kind'])) return null
+    const textFields = ['title', 'content', 'prompt', 'imageUrl'] as const
+    if (textFields.some((field) => data[field] !== undefined && typeof data[field] !== 'string')) return null
+    nodes.push({
+      id: node.id,
+      type: 'canvasNode',
+      position: { x: position.x, y: position.y },
+      data: { kind: data.kind as CanvasData['kind'], ...Object.fromEntries(textFields.filter((field) => typeof data[field] === 'string').map((field) => [field, data[field]])) },
+    })
+  }
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  if (nodeIds.size !== nodes.length) return null
+  const edges: Edge[] = []
+  const edgeIds = new Set<string>()
+  for (const value of draft.edges) {
+    if (!value || typeof value !== 'object') return null
+    const edge = value as Record<string, unknown>
+    if (typeof edge.id !== 'string' || !edge.id || edge.id.length > 200 || typeof edge.source !== 'string' || typeof edge.target !== 'string' || !nodeIds.has(edge.source) || !nodeIds.has(edge.target)) return null
+    if (edgeIds.has(edge.id)) return null
+    if ((edge.sourceHandle !== undefined && edge.sourceHandle !== null && typeof edge.sourceHandle !== 'string') || (edge.targetHandle !== undefined && edge.targetHandle !== null && typeof edge.targetHandle !== 'string')) return null
+    edges.push({ id: edge.id, source: edge.source, target: edge.target, type: 'smoothstep', sourceHandle: edge.sourceHandle as string | null | undefined, targetHandle: edge.targetHandle as string | null | undefined })
+    edgeIds.add(edge.id)
+  }
+  return { baseVersion: draft.baseVersion as number, name: draft.name, nodes, edges }
+}
 function readDraft(userId: string, canvasId: string): CanvasDraft | null {
   try {
-    const draft = JSON.parse(localStorage.getItem(draftKey(userId, canvasId)) || 'null')
-    return draft && Number.isInteger(draft.baseVersion) && typeof draft.name === 'string' && Array.isArray(draft.nodes) && Array.isArray(draft.edges) ? draft : null
+    return parseDraft(JSON.parse(localStorage.getItem(draftKey(userId, canvasId)) || 'null'))
   } catch { return null }
 }
 async function aiRequestKey(canvasId: string, nodeId: string, prompt: string) {
@@ -317,6 +353,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [notice, setNotice] = useState<Notice>(null)
   const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | null>(null)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
+  const importInput = useRef<HTMLInputElement>(null)
   const aiInFlight = useRef(0)
   const aiNodesInFlight = useRef(new Set<string>())
   const resolvedAIKeys = useRef(new Map<string, number>())
@@ -602,6 +639,36 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     link.click()
     URL.revokeObjectURL(url)
   }, [current, edges, nodes])
+  const importDraft = useCallback(async (file: File) => {
+    const canvasId = activeCanvasId.current
+    if (!current || !canvasId) return
+    if (aiInFlight.current > 0) { setNotice({ type: 'error', text: '请等待 AI 生成完成后再导入草稿' }); return }
+    if (file.size > 10 * 1024 * 1024) { setNotice({ type: 'error', text: '草稿文件不能超过 10MB' }); return }
+    let draft: CanvasDraft | null = null
+    try { draft = parseDraft(JSON.parse(await file.text())) } catch {}
+    if (!draft) { setNotice({ type: 'error', text: '草稿文件格式无效或内容已损坏' }); return }
+    if (!window.confirm(`导入将覆盖当前画布“${current.name}”的内容，确认继续吗？`)) return
+    try {
+      const result = await api<{ canvas: CanvasInfo }>(`/canvases/${canvasId}`)
+      if (activeCanvasId.current !== canvasId || deletedCanvasIds.current.has(canvasId)) return
+      ++openRequest.current
+      serverVersion.current = result.canvas.version
+      revision.current += 1
+      persistedRevision.current = Math.min(persistedRevision.current, revision.current - 1)
+      setCurrent((item) => item?.id === canvasId ? { ...item, name: draft.name.trim() || '未命名画布', version: result.canvas.version } : item)
+      setNodes(draft.nodes)
+      setEdges(draft.edges)
+      setBlockedReason(null)
+      setSaveState('dirty')
+      setNotice({ type: 'ok', text: '草稿已导入，正在保存' })
+      window.setTimeout(() => flow.current?.fitView({ padding: 0.25 }), 30)
+    } catch (err) { setNotice({ type: 'error', text: (err as Error).message }) }
+  }, [current, setEdges, setNodes])
+  const chooseDraft = useCallback(() => {
+    if (!current) return
+    if (blockedReason === 'session') { setNotice({ type: 'error', text: '请重新登录后再导入草稿' }); return }
+    importInput.current?.click()
+  }, [blockedReason, current])
   const discardDraft = useCallback(() => {
     if (!current || !window.confirm('确定放弃本地草稿并加载服务器版本吗？此操作无法撤销。')) return
     localStorage.removeItem(draftKey(user.id, current.id))
@@ -624,8 +691,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     </aside>
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell">
-      {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : null}</div></div>}
-      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict'} onClick={() => void flush()}><Save size={18} /></button></div></header>
+      {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason !== 'session' && <button className="icon-button" title="导入草稿" onClick={chooseDraft}><Upload size={17} /></button>}{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : null}</div></div>}
+      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="导入草稿" disabled={!current || blockedReason === 'session'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict'} onClick={() => void flush()}><Save size={18} /></button></div></header>
+      <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importDraft(file) }} />
       {current ? <div className="flow-wrap">
         <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#c9cdd3" />
