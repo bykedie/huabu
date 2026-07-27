@@ -183,12 +183,12 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
   .sidebar-backdrop { position: fixed; display: block; z-index: 14; inset: 0; border: 0; background: rgba(22,27,30,.26); }
   .topbar { padding: 0 8px; }
   .canvas-name { width: min(220px, 36vw); }
-  .save-state { display: none; }
+  .save-state.saved { display: none; }
 }
 @media (max-width: 520px) {
   .auth-panel h1 { font-size: 27px; }
   .top-actions { gap: 2px; }
-  .top-actions > .icon-button:last-child { display: none; }
+  .top-actions .import-button { display: none; }
   .points-button { padding: 0 8px; }
   .canvas-name { width: 120px; }
   .tool-rail { top: auto; left: 50%; bottom: 14px; transform: translateX(-50%); flex-direction: row; }

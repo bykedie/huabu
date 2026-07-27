@@ -9,7 +9,7 @@ import {
   LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
   Upload,
 } from 'lucide-react'
-import { api, session, User } from './api'
+import { api, ApiError, session, User } from './api'
 
 type CanvasData = {
   kind: 'note' | 'text' | 'ai' | 'image'
@@ -351,7 +351,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [sidebar, setSidebar] = useState(false)
   const [creatingCanvas, setCreatingCanvas] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
-  const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | null>(null)
+  const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | 'deleted' | null>(null)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
   const aiInFlight = useRef(0)
@@ -450,7 +450,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       } catch (err) {
         if (activeCanvasId.current === canvas.id) {
           setSaveState('error')
-          if ((err as Error).message.includes('其他页面更新')) setBlockedReason('conflict')
+          if (err instanceof ApiError && err.status === 404) {
+            updateCanvases((items) => items.filter((item) => item.id !== canvas.id))
+            setBlockedReason('deleted')
+          } else if ((err as Error).message.includes('其他页面更新')) setBlockedReason('conflict')
           setNotice({ type: 'error', text: (err as Error).message })
         }
         return false
@@ -462,6 +465,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   saveRef.current = save
   const flush = useCallback(async () => {
     if (blockedReason === 'session' || blockedReason === 'conflict') return false
+    if (blockedReason === 'deleted') return true
     const canvasId = activeCanvasId.current
     if (canvasId && deletedCanvasIds.current.has(canvasId)) return true
     while (canvasId && activeCanvasId.current === canvasId && persistedRevision.current < revision.current) {
@@ -539,6 +543,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       setNodes([first])
       setEdges([])
       setSaveState('dirty')
+      setBlockedReason(null)
     } catch (err) {
       setNotice({ type: 'error', text: (err as Error).message })
     } finally {
@@ -577,7 +582,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     }
   }
   useEffect(() => {
-    if (saveState !== 'dirty' || !current || blockedReason === 'session' || blockedReason === 'conflict') return
+    if (saveState !== 'dirty' || !current || blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted') return
     const timer = window.setTimeout(() => void save(), 900)
     return () => window.clearTimeout(timer)
   }, [blockedReason, current, edges, nodes, save, saveState])
@@ -674,6 +679,22 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     localStorage.removeItem(draftKey(user.id, current.id))
     window.location.reload()
   }, [current, user.id])
+  const abandonDeletedCanvas = useCallback(() => {
+    if (!current || !window.confirm('确定放弃这张已删除画布的本地草稿吗？请先下载需要保留的内容。')) return
+    const canvasId = current.id
+    localStorage.removeItem(draftKey(user.id, canvasId))
+    const remaining = updateCanvases((items) => items.filter((item) => item.id !== canvasId))
+    ++openRequest.current
+    activeCanvasId.current = null
+    revision.current = 0
+    persistedRevision.current = 0
+    setCurrent(null)
+    setNodes([])
+    setEdges([])
+    setSaveState('saved')
+    setBlockedReason(null)
+    if (remaining[0]) void openCanvas(remaining[0].id)
+  }, [current, openCanvas, setEdges, setNodes, updateCanvases, user.id])
   useEffect(() => session.onClear(() => {
     if (persistedRevision.current >= revision.current && aiInFlight.current === 0) setUser(null)
     else {
@@ -691,8 +712,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     </aside>
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell">
-      {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason !== 'session' && <button className="icon-button" title="导入草稿" onClick={chooseDraft}><Upload size={17} /></button>}{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : null}</div></div>}
-      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="导入草稿" disabled={!current || blockedReason === 'session'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict'} onClick={() => void flush()}><Save size={18} /></button></div></header>
+      {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : blockedReason === 'deleted' ? '这张画布已在其他页面删除，本地草稿尚未丢失。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason !== 'session' && blockedReason !== 'deleted' && <button className="icon-button" title="导入草稿" onClick={chooseDraft}><Upload size={17} /></button>}{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : blockedReason === 'deleted' ? <button className="secondary" onClick={abandonDeletedCanvas}>放弃本地草稿</button> : null}</div></div>}
+      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button import-button" title="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button></div></header>
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importDraft(file) }} />
       {current ? <div className="flow-wrap">
         <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>

@@ -1,4 +1,10 @@
 export type User = { id: string; email: string; name: string; role: 'admin' | 'user'; balance: number }
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
 
 const tokenKey = 'ink-canvas-token'
 const sessionEvents = new EventTarget()
@@ -27,7 +33,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     if (response.status === 401) {
       session.clear()
     }
-    throw new Error(data.error || '请求失败，请稍后重试')
+    throw new ApiError(data.error || '请求失败，请稍后重试', response.status)
   }
   return data as T
 }
