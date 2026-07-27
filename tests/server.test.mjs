@@ -9,6 +9,10 @@ process.env.DB_PATH = join(temp, 'test.db')
 process.env.JWT_SECRET = 'test-secret-at-least-32-characters'
 process.env.WELCOME_POINTS = '100'
 process.env.TOPUP_INSTRUCTIONS = '测试收款方式'
+process.env.MAX_CANVASES_PER_USER = '3'
+process.env.MAX_CANVAS_BYTES = '2048'
+process.env.MAX_USER_STORAGE_BYTES = '3072'
+process.env.REGISTRATION_RATE_LIMIT = '100'
 process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
@@ -48,6 +52,34 @@ test('health check verifies SQLite read and write access', async () => {
   assert.equal(health.status, 200)
   assert.deepEqual(health.body, { ok: true })
   assert.equal(Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value), before)
+})
+
+test('canvas count and storage quotas are enforced server-side', async () => {
+  const member = await register('配额用户', 'quota@example.com')
+  const create = () => request('/canvases', { token: member.token, method: 'POST', body: JSON.stringify({ name: '配额测试' }) })
+  const first = await create()
+  const second = await create()
+  const third = await create()
+  assert.equal(first.status, 201)
+  assert.equal(second.status, 201)
+  assert.equal(third.status, 201)
+  assert.equal((await create()).status, 413)
+
+  const document = (content) => ({ nodes: [{ id: 'n', position: { x: 0, y: 0 }, data: { kind: 'text', content } }], edges: [] })
+  const oversized = await request(`/canvases/${first.body.canvas.id}`, {
+    token: member.token, method: 'PUT', body: JSON.stringify({ name: '过大画布', version: 0, document: document('x'.repeat(3000)) }),
+  })
+  assert.equal(oversized.status, 413)
+  const saved = await request(`/canvases/${first.body.canvas.id}`, {
+    token: member.token, method: 'PUT', body: JSON.stringify({ name: '画布一', version: 0, document: document('x'.repeat(1400)) }),
+  })
+  assert.equal(saved.status, 200)
+  const overAccountQuota = await request(`/canvases/${second.body.canvas.id}`, {
+    token: member.token, method: 'PUT', body: JSON.stringify({ name: '画布二', version: 0, document: document('x'.repeat(1600)) }),
+  })
+  assert.equal(overAccountQuota.status, 413)
+  assert.equal((await request(`/canvases/${second.body.canvas.id}`, { token: member.token })).body.canvas.version, 0)
+  db.prepare("UPDATE users SET role='user' WHERE id=?").run(member.user.id)
 })
 
 test('paid canvas workflow preserves ownership and wallet invariants', async () => {

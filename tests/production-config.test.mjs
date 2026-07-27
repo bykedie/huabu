@@ -50,6 +50,10 @@ test('production refuses unsafe secrets and invalid billing settings', () => {
   assert.notEqual(invalidBilling.status, 0)
   assert.match(invalidBilling.stderr, /CENTS_PER_POINT/)
 
+  const invalidStorage = runApp({ MAX_CANVAS_BYTES: '2048', MAX_USER_STORAGE_BYTES: '1024' })
+  assert.notEqual(invalidStorage.status, 0)
+  assert.match(invalidStorage.stderr, /MAX_USER_STORAGE_BYTES/)
+
   const excessiveAiTimeout = runApp({ AI_TIMEOUT_MS: '120001' })
   assert.notEqual(excessiveAiTimeout.status, 0)
   assert.match(excessiveAiTimeout.stderr, /AI_TIMEOUT_MS/)

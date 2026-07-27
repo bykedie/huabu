@@ -29,6 +29,7 @@ npm.cmd run dev
 开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
 
 生产示例默认 `WELCOME_POINTS=0`。站点尚未接入邮箱验证时不建议赠送注册积分，否则用户可通过批量注册重复领取。
+服务端默认限制每个账号 100 张画布、单画布 2 MiB、账号总画布数据 20 MiB，并限制同一来源 IP 每 15 分钟成功注册 5 次。可按服务器磁盘和业务套餐调整 `.env` 中的 `MAX_CANVASES_PER_USER`、`MAX_CANVAS_BYTES`、`MAX_USER_STORAGE_BYTES` 和 `REGISTRATION_RATE_LIMIT`；不要只依赖前端限制。
 
 ## 对接中转站
 

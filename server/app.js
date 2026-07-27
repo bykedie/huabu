@@ -36,6 +36,10 @@ const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 12000
 export const aiPendingRecoveryMs = numberSetting('AI_PENDING_RECOVERY_MS', aiTimeout + 60000, { min: aiTimeout + 10000, max: 3600000, integer: true })
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
+const maxCanvasesPerUser = numberSetting('MAX_CANVASES_PER_USER', 100, { min: 1, max: 10000, integer: true })
+const maxCanvasBytes = numberSetting('MAX_CANVAS_BYTES', 2 * 1024 * 1024, { min: 1024, max: 10 * 1024 * 1024, integer: true })
+const maxUserStorageBytes = numberSetting('MAX_USER_STORAGE_BYTES', 20 * 1024 * 1024, { min: maxCanvasBytes, max: 1024 * 1024 * 1024, integer: true })
+const registrationRateLimit = numberSetting('REGISTRATION_RATE_LIMIT', 5, { min: 1, max: 1000, integer: true })
 const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
 const allowedModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
 if (!allowedModels.length) throw new Error('AI_MODELS 至少需要一个模型')
@@ -58,6 +62,7 @@ const limiter = (limit, options = {}) => rateLimit({
 })
 app.use('/api', limiter(300))
 app.use('/api/auth', limiter(15, { skipSuccessfulRequests: true }))
+app.use('/api/auth/register', limiter(registrationRateLimit))
 app.use('/api/redeem', limiter(20))
 app.use('/api/ai', limiter(40))
 app.use('/api', express.json({ limit: '12mb' }))
@@ -186,7 +191,11 @@ app.post('/api/canvases', auth, (req, res, next) => {
   try {
     const { name } = parse(z.object({ name: z.string().trim().min(1).max(80).default('未命名画布') }), req.body)
     const canvas = { id: randomUUID(), name }
-    db.prepare('INSERT INTO canvases (id,user_id,name) VALUES (?,?,?)').run(canvas.id, req.auth.sub, name)
+    transaction(() => {
+      const count = Number(db.prepare('SELECT COUNT(*) count FROM canvases WHERE user_id=?').get(req.auth.sub).count)
+      if (count >= maxCanvasesPerUser) throw fail(413, `画布数量已达上限（${maxCanvasesPerUser} 张）`)
+      db.prepare('INSERT INTO canvases (id,user_id,name) VALUES (?,?,?)').run(canvas.id, req.auth.sub, name)
+    })
     res.status(201).json({ canvas: { ...canvas, version: 0, document: { nodes: [], edges: [] } } })
   } catch (error) { next(error) }
 })
@@ -202,13 +211,18 @@ app.put('/api/canvases/:id', auth, (req, res, next) => {
       version: z.number().int().min(0),
       document: z.object({ nodes: z.array(z.unknown()).max(1000), edges: z.array(z.unknown()).max(2000) }),
     }), req.body)
-    const result = db.prepare('UPDATE canvases SET name=?,document=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND version=?')
-      .run(body.name, JSON.stringify(body.document), req.params.id, req.auth.sub, body.version)
-    if (!result.changes) {
-      const exists = db.prepare('SELECT version FROM canvases WHERE id=? AND user_id=?').get(req.params.id, req.auth.sub)
-      if (!exists) throw fail(404, '画布不存在')
-      throw fail(409, '画布已在其他页面更新，本地草稿已保留')
-    }
+    const document = JSON.stringify(body.document)
+    const documentBytes = Buffer.byteLength(document)
+    if (documentBytes > maxCanvasBytes) throw fail(413, `单张画布不能超过 ${Math.floor(maxCanvasBytes / 1024)} KiB`)
+    transaction(() => {
+      const existing = db.prepare('SELECT version FROM canvases WHERE id=? AND user_id=?').get(req.params.id, req.auth.sub)
+      if (!existing) throw fail(404, '画布不存在')
+      if (Number(existing.version) !== body.version) throw fail(409, '画布已在其他页面更新，本地草稿已保留')
+      const usedBytes = Number(db.prepare('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) bytes FROM canvases WHERE user_id=? AND id<>?').get(req.auth.sub, req.params.id).bytes)
+      if (usedBytes + documentBytes > maxUserStorageBytes) throw fail(413, `账户画布存储已达上限（${Math.floor(maxUserStorageBytes / 1024 / 1024)} MiB）`)
+      db.prepare('UPDATE canvases SET name=?,document=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND version=?')
+        .run(body.name, document, req.params.id, req.auth.sub, body.version)
+    })
     res.json({ ok: true, version: body.version + 1 })
   } catch (error) { next(error) }
 })
