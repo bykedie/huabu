@@ -30,6 +30,13 @@ function runApp(env = {}, script = "await import('./server/app.js')", databaseDi
   }
 }
 
+function runDatabaseCheck(databasePath) {
+  return spawnSync(process.execPath, ['server/check-db.js', databasePath], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+}
+
 test('production refuses unsafe secrets and invalid billing settings', () => {
   const weakJwt = runApp({ JWT_SECRET: 'change-me' })
   assert.notEqual(weakJwt.status, 0)
@@ -90,6 +97,41 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.ok(migrated.canvasColumns.includes('version'))
     assert.deepEqual(migrated.canvas, { id: 'legacy-canvas', version: 0 })
     assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
+  } finally {
+    rmSync(databaseDirectory, { recursive: true, force: true })
+  }
+})
+
+test('database restore checker accepts only a complete, consistent canvas database', () => {
+  const databaseDirectory = mkdtempSync(join(tmpdir(), 'ink-production-restore-'))
+  const databasePath = join(databaseDirectory, 'valid.db')
+  try {
+    const initialized = runApp({ DB_PATH: databasePath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
+    assert.equal(initialized.status, 0, initialized.stderr)
+    assert.equal(runDatabaseCheck(databasePath).status, 0)
+
+    const unrelatedPath = join(databaseDirectory, 'unrelated.db')
+    const unrelated = new DatabaseSync(unrelatedPath)
+    unrelated.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY)')
+    unrelated.close()
+    const unrelatedCheck = runDatabaseCheck(unrelatedPath)
+    assert.notEqual(unrelatedCheck.status, 0)
+    assert.match(unrelatedCheck.stderr, /users/)
+
+    const missingColumnPath = join(databaseDirectory, 'missing-column.db')
+    const missingColumn = new DatabaseSync(missingColumnPath)
+    missingColumn.exec("CREATE TABLE users (id TEXT PRIMARY KEY)")
+    missingColumn.close()
+    const missingColumnCheck = runDatabaseCheck(missingColumnPath)
+    assert.notEqual(missingColumnCheck.status, 0)
+    assert.match(missingColumnCheck.stderr, /users/)
+
+    const invalidForeignKey = new DatabaseSync(databasePath)
+    invalidForeignKey.exec("PRAGMA foreign_keys=OFF; INSERT INTO canvases (id,user_id,name) VALUES ('orphan','missing-user','orphan')")
+    invalidForeignKey.close()
+    const foreignKeyCheck = runDatabaseCheck(databasePath)
+    assert.notEqual(foreignKeyCheck.status, 0)
+    assert.match(foreignKeyCheck.stderr, /外键/)
   } finally {
     rmSync(databaseDirectory, { recursive: true, force: true })
   }
