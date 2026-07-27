@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 );
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1), ai_base_url TEXT, ai_api_key_encrypted TEXT,
-  ai_models TEXT, updated_by TEXT REFERENCES users(id), updated_at TEXT
+  ai_models TEXT, ai_image_base_url TEXT, ai_image_api_key_encrypted TEXT, ai_image_models TEXT,
+  updated_by TEXT REFERENCES users(id), updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS generations (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
@@ -67,6 +68,10 @@ BEGIN SELECT RAISE(ABORT, 'admin audit records are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS admin_audit_no_delete BEFORE DELETE ON admin_audit
 BEGIN SELECT RAISE(ABORT, 'admin audit records are immutable'); END;
 `)
+const settingsColumns = db.prepare('PRAGMA table_info(app_settings)').all()
+if (!settingsColumns.some((column) => column.name === 'ai_image_base_url')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_base_url TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_image_api_key_encrypted')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_api_key_encrypted TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_image_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_models TEXT')
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {
   db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')

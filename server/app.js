@@ -82,20 +82,16 @@ const decryptSetting = (value) => {
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
 }
-const relaySettings = () => {
-  const row = db.prepare('SELECT ai_base_url,ai_api_key_encrypted,ai_models FROM app_settings WHERE id=1').get()
+const relaySettings = (kind = 'text') => {
+  const row = db.prepare('SELECT * FROM app_settings WHERE id=1').get()
+  const image = kind === 'image'
+  const encrypted = image ? row?.ai_image_api_key_encrypted : row?.ai_api_key_encrypted
   let storedKey = ''
-  if (row?.ai_api_key_encrypted) {
-    try { storedKey = decryptSetting(row.ai_api_key_encrypted) }
-    catch { throw fail(500, '已保存的中转站密钥无法解密，请管理员重新设置') }
-  }
-  const models = row?.ai_models ? JSON.parse(row.ai_models) : envModels
-  return {
-    baseUrl: (row?.ai_base_url || process.env.AI_BASE_URL || '').replace(/\/+$/, ''),
-    apiKey: storedKey || process.env.AI_API_KEY || '',
-    models,
-    source: row?.ai_base_url || row?.ai_api_key_encrypted || row?.ai_models ? 'database' : 'environment',
-  }
+  if (encrypted) { try { storedKey = decryptSetting(encrypted) } catch { throw fail(500, '已保存的中转站密钥无法解密，请管理员重新设置') } }
+  const baseUrl = image ? (row?.ai_image_base_url || process.env.AI_IMAGE_BASE_URL || '') : (row?.ai_base_url || process.env.AI_BASE_URL || '')
+  const envKey = image ? process.env.AI_IMAGE_API_KEY : process.env.AI_API_KEY
+  const models = image ? (row?.ai_image_models ? JSON.parse(row.ai_image_models) : (process.env.AI_IMAGE_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean)) : (row?.ai_models ? JSON.parse(row.ai_models) : envModels)
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey: storedKey || envKey || '', models, source: baseUrl || encrypted || (image ? process.env.AI_IMAGE_MODELS : process.env.AI_MODELS) ? (row?.ai_image_base_url || row?.ai_image_api_key_encrypted || row?.ai_image_models || row?.ai_base_url || row?.ai_api_key_encrypted || row?.ai_models ? 'database' : 'environment') : 'environment' }
 }
 const hashCode = (code) => createHash('sha256').update(code.trim().toUpperCase()).digest('hex')
 const publicUser = (row) => ({ id: row.id, email: row.email, name: row.name, role: row.role, balance: Number(row.balance) })
@@ -460,7 +456,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
   let generation
   try {
     const body = parse(z.object({ requestKey: z.string().min(8).max(100), model: z.string().min(1).max(100).optional(), prompt: z.string().trim().min(1).max(10000), size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024') }), req.body)
-    const relay = relaySettings()
+    const relay = relaySettings('image')
     const model = body.model || relay.models.find((item) => /image|dall|画图|生图/i.test(item)) || relay.models[relay.models.length - 1]
     if (!relay.models.includes(model)) throw fail(400, '该模型未开放')
     const requestHash = createHash('sha256').update(JSON.stringify({ ...body, model })).digest('hex')
@@ -502,6 +498,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
 
 app.get('/api/admin/overview', auth, admin, (_req, res) => {
   const relay = relaySettings()
+  const imageRelay = relaySettings('image')
   const stats = {
     users: Number(db.prepare('SELECT COUNT(*) n FROM users').get().n),
     canvases: Number(db.prepare('SELECT COUNT(*) n FROM canvases').get().n),
@@ -527,6 +524,7 @@ app.get('/api/admin/overview', auth, admin, (_req, res) => {
       inputRate,
       outputRate,
     },
+    image: { configured: Boolean(imageRelay.baseUrl && imageRelay.apiKey), keyConfigured: Boolean(imageRelay.apiKey), baseUrl: imageRelay.baseUrl, models: imageRelay.models, source: imageRelay.source },
   })
 })
 app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
@@ -562,6 +560,17 @@ app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
     })
     const relay = relaySettings()
     res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source })
+  } catch (error) { next(error) }
+})
+app.put('/api/admin/image-config', auth, admin, (req, res, next) => {
+  try {
+    const body = parse(z.object({ baseUrl: z.string().trim().max(2000), apiKey: z.string().trim().max(4000).optional(), clearApiKey: z.boolean().default(false), models: z.array(z.string().trim().min(1).max(100)).min(1).max(50) }), req.body)
+    if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
+    let base = body.baseUrl.replace(/\/+$/, '')
+    if (base) { let url; try { url = new URL(base) } catch { throw fail(400, '生图中转站地址无效') }; if (!['http:', 'https:'].includes(url.protocol) || (isProduction && url.protocol !== 'https:')) throw fail(400, '生图中转站地址必须使用 HTTPS'); base = url.toString().replace(/\/+$/, '') }
+    const before = relaySettings('image'); const encrypted = body.apiKey ? encryptSetting(body.apiKey) : null; const models = [...new Set(body.models)]
+    transaction(() => { db.prepare(`UPDATE app_settings SET ai_image_base_url=?, ai_image_api_key_encrypted=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE ai_image_api_key_encrypted END, ai_image_models=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(base || null, body.clearApiKey ? 1 : 0, encrypted, encrypted, JSON.stringify(models), req.auth.sub); auditAdmin(req.auth.sub, 'image_config.update', null, { baseUrlChanged: before.baseUrl !== base, keyChanged: Boolean(body.apiKey || body.clearApiKey), modelsChanged: JSON.stringify(before.models) !== JSON.stringify(models) }) })
+    const relay = relaySettings('image'); res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source })
   } catch (error) { next(error) }
 })
 app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {

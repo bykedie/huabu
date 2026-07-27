@@ -24,7 +24,7 @@ try {
     redemptions: ['code_id', 'user_id'],
     topup_orders: ['id', 'user_id', 'amount_cents', 'points', 'status', 'proof'],
     ...(!allowLegacy ? { admin_audit: ['id', 'actor_id', 'action', 'target_id', 'details', 'created_at'] } : {}),
-    ...(!allowLegacy ? { app_settings: ['id', 'ai_base_url', 'ai_api_key_encrypted', 'ai_models', 'updated_by', 'updated_at'] } : {}),
+    ...(!allowLegacy ? { app_settings: ['id', 'ai_base_url', 'ai_api_key_encrypted', 'ai_models', 'ai_image_base_url', 'ai_image_api_key_encrypted', 'ai_image_models', 'updated_by', 'updated_at'] } : {}),
     generations: ['id', 'user_id', 'request_key', ...(allowLegacy ? [] : ['request_hash']), 'reserved', 'charged', 'status'],
     ...(!allowLegacy ? { health_probe: ['id', 'value'] } : {}),
   }

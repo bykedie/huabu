@@ -321,7 +321,8 @@ function AccountDrawer({ user, close, notify }: { user: User; close: () => void;
 function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
   type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
   type AuditEntry = { id: string; action: string; target_id?: string; actor_email: string; details: Record<string, string | number | null>; created_at: string }
-  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; ai: { configured: boolean; keyConfigured: boolean; baseUrl: string; models: string[]; source: string } }
+  type RelayData = { configured: boolean; keyConfigured: boolean; baseUrl: string; models: string[]; source: string }
+  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; ai: RelayData; image: RelayData }
   const [data, setData] = useState<AdminData | null>(null)
   const [points, setPoints] = useState(100)
   const [count, setCount] = useState(1)
@@ -329,12 +330,17 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   const [aiBaseUrl, setAiBaseUrl] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiModels, setAiModels] = useState('gpt-4o-mini')
+  const [imageBaseUrl, setImageBaseUrl] = useState('')
+  const [imageApiKey, setImageApiKey] = useState('')
+  const [imageModels, setImageModels] = useState('')
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const load = useCallback(() => api<AdminData>('/admin/overview').then((result) => {
     setData(result)
     setAiBaseUrl(result.ai.baseUrl)
     setAiModels(result.ai.models.join(', '))
+    setImageBaseUrl(result.image.baseUrl)
+    setImageModels(result.image.models.join(', '))
   }), [])
   useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
   async function createCodes() {
@@ -362,6 +368,13 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
       await load()
       notify({ type: 'ok', text: clearApiKey ? '已清除后台保存的密钥' : 'AI 中转配置已保存' })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+  }
+  async function saveImageConfig(clearApiKey = false) {
+    if (busyRef.current) return
+    const models = imageModels.split(',').map((item) => item.trim()).filter(Boolean)
+    if (!models.length) return notify({ type: 'error', text: '请至少填写一个生图模型' })
+    busyRef.current = true; setBusy(true)
+    try { await api('/admin/image-config', { method: 'PUT', body: JSON.stringify({ baseUrl: imageBaseUrl, apiKey: imageApiKey || undefined, clearApiKey, models }) }); setImageApiKey(''); await load(); notify({ type: 'ok', text: clearApiKey ? '已清除生图密钥' : '生图中转配置已保存' }) } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   async function testAIConfig() {
     if (busyRef.current) return
@@ -413,7 +426,9 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     : entry.action === 'codes.create'
     ? `生成 ${entry.details.count} 个兑换码 · 每码 ${entry.details.points} 积分`
     : `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
+  const imageConfigSection = <section className="drawer-section relay-config"><h3>生图中转配置</h3><label>生图中转站地址<input type="url" value={imageBaseUrl} onChange={(event) => setImageBaseUrl(event.target.value)} disabled={busy} /></label><label>生图 API 密钥<input type="password" value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>生图模型<input value={imageModels} onChange={(event) => setImageModels(event.target.value)} placeholder="GPT-image-2" disabled={busy} /></label><div className="relay-actions"><button className="primary" onClick={() => void saveImageConfig()} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Settings size={16} />保存生图配置</button>{data?.image.keyConfigured && <button className="secondary danger-text" onClick={() => void saveImageConfig(true)} disabled={busy}>清除生图密钥</button>}</div></section>
   return <Drawer title="运营管理" onClose={closeAdmin}>
+    {imageConfigSection}
     {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在下方设置中转站地址和密钥'}</small></div></>}
     <section className="drawer-section relay-config"><h3>AI 中转配置</h3><label>中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} disabled={busy} /></label><label>API 密钥<input type="password" placeholder={data?.ai.keyConfigured ? '留空则保持当前密钥' : '输入中转站密钥'} value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放模型<input value={aiModels} onChange={(event) => setAiModels(event.target.value)} placeholder="gpt-4o-mini, gpt-4.1-mini" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Check size={16} />测试中转</button>{data?.ai.keyConfigured && <button className="secondary danger-text" onClick={() => void saveAIConfig(true)} disabled={busy}>清除密钥</button>}</div><small>测试只发送一条最小请求，不扣除用户积分，也不会保存临时密钥。</small></section>
     <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
