@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, statSync } from 'node:fs'
 
-const databasePath = process.argv[2]
+const allowLegacy = process.argv.includes('--allow-legacy')
+const databasePath = process.argv.slice(2).find((argument) => !argument.startsWith('--'))
 if (!databasePath) throw new Error('请提供数据库路径')
 if (!existsSync(databasePath) || !statSync(databasePath).isFile() || statSync(databasePath).size === 0) {
   throw new Error('数据库文件不存在或为空')
@@ -14,13 +15,13 @@ try {
 
   const requiredSchema = {
     users: ['id', 'email', 'password_hash', 'name', 'role', 'balance'],
-    canvases: ['id', 'user_id', 'name', 'document', 'version'],
+    canvases: ['id', 'user_id', 'name', 'document', ...(allowLegacy ? [] : ['version'])],
     ledger: ['id', 'user_id', 'amount', 'balance_after', 'kind', 'reference'],
     redeem_codes: ['id', 'code_hash', 'points', 'max_uses', 'uses', 'created_by'],
     redemptions: ['code_id', 'user_id'],
     topup_orders: ['id', 'user_id', 'amount_cents', 'points', 'status', 'proof'],
-    generations: ['id', 'user_id', 'request_key', 'request_hash', 'reserved', 'charged', 'status'],
-    health_probe: ['id', 'value'],
+    generations: ['id', 'user_id', 'request_key', ...(allowLegacy ? [] : ['request_hash']), 'reserved', 'charged', 'status'],
+    ...(!allowLegacy ? { health_probe: ['id', 'value'] } : {}),
   }
   const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name))
   for (const [table, requiredColumns] of Object.entries(requiredSchema)) {

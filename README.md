@@ -87,32 +87,23 @@ Compose 已将应用容器日志设置为单文件 10 MiB、最多保留 3 个�
 
 ## 数据备份
 
-数据库保存在 Compose 管理的 `canvas-data` volume。Compose 会强制容器使用 `/app/data/app.db`，避免 `.env` 将数据库写到临时容器层。更新版本不会删除该 volume。备份前短暂停止应用以获得一致快照：
+数据库保存在 Compose 管理的 `canvas-data` volume。Compose 会强制容器使用 `/app/data/app.db`，避免 `.env` 将数据库写到临时容器层。更新版本不会删除该 volume。使用仓库内脚本创建一致性快照：
 
 ~~~bash
-mkdir -p backups
-backup="backups/canvas-$(date +%F-%H%M)"
-docker compose stop app
-docker compose cp -a app:/app/data "$backup"
-docker compose start app
+chmod +x deploy/backup.sh deploy/restore.sh
+./deploy/backup.sh
+# 也可指定备份根目录：./deploy/backup.sh /srv/canvas-backups
 ~~~
 
-这条命令直接从当前 Compose 项目的 `app` 容器复制数据，不依赖可能变化的 volume 名称。恢复前先按上面步骤另做一份当前数据备份，然后执行：
+脚本使用秒级时间戳和进程号创建全新目录，拒绝覆盖已有备份；数据库校验成功并且应用重新恢复健康后才返回成功。请定期把备份目录同步到另一台服务器或对象存储。
+
+恢复时传入一个包含 `app.db` 的备份目录：
 
 ~~~bash
-set -euo pipefail
-backup_dir="$PWD/备份目录"
-test -s "$backup_dir/app.db"
-docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app sh -c \
-  'cp -a /backup /tmp/restore-check && node server/check-db.js /tmp/restore-check/app.db'
-docker compose stop app
-docker compose run --rm --no-deps app sh -c 'rm -f /app/data/app.db /app/data/app.db-wal /app/data/app.db-shm'
-docker compose cp -a "$backup_dir/." app:/app/data
-docker compose run --rm --no-deps app node server/check-db.js /app/data/app.db
-docker compose start app
+./deploy/restore.sh /srv/canvas-backups/canvas-YYYYMMDD-HHMMSS-PID
 ~~~
 
-当前部署只支持一个应用副本共享这份 SQLite 数据库；不要将 `app` 横向扩容为多个副本。
+恢复脚本先在临时候选副本上执行当前版本数据库迁移和严格校验，再停服保存当前数据库的回滚快照。替换、最终校验或健康检查任一步失败时会自动恢复原数据库；若自动回滚本身失败，脚本会输出并保留回滚快照路径。当前部署只支持一个应用副本共享这份 SQLite 数据库；不要将 `app` 横向扩容为多个副本。
 
 ## 验证
 

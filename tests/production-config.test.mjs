@@ -30,8 +30,8 @@ function runApp(env = {}, script = "await import('./server/app.js')", databaseDi
   }
 }
 
-function runDatabaseCheck(databasePath) {
-  return spawnSync(process.execPath, ['server/check-db.js', databasePath], {
+function runDatabaseCheck(databasePath, allowLegacy = false) {
+  return spawnSync(process.execPath, ['server/check-db.js', ...(allowLegacy ? ['--allow-legacy'] : []), databasePath], {
     cwd: root,
     encoding: 'utf8',
   })
@@ -114,6 +114,18 @@ test('database restore checker accepts only a complete, consistent canvas databa
     assert.equal(initialized.status, 0, initialized.stderr)
     assert.equal(runDatabaseCheck(databasePath).status, 0)
 
+    const legacyPath = join(databaseDirectory, 'legacy.db')
+    const legacyInitialized = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
+    assert.equal(legacyInitialized.status, 0, legacyInitialized.stderr)
+    const legacy = new DatabaseSync(legacyPath)
+    legacy.exec('ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE health_probe')
+    legacy.close()
+    assert.notEqual(runDatabaseCheck(legacyPath).status, 0)
+    assert.equal(runDatabaseCheck(legacyPath, true).status, 0)
+    const migratedLegacy = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
+    assert.equal(migratedLegacy.status, 0, migratedLegacy.stderr)
+    assert.equal(runDatabaseCheck(legacyPath).status, 0)
+
     const unrelatedPath = join(databaseDirectory, 'unrelated.db')
     const unrelated = new DatabaseSync(unrelatedPath)
     unrelated.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY)')
@@ -121,6 +133,7 @@ test('database restore checker accepts only a complete, consistent canvas databa
     const unrelatedCheck = runDatabaseCheck(unrelatedPath)
     assert.notEqual(unrelatedCheck.status, 0)
     assert.match(unrelatedCheck.stderr, /users/)
+    assert.notEqual(runDatabaseCheck(unrelatedPath, true).status, 0)
 
     const missingColumnPath = join(databaseDirectory, 'missing-column.db')
     const missingColumn = new DatabaseSync(missingColumnPath)
