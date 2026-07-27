@@ -309,6 +309,49 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 
+test('AI billing applies local minimums when relay reports zero usage', async () => {
+  const member = await register('Billing Minimum User', 'billing-minimum@example.com')
+  const content = 'x'.repeat(1200)
+  let relayCalls = 0
+  const relay = (await import('node:http')).createServer((_req, res) => {
+    relayCalls += 1
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({
+      choices: [{ message: { content } }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    }))
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
+  process.env.AI_API_KEY = 'test-relay-key'
+
+  try {
+    const before = (await request('/me', { token: member.token })).body.user.balance
+    const payload = {
+      requestKey: 'zero-usage-billing-request-0001',
+      messages: [{ role: 'user', content: 'Generate a detailed answer.' }],
+      maxTokens: 1024,
+    }
+    const first = await request('/ai/chat', { token: member.token, method: 'POST', body: JSON.stringify(payload) })
+    assert.equal(first.status, 200)
+    assert.ok(first.body.charged > 1)
+    const generation = db.prepare('SELECT reserved,charged FROM generations WHERE id=?').get(first.body.id)
+    assert.ok(Number(generation.charged) <= Number(generation.reserved))
+    const afterFirst = (await request('/me', { token: member.token })).body.user.balance
+    assert.equal(afterFirst, before - first.body.charged)
+
+    const replay = await request('/ai/chat', { token: member.token, method: 'POST', body: JSON.stringify(payload) })
+    assert.deepEqual(replay.body, { ...first.body, cached: true })
+    assert.equal(relayCalls, 1)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, afterFirst)
+  } finally {
+    await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+    delete process.env.AI_BASE_URL
+    delete process.env.AI_API_KEY
+  }
+})
+
 test('authentication rejects passwords that bcrypt would silently truncate', async () => {
   const password = '密码'.repeat(13)
   assert.ok(Buffer.byteLength(password, 'utf8') > 72)

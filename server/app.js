@@ -85,6 +85,7 @@ export const estimatePromptTokens = (messages) => messages.reduce(
   (total, message) => total + Buffer.byteLength(message.content, 'utf8') + 16,
   16,
 )
+const estimateTextTokens = (text) => Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
 
 async function readUpstreamJson(response) {
   const declaredLength = Number(response.headers.get('content-length'))
@@ -335,10 +336,16 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
     const usage = data.usage || {}
     const content = data.choices?.[0]?.message?.content
     if (typeof content !== 'string') throw fail(502, '中转站返回格式不兼容')
-    const usageTokens = (value, fallback) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+    const usageTokens = (value, fallback, minimum) => (
+      typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? Math.max(value, minimum)
+        : fallback
+    )
+    const promptMinimum = body.messages.reduce((total, message) => total + estimateTextTokens(message.content), 0)
+    const completionMinimum = estimateTextTokens(content)
     const actual = Math.max(1, Math.ceil(
-      usageTokens(usage.prompt_tokens, promptTokens) / 1000 * inputRate
-      + usageTokens(usage.completion_tokens, body.maxTokens) / 1000 * outputRate,
+      usageTokens(usage.prompt_tokens, promptTokens, promptMinimum) / 1000 * inputRate
+      + usageTokens(usage.completion_tokens, body.maxTokens, completionMinimum) / 1000 * outputRate,
     ))
     const charged = Math.min(actual, reserved)
     const response = { id: generation.id, content, usage, charged, cached: false }
