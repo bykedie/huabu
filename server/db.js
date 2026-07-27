@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   id TEXT PRIMARY KEY, actor_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL,
   target_id TEXT, details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS app_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1), ai_base_url TEXT, ai_api_key_encrypted TEXT,
+  ai_models TEXT, updated_by TEXT REFERENCES users(id), updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS generations (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
   request_hash TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
@@ -54,6 +58,7 @@ CREATE TABLE IF NOT EXISTS health_probe (
   id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO health_probe (id,value) VALUES (1,0);
+INSERT OR IGNORE INTO app_settings (id) VALUES (1);
 CREATE INDEX IF NOT EXISTS idx_canvas_user ON canvases(user_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at DESC);

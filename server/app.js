@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
@@ -41,8 +41,8 @@ const maxCanvasBytes = numberSetting('MAX_CANVAS_BYTES', 2 * 1024 * 1024, { min:
 const maxUserStorageBytes = numberSetting('MAX_USER_STORAGE_BYTES', 20 * 1024 * 1024, { min: maxCanvasBytes, max: 1024 * 1024 * 1024, integer: true })
 const registrationRateLimit = numberSetting('REGISTRATION_RATE_LIMIT', 5, { min: 1, max: 1000, integer: true })
 const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
-const allowedModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
-if (!allowedModels.length) throw new Error('AI_MODELS 至少需要一个模型')
+const envModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
+if (!envModels.length) throw new Error('AI_MODELS 至少需要一个模型')
 recoverPendingGenerations(aiPendingRecoveryMs)
 app.set('trust proxy', 1)
 app.use(helmet({
@@ -68,6 +68,34 @@ app.use('/api/ai', limiter(40))
 app.use('/api', express.json({ limit: '12mb' }))
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
+const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
+const encryptSetting = (value) => {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', settingsKey, iv)
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64')).join('.')
+}
+const decryptSetting = (value) => {
+  const [iv, tag, encrypted] = value.split('.').map((part) => Buffer.from(part, 'base64'))
+  const decipher = createDecipheriv('aes-256-gcm', settingsKey, iv)
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+}
+const relaySettings = () => {
+  const row = db.prepare('SELECT ai_base_url,ai_api_key_encrypted,ai_models FROM app_settings WHERE id=1').get()
+  let storedKey = ''
+  if (row?.ai_api_key_encrypted) {
+    try { storedKey = decryptSetting(row.ai_api_key_encrypted) }
+    catch { throw fail(500, '已保存的中转站密钥无法解密，请管理员重新设置') }
+  }
+  const models = row?.ai_models ? JSON.parse(row.ai_models) : envModels
+  return {
+    baseUrl: (row?.ai_base_url || process.env.AI_BASE_URL || '').replace(/\/+$/, ''),
+    apiKey: storedKey || process.env.AI_API_KEY || '',
+    models,
+    source: row?.ai_base_url || row?.ai_api_key_encrypted || row?.ai_models ? 'database' : 'environment',
+  }
+}
 const hashCode = (code) => createHash('sha256').update(code.trim().toUpperCase()).digest('hex')
 const publicUser = (row) => ({ id: row.id, email: row.email, name: row.name, role: row.role, balance: Number(row.balance) })
 const sign = (user) => jwt.sign(
@@ -155,7 +183,7 @@ app.get('/api/health', (_req, res) => {
     res.status(503).json({ ok: false })
   }
 })
-app.get('/api/config', auth, (_req, res) => res.json({ aiModel: allowedModels[0], centsPerPoint, topupInstructions }))
+app.get('/api/config', auth, (_req, res) => res.json({ aiModel: relaySettings().models[0], centsPerPoint, topupInstructions }))
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const body = parse(z.object({
@@ -337,8 +365,9 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       })).min(1).max(50),
       maxTokens: z.number().int().min(16).max(8192).default(1024),
     }), req.body)
-    const model = body.model || allowedModels[0]
-    if (!allowedModels.includes(model)) throw fail(400, '该模型未开放')
+    const relay = relaySettings()
+    const model = body.model || relay.models[0]
+    if (!relay.models.includes(model)) throw fail(400, '该模型未开放')
     const requestHash = createHash('sha256')
       .update(JSON.stringify({ model, messages: body.messages, maxTokens: body.maxTokens }))
       .digest('hex')
@@ -347,8 +376,8 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
     if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
-    const base = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
-    const key = process.env.AI_API_KEY
+    const base = relay.baseUrl
+    const key = relay.apiKey
     if (!base || !key) throw fail(503, '管理员尚未配置 AI 中转站')
     let url
     try { url = new URL(`${base}/chat/completions`) }
@@ -427,6 +456,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
 })
 
 app.get('/api/admin/overview', auth, admin, (_req, res) => {
+  const relay = relaySettings()
   const stats = {
     users: Number(db.prepare('SELECT COUNT(*) n FROM users').get().n),
     canvases: Number(db.prepare('SELECT COUNT(*) n FROM canvases').get().n),
@@ -444,13 +474,50 @@ app.get('/api/admin/overview', auth, admin, (_req, res) => {
     orders,
     audit,
     ai: {
-      configured: Boolean(process.env.AI_BASE_URL && process.env.AI_API_KEY),
-      baseUrl: process.env.AI_BASE_URL || '',
-      models: allowedModels,
+      configured: Boolean(relay.baseUrl && relay.apiKey),
+      keyConfigured: Boolean(relay.apiKey),
+      baseUrl: relay.baseUrl,
+      models: relay.models,
+      source: relay.source,
       inputRate,
       outputRate,
     },
   })
+})
+app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
+  try {
+    const body = parse(z.object({
+      baseUrl: z.string().trim().max(2000),
+      apiKey: z.string().trim().max(4000).optional(),
+      clearApiKey: z.boolean().default(false),
+      models: z.array(z.string().trim().min(1).max(100)).min(1).max(50),
+    }), req.body)
+    if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
+    let normalizedBase = body.baseUrl.replace(/\/+$/, '')
+    if (normalizedBase) {
+      let url
+      try { url = new URL(normalizedBase) } catch { throw fail(400, '中转站地址无效') }
+      if (!['http:', 'https:'].includes(url.protocol)) throw fail(400, '中转站地址仅支持 HTTP 或 HTTPS')
+      if (isProduction && url.protocol !== 'https:') throw fail(400, '生产环境中转站地址必须使用 HTTPS')
+      normalizedBase = url.toString().replace(/\/+$/, '')
+    }
+    const models = [...new Set(body.models)]
+    const before = relaySettings()
+    const encryptedKey = body.apiKey ? encryptSetting(body.apiKey) : null
+    transaction(() => {
+      db.prepare(`UPDATE app_settings SET ai_base_url=?,
+        ai_api_key_encrypted=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE ai_api_key_encrypted END,
+        ai_models=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+        .run(normalizedBase || null, body.clearApiKey ? 1 : 0, encryptedKey, encryptedKey, JSON.stringify(models), req.auth.sub)
+      auditAdmin(req.auth.sub, 'ai_config.update', null, {
+        baseUrlChanged: before.baseUrl !== normalizedBase,
+        keyChanged: Boolean(body.apiKey || body.clearApiKey),
+        modelsChanged: JSON.stringify(before.models) !== JSON.stringify(models),
+      })
+    })
+    const relay = relaySettings()
+    res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source })
+  } catch (error) { next(error) }
 })
 app.post('/api/admin/codes', auth, admin, (req, res, next) => {
   try {

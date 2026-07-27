@@ -164,6 +164,13 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .config-status.ready { border-color: #238279; background: #edf7f5; }
 .config-status span { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .config-status small { color: #737a84; overflow-wrap: anywhere; }
+.relay-config { display: grid; gap: 10px; }
+.relay-config h3 { margin-bottom: 0; }
+.relay-config label { display: grid; gap: 5px; color: #59616a; font-size: 12px; }
+.relay-config input { width: 100%; }
+.relay-config label small { color: #858b94; }
+.relay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.danger-text { color: #a53b35; }
 .codes-result { display: grid; gap: 8px; margin-top: 10px; }
 .codes-result .secondary { width: 100%; }
 .codes-output { min-height: 105px; resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }

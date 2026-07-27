@@ -198,8 +198,31 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
-  process.env.AI_API_KEY = 'test-relay-key'
+  const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
+  const forbiddenConfig = await request('/admin/ai-config', {
+    token: member.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: 'not-allowed', models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(forbiddenConfig.status, 403)
+  const invalidConfig = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'file:///tmp/relay', apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(invalidConfig.status, 400)
+  const savedConfig = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: `${relayBaseUrl}/`, apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(savedConfig.status, 200)
+  assert.deepEqual(savedConfig.body, { configured: true, keyConfigured: true, baseUrl: relayBaseUrl, models: ['gpt-4o-mini'], source: 'database' })
+  assert.equal(JSON.stringify(savedConfig.body).includes('test-relay-key'), false)
+  const storedConfig = db.prepare('SELECT ai_base_url,ai_api_key_encrypted FROM app_settings WHERE id=1').get()
+  assert.equal(storedConfig.ai_base_url, relayBaseUrl)
+  assert.equal(storedConfig.ai_api_key_encrypted.includes('test-relay-key'), false)
+  const preservedConfig = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(preservedConfig.status, 200)
+  assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, storedConfig.ai_api_key_encrypted)
+  const configAudit = db.prepare("SELECT details FROM admin_audit WHERE action='ai_config.update' ORDER BY rowid DESC LIMIT 1").get()
+  assert.equal(configAudit.details.includes('test-relay-key'), false)
   const successPayload = {
     requestKey: 'test-request-success-0001',
     messages: [{ role: 'user', content: '请生成一个测试结果' }],
@@ -246,6 +269,14 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
   const recoveryEntries = db.prepare('SELECT amount FROM ledger WHERE reference=? ORDER BY rowid').all(interruptedId)
   assert.deepEqual(recoveryEntries.map((entry) => Number(entry.amount)), [-7, 7])
+
+  const clearedConfig = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: '', clearApiKey: true, models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(clearedConfig.status, 200)
+  assert.equal(clearedConfig.body.configured, false)
+  assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, null)
+  process.env.AI_API_KEY = 'test-relay-key'
 
   let releaseDelayedRelay
   const delayedRelayReady = new Promise((resolve) => { releaseDelayedRelay = resolve })
