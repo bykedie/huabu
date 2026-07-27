@@ -519,6 +519,46 @@ app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
     res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source })
   } catch (error) { next(error) }
 })
+app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
+  try {
+    const body = parse(z.object({
+      baseUrl: z.string().trim().max(2000),
+      apiKey: z.string().trim().max(4000).optional(),
+      model: z.string().trim().min(1).max(100),
+    }), req.body)
+    let baseUrl = body.baseUrl.replace(/\/+$/, '')
+    let parsed
+    try { parsed = new URL(baseUrl) } catch { throw fail(400, '中转站地址无效') }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw fail(400, '中转站地址仅支持 HTTP 或 HTTPS')
+    if (isProduction && parsed.protocol !== 'https:') throw fail(400, '生产环境中转站地址必须使用 HTTPS')
+    const saved = relaySettings()
+    const key = body.apiKey || saved.apiKey
+    if (!key) throw fail(400, '请先填写或保存 API 密钥')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 30000))
+    let upstream
+    try {
+      upstream = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 8 }),
+      })
+    } catch (error) {
+      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '中转站测试超时' : '无法连接中转站')
+    } finally { clearTimeout(timer) }
+    const text = await upstream.text()
+    let payload
+    try { payload = JSON.parse(text) } catch { payload = null }
+    if (!upstream.ok) {
+      const detail = typeof payload?.error?.message === 'string' ? payload.error.message.slice(0, 240) : `HTTP ${upstream.status}`
+      throw fail(502, `中转站返回错误：${detail}`)
+    }
+    const content = payload?.choices?.[0]?.message?.content
+    if (typeof content !== 'string') throw fail(502, '中转站响应格式不符合 Chat Completions')
+    res.json({ ok: true, status: upstream.status, model: body.model, reply: content.slice(0, 240) })
+  } catch (error) { next(error) }
+})
 app.post('/api/admin/codes', auth, admin, (req, res, next) => {
   try {
     const body = parse(z.object({
