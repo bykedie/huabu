@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS canvases (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL, document TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+  version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS ledger (
@@ -43,12 +44,20 @@ CREATE TABLE IF NOT EXISTS generations (
   response TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, request_key)
 );
+CREATE TABLE IF NOT EXISTS health_probe (
+  id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO health_probe (id,value) VALUES (1,0);
 CREATE INDEX IF NOT EXISTS idx_canvas_user ON canvases(user_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at DESC);
 `)
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {
   db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')
+}
+const canvasColumns = db.prepare('PRAGMA table_info(canvases)').all()
+if (!canvasColumns.some((column) => column.name === 'version')) {
+  db.exec('ALTER TABLE canvases ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
 }
 
 export function transaction(fn) {
@@ -59,6 +68,18 @@ export function transaction(fn) {
     return result
   } catch (error) {
     db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export function checkDatabase() {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = db.prepare('UPDATE health_probe SET value=1-value WHERE id=1').run()
+    if (!result.changes) throw new Error('SQLite health probe row is missing')
+    db.exec('ROLLBACK')
+  } catch (error) {
+    try { db.exec('ROLLBACK') } catch {}
     throw error
   }
 }
@@ -74,9 +95,11 @@ export function changeBalance(userId, amount, kind, reference = null, note = nul
   return next
 }
 
-export function recoverPendingGenerations() {
+export function recoverPendingGenerations(minAgeMs = 0) {
   return transaction(() => {
-    const pending = db.prepare("SELECT id,user_id,reserved FROM generations WHERE status='pending'").all()
+    const minimumAgeSeconds = Math.max(0, Math.ceil(minAgeMs / 1000))
+    const pending = db.prepare("SELECT id,user_id,reserved FROM generations WHERE status='pending' AND created_at <= datetime('now', ?)")
+      .all(`-${minimumAgeSeconds} seconds`)
     let recovered = 0
     for (const item of pending) {
       const result = db.prepare("UPDATE generations SET status='failed' WHERE id=? AND status='pending'").run(item.id)

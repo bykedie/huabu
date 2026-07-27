@@ -46,6 +46,10 @@ test('production refuses unsafe secrets and invalid billing settings', () => {
   const excessiveAiTimeout = runApp({ AI_TIMEOUT_MS: '120001' })
   assert.notEqual(excessiveAiTimeout.status, 0)
   assert.match(excessiveAiTimeout.stderr, /AI_TIMEOUT_MS/)
+
+  const prematureRecovery = runApp({ AI_TIMEOUT_MS: '120000', AI_PENDING_RECOVERY_MS: '129999' })
+  assert.notEqual(prematureRecovery.status, 0)
+  assert.match(prematureRecovery.stderr, /AI_PENDING_RECOVERY_MS/)
 })
 
 test('database startup migrates existing generations without losing rows', () => {
@@ -53,6 +57,12 @@ test('database startup migrates existing generations without losing rows', () =>
   const databasePath = join(databaseDirectory, 'test.db')
   const legacy = new DatabaseSync(databasePath)
   legacy.exec(`
+    CREATE TABLE canvases (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+      document TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO canvases (id,user_id,name) VALUES ('legacy-canvas','legacy-user','旧画布');
     CREATE TABLE generations (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, request_key TEXT NOT NULL,
       model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
@@ -66,8 +76,10 @@ test('database startup migrates existing generations without losing rows', () =>
   const script = `
     const { db } = await import('./server/db.js')
     const columns = db.prepare('PRAGMA table_info(generations)').all().map((column) => column.name)
+    const canvasColumns = db.prepare('PRAGMA table_info(canvases)').all().map((column) => column.name)
+    const canvas = db.prepare('SELECT id,version FROM canvases WHERE id=?').get('legacy-canvas')
     const row = db.prepare('SELECT id,request_hash FROM generations WHERE id=?').get('legacy-id')
-    process.stdout.write(JSON.stringify({ columns, row }))
+    process.stdout.write(JSON.stringify({ columns, canvasColumns, canvas, row }))
     db.close()
   `
   try {
@@ -75,6 +87,8 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.equal(result.status, 0, result.stderr)
     const migrated = JSON.parse(result.stdout)
     assert.ok(migrated.columns.includes('request_hash'))
+    assert.ok(migrated.canvasColumns.includes('version'))
+    assert.deepEqual(migrated.canvas, { id: 'legacy-canvas', version: 0 })
     assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
   } finally {
     rmSync(databaseDirectory, { recursive: true, force: true })

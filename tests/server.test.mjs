@@ -13,7 +13,7 @@ process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
 
-const { default: app } = await import('../server/app.js')
+const { default: app, estimatePromptTokens } = await import('../server/app.js')
 const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
 const server = app.listen(0, '127.0.0.1')
 await new Promise((resolve) => server.once('listening', resolve))
@@ -36,6 +36,19 @@ async function register(name, email) {
   assert.equal(result.status, 201)
   return result.body
 }
+
+test('AI prompt estimation includes per-message protocol overhead', () => {
+  assert.equal(estimatePromptTokens([{ role: 'user', content: '' }]), 32)
+  assert.equal(estimatePromptTokens([{ role: 'system', content: 'abc' }, { role: 'user', content: '' }]), 51)
+})
+
+test('health check verifies SQLite read and write access', async () => {
+  const before = Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value)
+  const health = await request('/health')
+  assert.equal(health.status, 200)
+  assert.deepEqual(health.body, { ok: true })
+  assert.equal(Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value), before)
+})
 
 test('paid canvas workflow preserves ownership and wallet invariants', async () => {
   const admin = await register('管理员', 'admin@example.com')
@@ -62,9 +75,18 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal((await request(`/canvases/${canvasId}`, {
     token: member.token,
     method: 'PUT',
-    body: JSON.stringify({ name: '产品构思 v2', document }),
+    body: JSON.stringify({ name: '产品构思 v2', version: 0, document }),
   })).status, 200)
-  assert.deepEqual((await request(`/canvases/${canvasId}`, { token: member.token })).body.canvas.document, document)
+  const staleSave = await request(`/canvases/${canvasId}`, {
+    token: member.token,
+    method: 'PUT',
+    body: JSON.stringify({ name: '陈旧副本', version: 0, document: { nodes: [], edges: [] } }),
+  })
+  assert.equal(staleSave.status, 409)
+  const savedCanvas = (await request(`/canvases/${canvasId}`, { token: member.token })).body.canvas
+  assert.equal(savedCanvas.version, 1)
+  assert.equal(savedCanvas.name, '产品构思 v2')
+  assert.deepEqual(savedCanvas.document, document)
   assert.equal((await request(`/canvases/${canvasId}`, { token: admin.token })).status, 404)
 
   const codes = await request('/admin/codes', {
@@ -166,7 +188,9 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
     db.prepare('INSERT INTO generations (id,user_id,request_key,model,reserved,status) VALUES (?,?,?,?,?,?)')
       .run(interruptedId, member.user.id, 'interrupted-request-0001', 'gpt-4o-mini', 7, 'pending')
   })
-  assert.equal(recoverPendingGenerations(), 1)
+  assert.equal(recoverPendingGenerations(60000), 0)
+  db.prepare("UPDATE generations SET created_at=datetime('now','-2 minutes') WHERE id=?").run(interruptedId)
+  assert.equal(recoverPendingGenerations(60000), 1)
   assert.equal(recoverPendingGenerations(), 0)
   assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(interruptedId).status, 'failed')
   assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)

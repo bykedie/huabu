@@ -5,7 +5,7 @@ import {
   useEdgesState, useNodesState,
 } from '@xyflow/react'
 import {
-  Bot, Check, ChevronLeft, CircleDollarSign, FilePlus2, Image, LayoutDashboard,
+  Bot, Check, ChevronLeft, CircleDollarSign, Download, FilePlus2, Image, LayoutDashboard,
   LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
 } from 'lucide-react'
 import { api, session, User } from './api'
@@ -24,11 +24,34 @@ type CanvasNode = Node<CanvasData>
 type CanvasInfo = {
   id: string
   name: string
+  version: number
   updated_at?: string
   document?: { nodes: CanvasNode[]; edges: Edge[] }
 }
 type Notice = { type: 'ok' | 'error'; text: string } | null
+type CanvasDraft = { baseVersion: number; name: string; nodes: CanvasNode[]; edges: Edge[] }
 const uid = () => crypto.randomUUID()
+const draftKey = (userId: string, canvasId: string) => `ink-draft:${userId}:${canvasId}`
+function makeDraft(baseVersion: number, name: string, nodes: CanvasNode[], edges: Edge[]): CanvasDraft {
+  return {
+    baseVersion,
+    name,
+    nodes: nodes.map((node) => {
+      const { selected: _selected, dragging: _dragging, measured: _measured, ...persistedNode } = node
+      return { ...persistedNode, data: { kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl } }
+    }),
+    edges: edges.map((edge) => {
+      const { selected: _selected, ...persistedEdge } = edge
+      return persistedEdge
+    }),
+  }
+}
+function readDraft(userId: string, canvasId: string): CanvasDraft | null {
+  try {
+    const draft = JSON.parse(localStorage.getItem(draftKey(userId, canvasId)) || 'null')
+    return draft && Number.isInteger(draft.baseVersion) && typeof draft.name === 'string' && Array.isArray(draft.nodes) && Array.isArray(draft.edges) ? draft : null
+  } catch { return null }
+}
 async function aiRequestKey(canvasId: string, nodeId: string, prompt: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(prompt))
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 16)
@@ -138,7 +161,10 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
       }
       const first = focusable[0]
       const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      if (!focusable.includes(document.activeElement as HTMLElement)) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault()
         last.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -156,7 +182,7 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
   return <><div className="drawer-backdrop" aria-hidden="true" onClick={onClose} /><aside ref={drawerRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}><X size={19} /></button></header>{children}</aside></>
 }
 
-function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: () => void; close: () => void; notify: (notice: Notice) => void }) {
+function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
   type Entry = { id: string; amount: number; note: string; created_at: string }
   type TopupOrder = { id: string; amount_cents: number; points: number; status: 'pending' | 'approved' | 'rejected' }
   const [ledger, setLedger] = useState<Entry[]>([])
@@ -182,24 +208,28 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
+    let committed = false
     try {
       await api('/redeem', { method: 'POST', body: JSON.stringify({ code }) })
+      committed = true
       setCode('')
       await load()
-      refresh()
+      await refresh()
       notify({ type: 'ok', text: '兑换成功，积分已到账' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+    } catch (err) { notify({ type: 'error', text: committed ? '兑换已成功，但账户信息刷新失败，请重新打开积分账户' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   async function topup() {
     if (busyRef.current || !Number.isFinite(amount) || amount < 1 || amount > 100000 || proof.trim().length < 4) return
     busyRef.current = true
     setBusy(true)
+    let committed = false
     try {
       await api('/topups', { method: 'POST', body: JSON.stringify({ amountCents: Math.round(amount * 100), proof }) })
+      committed = true
       setProof('')
       await load()
       notify({ type: 'ok', text: '充值申请已提交，等待管理员审核' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+    } catch (err) { notify({ type: 'error', text: committed ? '充值申请已提交，但记录刷新失败，请重新打开积分账户' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const statusText = { pending: '待审核', approved: '已到账', rejected: '已驳回' }
   const estimatedPoints = Number.isFinite(amount) && amount >= 0 ? Math.floor(amount * 100 / config.centsPerPoint) : 0
@@ -212,7 +242,7 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   </Drawer>
 }
 
-function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => void }) {
+function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
   type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
   type AdminData = { stats: Record<string, number>; orders: Order[]; ai: { configured: boolean; baseUrl: string } }
   const [data, setData] = useState<AdminData | null>(null)
@@ -222,7 +252,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const load = useCallback(() => api<AdminData>('/admin/overview').then(setData), [])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
   async function createCodes() {
     if (busyRef.current || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100) return
     busyRef.current = true
@@ -233,22 +263,26 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
       notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
-  async function review(id: string, action: 'approve' | 'reject') {
+  async function review(order: Order, action: 'approve' | 'reject') {
     if (busyRef.current) return
+    const verb = action === 'approve' ? '通过' : '驳回'
+    if (!window.confirm(`${verb} ${order.email} 的充值申请？\n金额：¥${(order.amount_cents / 100).toFixed(2)}\n积分：${order.points}\n交易单号：${order.proof || '未填写'}`)) return
     busyRef.current = true
     setBusy(true)
+    let committed = false
     try {
-      await api(`/admin/topups/${id}/${action}`, { method: 'POST' })
+      await api(`/admin/topups/${order.id}/${action}`, { method: 'POST' })
+      committed = true
       await load()
-      if (action === 'approve') refresh()
+      if (action === 'approve') await refresh()
       notify({ type: 'ok', text: action === 'approve' ? '积分已到账' : '订单已驳回' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+    } catch (err) { notify({ type: 'error', text: committed ? '订单已处理，但界面刷新失败，请重新打开运营管理' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
   return <Drawer title="运营管理" onClose={close}>
     {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在服务器 .env 中配置中转站地址和密钥'}</small></div></>}
     <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <textarea className="codes-output" readOnly value={codes.join(String.fromCharCode(10))} />}</section>
-    <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order.id, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order.id, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
+    <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
   </Drawer>
 }
 
@@ -262,6 +296,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [sidebar, setSidebar] = useState(false)
   const [creatingCanvas, setCreatingCanvas] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | null>(null)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
   const aiInFlight = useRef(0)
   const aiNodesInFlight = useRef(new Set<string>())
@@ -269,6 +304,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const creatingCanvasRef = useRef(false)
   const revision = useRef(0)
   const persistedRevision = useRef(0)
+  const serverVersion = useRef(0)
   const activeCanvasId = useRef<string | null>(null)
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true))
   const saveRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
@@ -321,35 +357,38 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const canvas = { ...current }
     const savedName = canvas.name.trim() || '未命名画布'
     const savedRevision = revision.current
-    const cleanNodes = nodes.map((node) => {
-      const { selected: _selected, dragging: _dragging, measured: _measured, ...persistedNode } = node
-      return { ...persistedNode, data: { kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl } }
-    })
-    const cleanEdges = edges.map((edge) => {
-      const { selected: _selected, ...persistedEdge } = edge
-      return persistedEdge
-    })
+    const draft = makeDraft(serverVersion.current, savedName, nodes, edges)
     const persist = async () => {
       if (deletedCanvasIds.current.has(canvas.id)) return true
       if (activeCanvasId.current === canvas.id) setSaveState('saving')
       try {
-        await api(`/canvases/${canvas.id}`, { method: 'PUT', body: JSON.stringify({ name: savedName, document: { nodes: cleanNodes, edges: cleanEdges } }) })
+        const result = await api<{ version: number }>(`/canvases/${canvas.id}`, { method: 'PUT', body: JSON.stringify({ name: savedName, version: serverVersion.current, document: { nodes: draft.nodes, edges: draft.edges } }) })
+        serverVersion.current = result.version
         for (const [key, requiredRevision] of resolvedAIKeys.current) {
           if (!key.startsWith(`ink-ai:${canvas.id}:`) || requiredRevision > savedRevision) continue
           localStorage.removeItem(key)
           resolvedAIKeys.current.delete(key)
         }
-        setCanvases((items) => items.map((item) => item.id === canvas.id ? { ...item, name: savedName } : item))
+        setCanvases((items) => items.map((item) => item.id === canvas.id ? { ...item, name: savedName, version: result.version } : item))
         if (activeCanvasId.current === canvas.id) {
-          if (canvas.name !== savedName) setCurrent((item) => item?.id === canvas.id ? { ...item, name: savedName } : item)
+          setCurrent((item) => item?.id === canvas.id ? {
+            ...item,
+            ...(revision.current === savedRevision ? { name: savedName } : {}),
+            version: result.version,
+          } : item)
           persistedRevision.current = Math.max(persistedRevision.current, savedRevision)
           const nextState = revision.current === savedRevision ? 'saved' : 'dirty'
           setSaveState(nextState)
+          if (nextState === 'saved') {
+            localStorage.removeItem(draftKey(user.id, canvas.id))
+            setBlockedReason(null)
+          }
         }
         return true
       } catch (err) {
         if (activeCanvasId.current === canvas.id) {
           setSaveState('error')
+          if ((err as Error).message.includes('其他页面更新')) setBlockedReason('conflict')
           setNotice({ type: 'error', text: (err as Error).message })
         }
         return false
@@ -357,16 +396,17 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     }
     saveQueue.current = saveQueue.current.then(persist, persist)
     return saveQueue.current
-  }, [current, edges, nodes])
+  }, [current, edges, nodes, user.id])
   saveRef.current = save
   const flush = useCallback(async () => {
+    if (blockedReason === 'session' || blockedReason === 'conflict') return false
     const canvasId = activeCanvasId.current
     if (canvasId && deletedCanvasIds.current.has(canvasId)) return true
     while (canvasId && activeCanvasId.current === canvasId && persistedRevision.current < revision.current) {
       if (!(await saveRef.current())) return false
     }
     return true
-  }, [])
+  }, [blockedReason])
   flushRef.current = flush
 
   const openCanvas = useCallback(async (id: string) => {
@@ -379,17 +419,32 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       const result = await api<{ canvas: CanvasInfo & { document: { nodes: CanvasNode[]; edges: Edge[] } } }>(`/canvases/${id}`)
       if (requestId !== openRequest.current || deletedCanvasIds.current.has(id)) return
       if (!(await flushRef.current()) || requestId !== openRequest.current) return
+      const draft = readDraft(user.id, id)
       activeCanvasId.current = id
-      revision.current = 0
-      persistedRevision.current = 0
-      setCurrent(result.canvas)
-      setNodes(result.canvas.document.nodes)
-      setEdges(result.canvas.document.edges)
-      setSaveState('saved')
+      serverVersion.current = draft?.baseVersion ?? result.canvas.version
+      if (draft) {
+        revision.current = 1
+        persistedRevision.current = 0
+        setCurrent({ ...result.canvas, name: draft.name, version: draft.baseVersion })
+        setNodes(draft.nodes)
+        setEdges(draft.edges)
+        const hasConflict = draft.baseVersion !== result.canvas.version
+        setSaveState(hasConflict ? 'error' : 'dirty')
+        setBlockedReason(hasConflict ? 'conflict' : null)
+        setNotice({ type: hasConflict ? 'error' : 'ok', text: hasConflict ? '服务器已有更新，本地草稿已恢复但不会自动覆盖' : '已恢复本地草稿' })
+      } else {
+        revision.current = 0
+        persistedRevision.current = 0
+        setCurrent(result.canvas)
+        setNodes(result.canvas.document.nodes)
+        setEdges(result.canvas.document.edges)
+        setSaveState('saved')
+        setBlockedReason(null)
+      }
       setSidebar(false)
       window.setTimeout(() => flow.current?.fitView({ padding: 0.25 }), 30)
     } catch (err) { setNotice({ type: 'error', text: (err as Error).message }) }
-  }, [setEdges, setNodes])
+  }, [setEdges, setNodes, user.id])
   useEffect(() => {
     api<{ canvases: CanvasInfo[] }>('/canvases').then((result) => {
       setCanvases(result.canvases)
@@ -415,6 +470,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       if (!(await flushRef.current()) || requestId !== openRequest.current) return
       const first: CanvasNode = { id: uid(), type: 'canvasNode', position: { x: 80, y: 80 }, data: { kind: 'note', title: '欢迎来到墨屿', content: '从左侧添加内容，拖动画布探索空间。节点会自动保存。' } }
       activeCanvasId.current = result.canvas.id
+      serverVersion.current = result.canvas.version
       revision.current = 1
       persistedRevision.current = 0
       setCurrent(result.canvas)
@@ -438,6 +494,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     try {
       await saveQueue.current
       await api(`/canvases/${id}`, { method: 'DELETE' })
+      localStorage.removeItem(draftKey(user.id, id))
     } catch (err) {
       deletedCanvasIds.current.delete(id)
       setNotice({ type: 'error', text: (err as Error).message })
@@ -458,10 +515,20 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     }
   }
   useEffect(() => {
-    if (saveState !== 'dirty' || !current) return
+    if (saveState !== 'dirty' || !current || blockedReason === 'session' || blockedReason === 'conflict') return
     const timer = window.setTimeout(() => void save(), 900)
     return () => window.clearTimeout(timer)
-  }, [current, edges, nodes, save, saveState])
+  }, [blockedReason, current, edges, nodes, save, saveState])
+  useEffect(() => {
+    if (!current || (saveState !== 'dirty' && saveState !== 'error')) return
+    try {
+      localStorage.setItem(draftKey(user.id, current.id), JSON.stringify(makeDraft(serverVersion.current, current.name, nodes, edges)))
+      setBlockedReason((reason) => reason === 'storage' ? null : reason)
+    } catch {
+      if (session.get()) setBlockedReason('storage')
+      setNotice({ type: 'error', text: '本地草稿空间不足，请立即下载草稿备份' })
+    }
+  }, [current, edges, nodes, saveState, user.id])
 
   function addNode(kind: CanvasData['kind']) {
     const center = flow.current?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) || { x: 200, y: 150 }
@@ -500,9 +567,27 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     session.clear()
     setUser(null)
   }, [setUser])
+  const downloadDraft = useCallback(() => {
+    if (!current) return
+    const draft = JSON.stringify(makeDraft(serverVersion.current, current.name, nodes, edges), null, 2)
+    const url = URL.createObjectURL(new Blob([draft], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${current.name.trim() || '画布'}-本地草稿.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  }, [current, edges, nodes])
+  const discardDraft = useCallback(() => {
+    if (!current || !window.confirm('确定放弃本地草稿并加载服务器版本吗？此操作无法撤销。')) return
+    localStorage.removeItem(draftKey(user.id, current.id))
+    window.location.reload()
+  }, [current, user.id])
   useEffect(() => session.onClear(() => {
     if (persistedRevision.current >= revision.current && aiInFlight.current === 0) setUser(null)
-    else setNotice({ type: 'error', text: '登录已失效；未保存内容仍保留在本页，请整理后刷新并重新登录' })
+    else {
+      setBlockedReason('session')
+      setNotice({ type: 'error', text: '登录已失效；未保存内容已保留在本机' })
+    }
   }), [setUser])
 
   return <main className="workspace">
@@ -514,7 +599,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     </aside>
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell">
-      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="立即保存" onClick={() => void flush()}><Save size={18} /></button></div></header>
+      {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : null}</div></div>}
+      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict'} onClick={() => void flush()}><Save size={18} /></button></div></header>
       {current ? <div className="flow-wrap">
         <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#c9cdd3" />
@@ -524,8 +610,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         <div className="tool-rail"><button title="便签" onClick={() => addNode('note')}><StickyNote size={19} /></button><button title="文本" onClick={() => addNode('text')}><Text size={19} /></button><button title="图片" onClick={() => addNode('image')}><Image size={19} /></button><span /><button className="ai-tool" title="AI 对话" onClick={() => addNode('ai')}><Bot size={19} /></button></div>
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
-    {panel === 'wallet' && <WalletDrawer user={user} refresh={() => void refreshUser()} close={() => setPanel(null)} notify={setNotice} />}
-    {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={() => void refreshUser()} />}
+    {panel === 'wallet' && <WalletDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
+    {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={refreshUser} />}
     {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'ok' ? <Check size={16} /> : <X size={16} />}{notice.text}</div>}
   </main>
 }

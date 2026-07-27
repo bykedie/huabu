@@ -8,7 +8,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { db, transaction, changeBalance, recoverPendingGenerations } from './db.js'
+import { db, transaction, changeBalance, checkDatabase, recoverPendingGenerations } from './db.js'
 
 const app = express()
 const isProduction = process.env.NODE_ENV === 'production'
@@ -33,12 +33,13 @@ const welcomePoints = numberSetting('WELCOME_POINTS', isProduction ? 0 : 100, { 
 const inputRate = numberSetting('AI_INPUT_POINTS_PER_1K', 1, { max: 1000000 })
 const outputRate = numberSetting('AI_OUTPUT_POINTS_PER_1K', 4, { max: 1000000 })
 const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 120000, integer: true })
+export const aiPendingRecoveryMs = numberSetting('AI_PENDING_RECOVERY_MS', aiTimeout + 60000, { min: aiTimeout + 10000, max: 3600000, integer: true })
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
 const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
 const allowedModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
 if (!allowedModels.length) throw new Error('AI_MODELS 至少需要一个模型')
-recoverPendingGenerations()
+recoverPendingGenerations(aiPendingRecoveryMs)
 app.set('trust proxy', 1)
 app.use(helmet({
   contentSecurityPolicy: {
@@ -75,6 +76,10 @@ const passwordSchema = z.string()
   .min(8, '密码至少 8 位')
   .max(72)
   .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, '密码 UTF-8 编码后不能超过 72 字节')
+export const estimatePromptTokens = (messages) => messages.reduce(
+  (total, message) => total + Buffer.byteLength(message.content, 'utf8') + 16,
+  16,
+)
 
 async function readUpstreamJson(response) {
   const declaredLength = Number(response.headers.get('content-length'))
@@ -125,7 +130,15 @@ function admin(req, _res, next) {
   next()
 }
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
+app.get('/api/health', (_req, res) => {
+  try {
+    checkDatabase()
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Health check failed', error)
+    res.status(503).json({ ok: false })
+  }
+})
 app.get('/api/config', auth, (_req, res) => res.json({ aiModel: allowedModels[0], centsPerPoint, topupInstructions }))
 app.post('/api/auth/register', (req, res, next) => {
   try {
@@ -166,7 +179,7 @@ app.get('/api/me', auth, (req, res, next) => {
 })
 
 app.get('/api/canvases', auth, (req, res) => {
-  const rows = db.prepare('SELECT id,name,created_at,updated_at FROM canvases WHERE user_id = ? ORDER BY updated_at DESC').all(req.auth.sub)
+  const rows = db.prepare('SELECT id,name,version,created_at,updated_at FROM canvases WHERE user_id = ? ORDER BY updated_at DESC').all(req.auth.sub)
   res.json({ canvases: rows })
 })
 app.post('/api/canvases', auth, (req, res, next) => {
@@ -174,7 +187,7 @@ app.post('/api/canvases', auth, (req, res, next) => {
     const { name } = parse(z.object({ name: z.string().trim().min(1).max(80).default('未命名画布') }), req.body)
     const canvas = { id: randomUUID(), name }
     db.prepare('INSERT INTO canvases (id,user_id,name) VALUES (?,?,?)').run(canvas.id, req.auth.sub, name)
-    res.status(201).json({ canvas: { ...canvas, document: { nodes: [], edges: [] } } })
+    res.status(201).json({ canvas: { ...canvas, version: 0, document: { nodes: [], edges: [] } } })
   } catch (error) { next(error) }
 })
 app.get('/api/canvases/:id', auth, (req, res, next) => {
@@ -186,12 +199,17 @@ app.put('/api/canvases/:id', auth, (req, res, next) => {
   try {
     const body = parse(z.object({
       name: z.string().trim().min(1).max(80),
+      version: z.number().int().min(0),
       document: z.object({ nodes: z.array(z.unknown()).max(1000), edges: z.array(z.unknown()).max(2000) }),
     }), req.body)
-    const result = db.prepare('UPDATE canvases SET name=?,document=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?')
-      .run(body.name, JSON.stringify(body.document), req.params.id, req.auth.sub)
-    if (!result.changes) throw fail(404, '画布不存在')
-    res.json({ ok: true })
+    const result = db.prepare('UPDATE canvases SET name=?,document=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND version=?')
+      .run(body.name, JSON.stringify(body.document), req.params.id, req.auth.sub, body.version)
+    if (!result.changes) {
+      const exists = db.prepare('SELECT version FROM canvases WHERE id=? AND user_id=?').get(req.params.id, req.auth.sub)
+      if (!exists) throw fail(404, '画布不存在')
+      throw fail(409, '画布已在其他页面更新，本地草稿已保留')
+    }
+    res.json({ ok: true, version: body.version + 1 })
   } catch (error) { next(error) }
 })
 app.delete('/api/canvases/:id', auth, (req, res, next) => {
@@ -268,7 +286,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
     catch { throw fail(500, '中转站地址无效') }
     const allowedProtocols = isProduction ? ['https:'] : ['https:', 'http:']
     if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
-    const promptTokens = body.messages.reduce((total, message) => total + Buffer.byteLength(message.content, 'utf8'), 0)
+    const promptTokens = estimatePromptTokens(body.messages)
     const reserved = Math.max(1, Math.ceil(promptTokens / 1000 * inputRate + body.maxTokens / 1000 * outputRate))
     generation = { id: randomUUID(), userId: req.auth.sub, reserved }
     try {
@@ -294,7 +312,10 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw fail(504, '中转站响应超时')
       throw fail(502, '无法连接中转站')
     }
-    if (!upstream.ok) throw fail(502, `中转站请求失败（${upstream.status}）`)
+    if (!upstream.ok) {
+      await upstream.body?.cancel().catch(() => {})
+      throw fail(502, `中转站请求失败（${upstream.status}）`)
+    }
     const data = await readUpstreamJson(upstream)
     const usage = data.usage || {}
     const content = data.choices?.[0]?.message?.content

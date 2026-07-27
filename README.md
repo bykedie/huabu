@@ -85,16 +85,32 @@ AI_MODELS=gpt-4o-mini
 
 ## 数据备份
 
-数据库保存在 Docker volume canvas-data。更新版本不会删除该 volume。备份前短暂停止应用以获得一致快照：
+数据库保存在 Compose 管理的 `canvas-data` volume。Compose 会强制容器使用 `/app/data/app.db`，避免 `.env` 将数据库写到临时容器层。更新版本不会删除该 volume。备份前短暂停止应用以获得一致快照：
 
 ~~~bash
+mkdir -p backups
+backup="backups/canvas-$(date +%F-%H%M)"
 docker compose stop app
-docker run --rm -v huabu_canvas-data:/data -v "$PWD/backups:/backup" alpine \
-  tar czf /backup/canvas-$(date +%F-%H%M).tar.gz -C /data .
+docker compose cp -a app:/app/data "$backup"
 docker compose start app
 ~~~
 
-恢复前先另做一份当前数据备份，再把归档解压回同一 volume。
+这条命令直接从当前 Compose 项目的 `app` 容器复制数据，不依赖可能变化的 volume 名称。恢复前先按上面步骤另做一份当前数据备份，然后执行：
+
+~~~bash
+set -euo pipefail
+backup_dir="$PWD/备份目录"
+test -s "$backup_dir/app.db"
+docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app sh -c \
+  'cp -a /backup /tmp/restore-check && node server/check-db.js /tmp/restore-check/app.db'
+docker compose stop app
+docker compose run --rm --no-deps app sh -c 'rm -f /app/data/app.db /app/data/app.db-wal /app/data/app.db-shm'
+docker compose cp -a "$backup_dir/." app:/app/data
+docker compose run --rm --no-deps app node server/check-db.js /app/data/app.db
+docker compose start app
+~~~
+
+当前部署只支持一个应用副本共享这份 SQLite 数据库；不要将 `app` 横向扩容为多个副本。
 
 ## 验证
 

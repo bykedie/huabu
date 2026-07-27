@@ -84,6 +84,9 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .sidebar-account strong, .sidebar-account small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-account small { color: #858b94; }
 .canvas-shell { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.workspace-alert { min-height: 48px; padding: 7px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #6f3d0b; background: #fff4dc; border-bottom: 1px solid #efd39f; font-size: 13px; }
+.workspace-alert > div { display: flex; align-items: center; gap: 8px; }
+.workspace-alert .secondary { min-height: 34px; padding: 7px 11px; }
 .topbar { height: 62px; flex: 0 0 62px; display: flex; align-items: center; padding: 0 15px; background: rgba(255,255,255,.96); border-bottom: 1px solid #e1e4e8; z-index: 10; }
 .canvas-name { width: min(340px, 40vw); min-height: 36px; border-color: transparent; font-size: 15px; font-weight: 650; background: transparent; }
 .canvas-name:hover { border-color: #d8dde3; }
@@ -191,6 +194,8 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
   .react-flow__controls { margin-bottom: 58px; }
   .drawer { width: 100vw; }
   .two-cols { grid-template-columns: 1fr; gap: 0; }
+  .workspace-alert { align-items: flex-start; flex-direction: column; }
+  .workspace-alert > div { width: 100%; justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
