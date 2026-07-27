@@ -162,7 +162,9 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .config-status.ready { border-color: #238279; background: #edf7f5; }
 .config-status span { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .config-status small { color: #737a84; overflow-wrap: anywhere; }
-.codes-output { min-height: 105px; margin-top: 10px; resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }
+.codes-result { display: grid; gap: 8px; margin-top: 10px; }
+.codes-result .secondary { width: 100%; }
+.codes-output { min-height: 105px; resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }
 .orders .accept { color: #14756c; background: #eaf5f3; }
 .toast { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-radius: 6px; color: #fff; background: #26323a; box-shadow: 0 8px 24px rgba(0,0,0,.18); font-size: 13px; }
 .toast.error { background: #a53b35; }

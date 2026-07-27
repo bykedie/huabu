@@ -255,6 +255,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
   async function createCodes() {
     if (busyRef.current || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100) return
+    if (codes.length && !window.confirm('新生成的兑换码会替换当前显示的明文码。确认已保存当前兑换码吗？')) return
     busyRef.current = true
     setBusy(true)
     try {
@@ -262,6 +263,23 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
       setCodes(result.codes)
       notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+  }
+  function closeAdmin() {
+    if (busyRef.current) {
+      notify({ type: 'error', text: '操作正在处理中，请等待完成后再关闭' })
+      return
+    }
+    if (codes.length && !window.confirm('兑换码明文关闭后无法再次查看。确认已经保存了吗？')) return
+    close()
+  }
+  function downloadCodes() {
+    if (!codes.length) return
+    const url = URL.createObjectURL(new Blob([`${codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `redeem-codes-${new Date().toISOString().slice(0, 10)}.txt`
+    link.click()
+    URL.revokeObjectURL(url)
   }
   async function review(order: Order, action: 'approve' | 'reject') {
     if (busyRef.current) return
@@ -279,9 +297,9 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     } catch (err) { notify({ type: 'error', text: committed ? '订单已处理，但界面刷新失败，请重新打开运营管理' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
-  return <Drawer title="运营管理" onClose={close}>
+  return <Drawer title="运营管理" onClose={closeAdmin}>
     {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在服务器 .env 中配置中转站地址和密钥'}</small></div></>}
-    <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <textarea className="codes-output" readOnly value={codes.join(String.fromCharCode(10))} />}</section>
+    <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
     <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
   </Drawer>
 }
