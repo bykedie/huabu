@@ -81,6 +81,8 @@ const passwordSchema = z.string()
   .min(8, '密码至少 8 位')
   .max(72)
   .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, '密码 UTF-8 编码后不能超过 72 字节')
+const dummyPasswordHash = '$2b$12$lzzqDX9QaibgIjulC5Z90OuTZYz27up7324qLJZsPAUw8/0xm1xC2'
+const loginError = () => fail(401, '邮箱或密码错误')
 export const estimatePromptTokens = (messages) => messages.reduce(
   (total, message) => total + Buffer.byteLength(message.content, 'utf8') + 16,
   16,
@@ -175,8 +177,32 @@ app.post('/api/auth/login', async (req, res, next) => {
   try {
     const body = parse(z.object({ email: z.string().trim().toLowerCase().email(), password: passwordSchema }), req.body)
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(body.email)
-    if (!user || !(await bcrypt.compare(body.password, user.password_hash))) throw fail(401, '邮箱或密码错误')
-    res.json({ token: sign(user), user: publicUser(user) })
+    const passwordMatches = await bcrypt.compare(body.password, user?.password_hash || dummyPasswordHash)
+    if (!user) throw loginError()
+    const authenticated = transaction(() => {
+      const current = db.prepare(`
+        SELECT *, login_locked_until > CURRENT_TIMESTAMP AS login_locked,
+          login_failure_started_at > datetime('now','-15 minutes') AS failure_window_active
+        FROM users WHERE id=?
+      `).get(user.id)
+      if (current.login_locked) return null
+      if (passwordMatches) {
+        db.prepare('UPDATE users SET login_failures=0,login_failure_started_at=NULL,login_locked_until=NULL WHERE id=?').run(user.id)
+        return current
+      }
+      const failures = current.failure_window_active ? Number(current.login_failures) + 1 : 1
+      if (failures >= 5) {
+        db.prepare("UPDATE users SET login_failures=?,login_failure_started_at=COALESCE(login_failure_started_at,CURRENT_TIMESTAMP),login_locked_until=datetime('now','+15 minutes') WHERE id=?")
+          .run(failures, user.id)
+      } else if (current.failure_window_active) {
+        db.prepare('UPDATE users SET login_failures=? WHERE id=?').run(failures, user.id)
+      } else {
+        db.prepare('UPDATE users SET login_failures=1,login_failure_started_at=CURRENT_TIMESTAMP,login_locked_until=NULL WHERE id=?').run(user.id)
+      }
+      return null
+    })
+    if (!authenticated) throw loginError()
+    res.json({ token: sign(authenticated), user: publicUser(authenticated) })
   } catch (error) { next(error) }
 })
 app.get('/api/me', auth, (req, res, next) => {

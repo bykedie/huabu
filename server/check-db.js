@@ -14,7 +14,10 @@ try {
   if (result.quick_check !== 'ok') throw new Error(`SQLite 校验失败：${result.quick_check}`)
 
   const requiredSchema = {
-    users: ['id', 'email', 'password_hash', 'name', 'role', 'balance'],
+    users: [
+      'id', 'email', 'password_hash', 'name', 'role', 'balance',
+      ...(allowLegacy ? [] : ['login_failures', 'login_failure_started_at', 'login_locked_until']),
+    ],
     canvases: ['id', 'user_id', 'name', 'document', ...(allowLegacy ? [] : ['version'])],
     ledger: ['id', 'user_id', 'amount', 'balance_after', 'kind', 'reference'],
     redeem_codes: ['id', 'code_hash', 'points', 'max_uses', 'uses', 'created_by'],

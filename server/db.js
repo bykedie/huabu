@@ -11,6 +11,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
   name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
+  login_failures INTEGER NOT NULL DEFAULT 0, login_failure_started_at TEXT, login_locked_until TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS canvases (
@@ -58,6 +59,16 @@ if (!generationColumns.some((column) => column.name === 'request_hash')) {
 const canvasColumns = db.prepare('PRAGMA table_info(canvases)').all()
 if (!canvasColumns.some((column) => column.name === 'version')) {
   db.exec('ALTER TABLE canvases ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
+}
+const userColumns = db.prepare('PRAGMA table_info(users)').all()
+if (!userColumns.some((column) => column.name === 'login_failures')) {
+  db.exec('ALTER TABLE users ADD COLUMN login_failures INTEGER NOT NULL DEFAULT 0')
+}
+if (!userColumns.some((column) => column.name === 'login_failure_started_at')) {
+  db.exec('ALTER TABLE users ADD COLUMN login_failure_started_at TEXT')
+}
+if (!userColumns.some((column) => column.name === 'login_locked_until')) {
+  db.exec('ALTER TABLE users ADD COLUMN login_locked_until TEXT')
 }
 
 export function transaction(fn) {

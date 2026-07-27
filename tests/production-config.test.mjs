@@ -68,6 +68,12 @@ test('database startup migrates existing generations without losing rows', () =>
   const databasePath = join(databaseDirectory, 'test.db')
   const legacy = new DatabaseSync(databasePath)
   legacy.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+      name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO users (id,email,password_hash,name) VALUES ('legacy-user','legacy@example.com','hash','Legacy');
     CREATE TABLE canvases (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
       document TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
@@ -88,9 +94,11 @@ test('database startup migrates existing generations without losing rows', () =>
     const { db } = await import('./server/db.js')
     const columns = db.prepare('PRAGMA table_info(generations)').all().map((column) => column.name)
     const canvasColumns = db.prepare('PRAGMA table_info(canvases)').all().map((column) => column.name)
+    const userColumns = db.prepare('PRAGMA table_info(users)').all().map((column) => column.name)
+    const user = db.prepare('SELECT id,login_failures,login_failure_started_at,login_locked_until FROM users WHERE id=?').get('legacy-user')
     const canvas = db.prepare('SELECT id,version FROM canvases WHERE id=?').get('legacy-canvas')
     const row = db.prepare('SELECT id,request_hash FROM generations WHERE id=?').get('legacy-id')
-    process.stdout.write(JSON.stringify({ columns, canvasColumns, canvas, row }))
+    process.stdout.write(JSON.stringify({ columns, canvasColumns, userColumns, user, canvas, row }))
     db.close()
   `
   try {
@@ -99,6 +107,10 @@ test('database startup migrates existing generations without losing rows', () =>
     const migrated = JSON.parse(result.stdout)
     assert.ok(migrated.columns.includes('request_hash'))
     assert.ok(migrated.canvasColumns.includes('version'))
+    assert.ok(migrated.userColumns.includes('login_failures'))
+    assert.ok(migrated.userColumns.includes('login_failure_started_at'))
+    assert.ok(migrated.userColumns.includes('login_locked_until'))
+    assert.deepEqual(migrated.user, { id: 'legacy-user', login_failures: 0, login_failure_started_at: null, login_locked_until: null })
     assert.deepEqual(migrated.canvas, { id: 'legacy-canvas', version: 0 })
     assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
   } finally {
@@ -118,7 +130,7 @@ test('database restore checker accepts only a complete, consistent canvas databa
     const legacyInitialized = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
     assert.equal(legacyInitialized.status, 0, legacyInitialized.stderr)
     const legacy = new DatabaseSync(legacyPath)
-    legacy.exec('ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE health_probe')
+    legacy.exec('ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE health_probe')
     legacy.close()
     assert.notEqual(runDatabaseCheck(legacyPath).status, 0)
     assert.equal(runDatabaseCheck(legacyPath, true).status, 0)

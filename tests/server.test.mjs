@@ -363,6 +363,41 @@ test('authentication rejects passwords that bcrypt would silently truncate', asy
   assert.match(registration.body.error, /72 字节/)
 })
 
+test('login failures persist across source IPs and expire safely', async () => {
+  const member = await register('Login Throttle User', 'login-throttle@example.com')
+  const login = (password, ip) => request('/auth/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': ip },
+    body: JSON.stringify({ email: 'login-throttle@example.com', password }),
+  })
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const result = await login('wrong-password', `198.51.100.${attempt}`)
+    assert.equal(result.status, 401)
+    assert.equal(result.body.error, '邮箱或密码错误')
+  }
+  const locked = db.prepare('SELECT login_failures,login_locked_until FROM users WHERE id=?').get(member.user.id)
+  assert.equal(Number(locked.login_failures), 5)
+  assert.ok(locked.login_locked_until)
+  assert.equal((await login('password123', '203.0.113.1')).status, 401)
+
+  db.prepare("UPDATE users SET login_failure_started_at=datetime('now','-16 minutes'),login_locked_until=datetime('now','-1 second') WHERE id=?").run(member.user.id)
+  assert.equal((await login('wrong-password', '203.0.113.2')).status, 401)
+  const restarted = db.prepare('SELECT login_failures,login_locked_until FROM users WHERE id=?').get(member.user.id)
+  assert.equal(Number(restarted.login_failures), 1)
+  assert.equal(restarted.login_locked_until, null)
+  assert.equal((await login('password123', '203.0.113.3')).status, 200)
+  assert.deepEqual(
+    { ...db.prepare('SELECT login_failures,login_failure_started_at,login_locked_until FROM users WHERE id=?').get(member.user.id) },
+    { login_failures: 0, login_failure_started_at: null, login_locked_until: null },
+  )
+  const unknown = await request('/auth/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '203.0.113.4' },
+    body: JSON.stringify({ email: 'missing-account@example.com', password: 'password123' }),
+  })
+  assert.deepEqual(unknown, { status: 401, body: { error: '邮箱或密码错误' } })
+})
+
 test('authorization uses the current database role instead of a stale JWT claim', async () => {
   const user = await register('撤权测试用户', 'revoked-admin@example.com')
   db.prepare("UPDATE users SET role='admin' WHERE id=?").run(user.user.id)
