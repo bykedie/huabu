@@ -128,7 +128,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   assert.equal(codes.status, 201)
   const code = codes.body.codes[0]
-  assert.match(code, /^INK-[A-F0-9]{12}$/)
+  assert.match(code, /^INK-[A-F0-9]{32}$/)
   const redeemed = await request('/redeem', { token: member.token, method: 'POST', body: JSON.stringify({ code }) })
   assert.equal(redeemed.status, 200)
   assert.equal(redeemed.body.balance, 350)

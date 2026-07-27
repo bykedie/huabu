@@ -145,7 +145,7 @@ app.get('/api/health', (_req, res) => {
   }
 })
 app.get('/api/config', auth, (_req, res) => res.json({ aiModel: allowedModels[0], centsPerPoint, topupInstructions }))
-app.post('/api/auth/register', (req, res, next) => {
+app.post('/api/auth/register', async (req, res, next) => {
   try {
     const body = parse(z.object({
       name: z.string().trim().min(2, '昵称至少 2 个字').max(30),
@@ -154,12 +154,13 @@ app.post('/api/auth/register', (req, res, next) => {
       setupToken: z.string().max(256).optional(),
     }), req.body)
     const id = randomUUID()
+    const passwordHash = await bcrypt.hash(body.password, 12)
     let role
     transaction(() => {
       const hasAdmin = Number(db.prepare("SELECT COUNT(*) count FROM users WHERE role='admin'").get().count) > 0
       role = !hasAdmin && (validSetupToken(body.setupToken) || (!adminSetupToken && !isProduction)) ? 'admin' : 'user'
       db.prepare('INSERT INTO users (id,email,password_hash,name,role,balance) VALUES (?,?,?,?,?,0)')
-        .run(id, body.email, bcrypt.hashSync(body.password, 12), body.name, role)
+        .run(id, body.email, passwordHash, body.name, role)
       if (welcomePoints > 0) changeBalance(id, welcomePoints, 'welcome', id, '新用户赠送')
     })
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id)
@@ -169,11 +170,11 @@ app.post('/api/auth/register', (req, res, next) => {
     next(error)
   }
 })
-app.post('/api/auth/login', (req, res, next) => {
+app.post('/api/auth/login', async (req, res, next) => {
   try {
     const body = parse(z.object({ email: z.string().trim().toLowerCase().email(), password: passwordSchema }), req.body)
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(body.email)
-    if (!user || !bcrypt.compareSync(body.password, user.password_hash)) throw fail(401, '邮箱或密码错误')
+    if (!user || !(await bcrypt.compare(body.password, user.password_hash))) throw fail(401, '邮箱或密码错误')
     res.json({ token: sign(user), user: publicUser(user) })
   } catch (error) { next(error) }
 })
@@ -395,7 +396,7 @@ app.post('/api/admin/codes', auth, admin, (req, res, next) => {
       expiresAt: z.string().datetime().optional(),
     }), req.body)
     const codes = transaction(() => Array.from({ length: body.count }, () => {
-      const code = `INK-${randomBytes(6).toString('hex').toUpperCase()}`
+      const code = `INK-${randomBytes(16).toString('hex').toUpperCase()}`
       db.prepare('INSERT INTO redeem_codes (id,code_hash,label,points,max_uses,expires_at,created_by) VALUES (?,?,?,?,?,?,?)')
         .run(randomUUID(), hashCode(code), body.label || null, body.points, body.maxUses, body.expiresAt || null, req.auth.sub)
       return code
