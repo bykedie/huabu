@@ -32,7 +32,8 @@ if (isProduction && !hasExistingAdmin && (Buffer.byteLength(adminSetupToken) < 3
 const welcomePoints = numberSetting('WELCOME_POINTS', isProduction ? 0 : 100, { min: 0, max: 10000000, integer: true })
 const inputRate = numberSetting('AI_INPUT_POINTS_PER_1K', 1, { max: 1000000 })
 const outputRate = numberSetting('AI_OUTPUT_POINTS_PER_1K', 4, { max: 1000000 })
-const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 600000, integer: true })
+const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 120000, integer: true })
+const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
 const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
 const allowedModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
@@ -70,6 +71,38 @@ const validSetupToken = (value) => {
   const expected = Buffer.from(adminSetupToken)
   return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
+const passwordSchema = z.string()
+  .min(8, '密码至少 8 位')
+  .max(72)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, '密码 UTF-8 编码后不能超过 72 字节')
+
+async function readUpstreamJson(response) {
+  const declaredLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > aiMaxResponseBytes) {
+    await response.body?.cancel()
+    throw fail(502, '中转站返回内容过大')
+  }
+  if (!response.body) throw fail(502, '中转站返回了空响应')
+  const reader = response.body.getReader()
+  const chunks = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > aiMaxResponseBytes) {
+        await reader.cancel()
+        throw fail(502, '中转站返回内容过大')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  try { return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) }
+  catch { throw fail(502, '中转站返回了无效 JSON') }
+}
 
 function parse(schema, value) {
   const result = schema.safeParse(value)
@@ -80,7 +113,10 @@ function auth(req, _res, next) {
   try {
     const token = req.headers.authorization?.replace(/^Bearer /, '')
     if (!token) throw fail(401, '请先登录')
-    req.auth = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] })
+    const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] })
+    const user = db.prepare('SELECT id,role FROM users WHERE id=?').get(payload.sub)
+    if (!user) throw fail(401, '登录已失效')
+    req.auth = { ...payload, sub: user.id, role: user.role }
     next()
   } catch { next(fail(401, '登录已失效')) }
 }
@@ -96,7 +132,7 @@ app.post('/api/auth/register', (req, res, next) => {
     const body = parse(z.object({
       name: z.string().trim().min(2, '昵称至少 2 个字').max(30),
       email: z.string().trim().toLowerCase().email('邮箱格式不正确'),
-      password: z.string().min(8, '密码至少 8 位').max(72),
+      password: passwordSchema,
       setupToken: z.string().max(256).optional(),
     }), req.body)
     const id = randomUUID()
@@ -117,7 +153,7 @@ app.post('/api/auth/register', (req, res, next) => {
 })
 app.post('/api/auth/login', (req, res, next) => {
   try {
-    const body = parse(z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1) }), req.body)
+    const body = parse(z.object({ email: z.string().trim().toLowerCase().email(), password: passwordSchema }), req.body)
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(body.email)
     if (!user || !bcrypt.compareSync(body.password, user.password_hash)) throw fail(401, '邮箱或密码错误')
     res.json({ token: sign(user), user: publicUser(user) })
@@ -214,32 +250,38 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       })).min(1).max(50),
       maxTokens: z.number().int().min(16).max(8192).default(1024),
     }), req.body)
+    const model = body.model || allowedModels[0]
+    if (!allowedModels.includes(model)) throw fail(400, '该模型未开放')
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify({ model, messages: body.messages, maxTokens: body.maxTokens }))
+      .digest('hex')
     const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
+    if (cached?.request_hash && cached.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
     if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
-    const model = body.model || allowedModels[0]
-    if (!allowedModels.includes(model)) throw fail(400, '该模型未开放')
+    const base = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
+    const key = process.env.AI_API_KEY
+    if (!base || !key) throw fail(503, '管理员尚未配置 AI 中转站')
+    let url
+    try { url = new URL(`${base}/chat/completions`) }
+    catch { throw fail(500, '中转站地址无效') }
+    const allowedProtocols = isProduction ? ['https:'] : ['https:', 'http:']
+    if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
     const promptTokens = body.messages.reduce((total, message) => total + Buffer.byteLength(message.content, 'utf8'), 0)
     const reserved = Math.max(1, Math.ceil(promptTokens / 1000 * inputRate + body.maxTokens / 1000 * outputRate))
     generation = { id: randomUUID(), userId: req.auth.sub, reserved }
     try {
       transaction(() => {
         changeBalance(req.auth.sub, -reserved, 'ai_reserve', generation.id, `AI 调用预占：${model}`)
-        db.prepare('INSERT INTO generations (id,user_id,request_key,model,reserved,status) VALUES (?,?,?,?,?,?)')
-          .run(generation.id, req.auth.sub, body.requestKey, model, reserved, 'pending')
+        db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,model,reserved,status) VALUES (?,?,?,?,?,?,?)')
+          .run(generation.id, req.auth.sub, body.requestKey, requestHash, model, reserved, 'pending')
       })
     } catch (error) {
       generation = undefined
       if (String(error).includes('UNIQUE')) throw fail(409, '该请求正在处理中，请稍后重试')
       throw error
     }
-    const base = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
-    const key = process.env.AI_API_KEY
-    if (!base || !key) throw fail(503, '管理员尚未配置 AI 中转站')
-    const url = new URL(`${base}/chat/completions`)
-    const allowedProtocols = process.env.NODE_ENV === 'production' ? ['https:'] : ['https:', 'http:']
-    if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
     let upstream
     try {
       upstream = await fetch(url, {
@@ -253,9 +295,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       throw fail(502, '无法连接中转站')
     }
     if (!upstream.ok) throw fail(502, `中转站请求失败（${upstream.status}）`)
-    let data
-    try { data = await upstream.json() }
-    catch { throw fail(502, '中转站返回了无效 JSON') }
+    const data = await readUpstreamJson(upstream)
     const usage = data.usage || {}
     const content = data.choices?.[0]?.message?.content
     if (typeof content !== 'string') throw fail(502, '中转站返回格式不兼容')

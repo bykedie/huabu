@@ -1,10 +1,18 @@
 export type User = { id: string; email: string; name: string; role: 'admin' | 'user'; balance: number }
 
 const tokenKey = 'ink-canvas-token'
+const sessionEvents = new EventTarget()
 export const session = {
   get: () => localStorage.getItem(tokenKey),
   set: (token: string) => localStorage.setItem(tokenKey, token),
-  clear: () => localStorage.removeItem(tokenKey),
+  clear: () => {
+    localStorage.removeItem(tokenKey)
+    sessionEvents.dispatchEvent(new Event('clear'))
+  },
+  onClear: (listener: () => void) => {
+    sessionEvents.addEventListener('clear', listener)
+    return () => sessionEvents.removeEventListener('clear', listener)
+  },
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 const root = resolve(import.meta.dirname, '..')
 const secret = 'jwt-secret-that-is-longer-than-thirty-two-bytes'
@@ -41,6 +42,43 @@ test('production refuses unsafe secrets and invalid billing settings', () => {
   const invalidBilling = runApp({ CENTS_PER_POINT: '0' })
   assert.notEqual(invalidBilling.status, 0)
   assert.match(invalidBilling.stderr, /CENTS_PER_POINT/)
+
+  const excessiveAiTimeout = runApp({ AI_TIMEOUT_MS: '120001' })
+  assert.notEqual(excessiveAiTimeout.status, 0)
+  assert.match(excessiveAiTimeout.stderr, /AI_TIMEOUT_MS/)
+})
+
+test('database startup migrates existing generations without losing rows', () => {
+  const databaseDirectory = mkdtempSync(join(tmpdir(), 'ink-production-migration-'))
+  const databasePath = join(databaseDirectory, 'test.db')
+  const legacy = new DatabaseSync(databasePath)
+  legacy.exec(`
+    CREATE TABLE generations (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, request_key TEXT NOT NULL,
+      model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
+      response TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, request_key)
+    );
+    INSERT INTO generations (id,user_id,request_key,model,reserved,status)
+    VALUES ('legacy-id','legacy-user','legacy-request','gpt-4o-mini',1,'failed');
+  `)
+  legacy.close()
+  const script = `
+    const { db } = await import('./server/db.js')
+    const columns = db.prepare('PRAGMA table_info(generations)').all().map((column) => column.name)
+    const row = db.prepare('SELECT id,request_hash FROM generations WHERE id=?').get('legacy-id')
+    process.stdout.write(JSON.stringify({ columns, row }))
+    db.close()
+  `
+  try {
+    const result = runApp({}, script, databaseDirectory)
+    assert.equal(result.status, 0, result.stderr)
+    const migrated = JSON.parse(result.stdout)
+    assert.ok(migrated.columns.includes('request_hash'))
+    assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
+  } finally {
+    rmSync(databaseDirectory, { recursive: true, force: true })
+  }
 })
 
 test('production setup token grants only its holder the first admin role', () => {

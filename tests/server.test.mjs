@@ -100,6 +100,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(memberTopups.body.orders[0].status, 'approved')
 
   const beforeAI = (await request('/me', { token: member.token })).body.user.balance
+  const ledgerBeforeUnconfiguredAI = (await request('/wallet', { token: member.token })).body.ledger.length
   const ai = await request('/ai/chat', {
     token: member.token,
     method: 'POST',
@@ -112,8 +113,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(ai.status, 503)
   const wallet = await request('/wallet', { token: member.token })
   assert.equal(wallet.body.balance, beforeAI)
-  assert.equal(wallet.body.ledger[0].kind, 'ai_refund')
-  assert.equal(wallet.body.ledger[1].kind, 'ai_reserve')
+  assert.equal(wallet.body.ledger.length, ledgerBeforeUnconfiguredAI)
 
   const relay = (await import('node:http')).createServer((req, res) => {
     assert.equal(req.url, '/v1/chat/completions')
@@ -150,6 +150,14 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   assert.equal(success.body.cached, false)
   assert.deepEqual(replay.body, { ...success.body, cached: true })
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
+  const mismatchedReplay = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ ...successPayload, messages: [{ role: 'user', content: '不同的请求内容' }] }),
+  })
+  assert.equal(mismatchedReplay.status, 409)
+  assert.equal(mismatchedReplay.body.error, '该请求标识已用于不同内容')
   assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
 
   const interruptedId = crypto.randomUUID()
@@ -242,6 +250,77 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(retried.status, 200)
   assert.equal(retried.body.cached, false)
   assert.equal(retried.body.content, '这是一条模拟中转站回复')
+  await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+})
+
+test('authentication rejects passwords that bcrypt would silently truncate', async () => {
+  const password = '密码'.repeat(13)
+  assert.ok(Buffer.byteLength(password, 'utf8') > 72)
+  const registration = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ name: '长密码用户', email: 'long-password@example.com', password }),
+  })
+  assert.equal(registration.status, 400)
+  assert.match(registration.body.error, /72 字节/)
+})
+
+test('authorization uses the current database role instead of a stale JWT claim', async () => {
+  const user = await register('撤权测试用户', 'revoked-admin@example.com')
+  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(user.user.id)
+  const login = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'revoked-admin@example.com', password: 'password123' }),
+  })
+  assert.equal(login.status, 200)
+  assert.equal((await request('/admin/overview', { token: login.body.token })).status, 200)
+  db.prepare("UPDATE users SET role='user' WHERE id=?").run(user.user.id)
+  assert.equal((await request('/admin/overview', { token: login.body.token })).status, 403)
+})
+
+test('AI relay response size is bounded and reserved points are refunded', async () => {
+  const member = await register('响应限制用户', 'response-limit@example.com')
+  const relay = (await import('node:http')).createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.setHeader('content-length', String(2 * 1024 * 1024 + 1))
+    res.end()
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
+  process.env.AI_API_KEY = 'test-relay-key'
+  const before = member.user.balance
+  const result = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: 'oversized-response-0001', messages: [{ role: 'user', content: '测试响应限制' }], maxTokens: 128 }),
+  })
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, '中转站返回内容过大')
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, before)
+  await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+})
+
+test('AI relay chunked response size is bounded and reserved points are refunded', async () => {
+  const member = await register('分块响应用户', 'chunked-response-limit@example.com')
+  const relay = (await import('node:http')).createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    const chunk = Buffer.alloc(256 * 1024, 65)
+    for (let index = 0; index < 9; index += 1) res.write(chunk)
+    res.end()
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
+  process.env.AI_API_KEY = 'test-relay-key'
+  const before = member.user.balance
+  const result = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: 'chunked-oversized-response-0001', messages: [{ role: 'user', content: '测试分块响应限制' }], maxTokens: 128 }),
+  })
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, '中转站返回内容过大')
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, before)
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 

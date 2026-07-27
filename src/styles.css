@@ -76,7 +76,7 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .canvas-list > div > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-list > div.active > button:first-child { color: #126c63; font-weight: 650; }
 .canvas-delete { width: 31px; border: 0; background: transparent; color: #8c929b; opacity: 0; }
-.canvas-list > div:hover .canvas-delete { opacity: 1; }
+.canvas-list > div:hover .canvas-delete, .canvas-list > div:focus-within .canvas-delete { opacity: 1; }
 .sidebar-account { min-height: 66px; display: flex; align-items: center; gap: 4px; padding: 9px; border-top: 1px solid #e9ebee; }
 .sidebar-account > button:first-child { flex: 1; min-width: 0; border: 0; background: transparent; display: flex; align-items: center; gap: 9px; text-align: left; }
 .avatar { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 50%; background: #dcebe8; color: #146b63; font-weight: 700; }
@@ -194,4 +194,7 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}
+@media (hover: none) {
+  .canvas-delete { opacity: 1; }
 }

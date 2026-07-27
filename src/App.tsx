@@ -1,7 +1,8 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   addEdge, Background, BackgroundVariant, Connection, Controls, Edge, Handle, MiniMap,
-  Node, NodeProps, Position, ReactFlow, ReactFlowInstance, useEdgesState, useNodesState,
+  EdgeChange, Node, NodeChange, NodeProps, Position, ReactFlow, ReactFlowInstance,
+  useEdgesState, useNodesState,
 } from '@xyflow/react'
 import {
   Bot, Check, ChevronLeft, CircleDollarSign, FilePlus2, Image, LayoutDashboard,
@@ -111,7 +112,48 @@ function Auth({ onDone }: { onDone: (user: User) => void }) {
 }
 
 function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return <><button className="drawer-backdrop" aria-label="关闭" onClick={onClose} /><aside className="drawer"><header><h2>{title}</h2><button className="icon-button" title="关闭" onClick={onClose}><X size={19} /></button></header>{children}</aside></>
+  const drawerRef = useRef<HTMLElement>(null)
+  const onCloseRef = useRef(onClose)
+  const titleId = useId()
+  onCloseRef.current = onClose
+  useEffect(() => {
+    const drawer = drawerRef.current
+    if (!drawer) return
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+    const focusFirst = () => (drawer.querySelector<HTMLElement>(focusableSelector) || drawer).focus()
+    const frame = window.requestAnimationFrame(focusFirst)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(focusableSelector))
+      if (!focusable.length) {
+        event.preventDefault()
+        drawer.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown)
+      previousFocus?.focus()
+    }
+  }, [])
+  return <><div className="drawer-backdrop" aria-hidden="true" onClick={onClose} /><aside ref={drawerRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}><X size={19} /></button></header>{children}</aside></>
 }
 
 function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: () => void; close: () => void; notify: (notice: Notice) => void }) {
@@ -124,6 +166,7 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   const [amount, setAmount] = useState(10)
   const [proof, setProof] = useState('')
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const load = useCallback(async () => {
     const [wallet, topups, publicConfig] = await Promise.all([
       api<{ ledger: Entry[] }>('/wallet'),
@@ -136,7 +179,8 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   }, [])
   useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
   async function redeem() {
-    if (busy) return
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     try {
       await api('/redeem', { method: 'POST', body: JSON.stringify({ code }) })
@@ -144,17 +188,18 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
       await load()
       refresh()
       notify({ type: 'ok', text: '兑换成功，积分已到账' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { setBusy(false) }
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   async function topup() {
-    if (busy || !Number.isFinite(amount) || amount < 1 || amount > 100000 || proof.trim().length < 4) return
+    if (busyRef.current || !Number.isFinite(amount) || amount < 1 || amount > 100000 || proof.trim().length < 4) return
+    busyRef.current = true
     setBusy(true)
     try {
       await api('/topups', { method: 'POST', body: JSON.stringify({ amountCents: Math.round(amount * 100), proof }) })
       setProof('')
       await load()
       notify({ type: 'ok', text: '充值申请已提交，等待管理员审核' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { setBusy(false) }
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const statusText = { pending: '待审核', approved: '已到账', rejected: '已驳回' }
   const estimatedPoints = Number.isFinite(amount) && amount >= 0 ? Math.floor(amount * 100 / config.centsPerPoint) : 0
@@ -174,28 +219,36 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   const [points, setPoints] = useState(100)
   const [count, setCount] = useState(1)
   const [codes, setCodes] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const load = useCallback(() => api<AdminData>('/admin/overview').then(setData), [])
   useEffect(() => { void load() }, [load])
   async function createCodes() {
+    if (busyRef.current || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100) return
+    busyRef.current = true
+    setBusy(true)
     try {
       const result = await api<{ codes: string[] }>('/admin/codes', { method: 'POST', body: JSON.stringify({ points, count, maxUses: 1, label: '后台生成' }) })
       setCodes(result.codes)
       notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) }
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   async function review(id: string, action: 'approve' | 'reject') {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
     try {
       await api(`/admin/topups/${id}/${action}`, { method: 'POST' })
       await load()
       if (action === 'approve') refresh()
       notify({ type: 'ok', text: action === 'approve' ? '积分已到账' : '订单已驳回' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) }
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
   return <Drawer title="运营管理" onClose={close}>
     {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在服务器 .env 中配置中转站地址和密钥'}</small></div></>}
-    <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes}>生成兑换码</button>{codes.length > 0 && <textarea className="codes-output" readOnly value={codes.join(String.fromCharCode(10))} />}</section>
-    <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" onClick={() => review(order.id, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" onClick={() => review(order.id, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
+    <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <textarea className="codes-output" readOnly value={codes.join(String.fromCharCode(10))} />}</section>
+    <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order.id, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order.id, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
   </Drawer>
 }
 
@@ -268,8 +321,14 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const canvas = { ...current }
     const savedName = canvas.name.trim() || '未命名画布'
     const savedRevision = revision.current
-    const cleanNodes = nodes.map((node) => ({ ...node, data: { kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl } }))
-    const cleanEdges = edges.map((edge) => ({ ...edge }))
+    const cleanNodes = nodes.map((node) => {
+      const { selected: _selected, dragging: _dragging, measured: _measured, ...persistedNode } = node
+      return { ...persistedNode, data: { kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl } }
+    })
+    const cleanEdges = edges.map((edge) => {
+      const { selected: _selected, ...persistedEdge } = edge
+      return persistedEdge
+    })
     const persist = async () => {
       if (deletedCanvasIds.current.has(canvas.id)) return true
       if (activeCanvasId.current === canvas.id) setSaveState('saving')
@@ -418,6 +477,14 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setEdges((items) => addEdge({ ...connection, type: 'smoothstep' }, items))
     markDirty()
   }, [markDirty, setEdges])
+  const changeNodes = useCallback((changes: NodeChange<CanvasNode>[]) => {
+    onNodesChange(changes)
+    if (changes.some((change) => change.type === 'position' || change.type === 'add' || change.type === 'remove' || change.type === 'replace')) markDirty()
+  }, [markDirty, onNodesChange])
+  const changeEdges = useCallback((changes: EdgeChange<Edge>[]) => {
+    onEdgesChange(changes)
+    if (changes.some((change) => change.type === 'add' || change.type === 'remove' || change.type === 'replace')) markDirty()
+  }, [markDirty, onEdgesChange])
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       if (persistedRevision.current >= revision.current && aiInFlight.current === 0) return
@@ -433,6 +500,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     session.clear()
     setUser(null)
   }, [setUser])
+  useEffect(() => session.onClear(() => {
+    if (persistedRevision.current >= revision.current && aiInFlight.current === 0) setUser(null)
+    else setNotice({ type: 'error', text: '登录已失效；未保存内容仍保留在本页，请整理后刷新并重新登录' })
+  }), [setUser])
 
   return <main className="workspace">
     <aside className={`sidebar ${sidebar ? 'open' : ''}`}>
@@ -445,7 +516,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     <section className="canvas-shell">
       <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button" title="立即保存" onClick={() => void flush()}><Save size={18} /></button></div></header>
       {current ? <div className="flow-wrap">
-        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(changes) => { onNodesChange(changes); markDirty() }} onEdgesChange={(changes) => { onEdgesChange(changes); markDirty() }} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
+        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#c9cdd3" />
           <Controls position="bottom-right" showInteractive={false} />
           <MiniMap position="bottom-right" pannable zoomable nodeColor={(node) => node.data?.kind === 'ai' ? '#80cbc4' : node.data?.kind === 'note' ? '#efb64f' : '#aab7c8'} />
@@ -455,7 +526,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     </section>
     {panel === 'wallet' && <WalletDrawer user={user} refresh={() => void refreshUser()} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={() => void refreshUser()} />}
-    {notice && <div className={`toast ${notice.type}`}>{notice.type === 'ok' ? <Check size={16} /> : <X size={16} />}{notice.text}</div>}
+    {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'ok' ? <Check size={16} /> : <X size={16} />}{notice.text}</div>}
   </main>
 }
 

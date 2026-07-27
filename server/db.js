@@ -39,13 +39,17 @@ CREATE TABLE IF NOT EXISTS topup_orders (
 );
 CREATE TABLE IF NOT EXISTS generations (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
-  model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
+  request_hash TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
   response TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, request_key)
 );
 CREATE INDEX IF NOT EXISTS idx_canvas_user ON canvases(user_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at DESC);
 `)
+const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
+if (!generationColumns.some((column) => column.name === 'request_hash')) {
+  db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')
+}
 
 export function transaction(fn) {
   db.exec('BEGIN IMMEDIATE')
