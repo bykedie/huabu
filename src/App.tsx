@@ -306,6 +306,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
 
 function Workspace({ user, setUser }: { user: User; setUser: (user: User | null) => void }) {
   const [canvases, setCanvases] = useState<CanvasInfo[]>([])
+  const canvasesRef = useRef<CanvasInfo[]>([])
   const [current, setCurrent] = useState<CanvasInfo | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -330,6 +331,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const deletedCanvasIds = useRef(new Set<string>())
   const openRequest = useRef(0)
   activeCanvasId.current = current?.id || null
+  const updateCanvases = useCallback((update: CanvasInfo[] | ((items: CanvasInfo[]) => CanvasInfo[])) => {
+    const next = typeof update === 'function' ? update(canvasesRef.current) : update
+    canvasesRef.current = next
+    setCanvases(next)
+    return next
+  }, [])
 
   const refreshUser = useCallback(async () => {
     const result = await api<{ user: User }>('/me')
@@ -387,7 +394,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
           localStorage.removeItem(key)
           resolvedAIKeys.current.delete(key)
         }
-        setCanvases((items) => items.map((item) => item.id === canvas.id ? { ...item, name: savedName, version: result.version } : item))
+        updateCanvases((items) => items.map((item) => item.id === canvas.id ? { ...item, name: savedName, version: result.version } : item))
         if (activeCanvasId.current === canvas.id) {
           setCurrent((item) => item?.id === canvas.id ? {
             ...item,
@@ -414,7 +421,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     }
     saveQueue.current = saveQueue.current.then(persist, persist)
     return saveQueue.current
-  }, [current, edges, nodes, user.id])
+  }, [current, edges, nodes, updateCanvases, user.id])
   saveRef.current = save
   const flush = useCallback(async () => {
     if (blockedReason === 'session' || blockedReason === 'conflict') return false
@@ -465,10 +472,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   }, [setEdges, setNodes, user.id])
   useEffect(() => {
     api<{ canvases: CanvasInfo[] }>('/canvases').then((result) => {
-      setCanvases(result.canvases)
+      updateCanvases(result.canvases)
       if (result.canvases[0]) void openCanvas(result.canvases[0].id)
     }).catch((err) => setNotice({ type: 'error', text: err.message }))
-  }, [openCanvas])
+  }, [openCanvas, updateCanvases])
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(null), 3200)
@@ -484,7 +491,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       if (activeCanvasId.current && !(await flushRef.current())) return
       const requestId = ++openRequest.current
       const result = await api<{ canvas: CanvasInfo }>('/canvases', { method: 'POST', body: JSON.stringify({ name: '未命名画布' }) })
-      setCanvases((items) => items.some((item) => item.id === result.canvas.id) ? items : [result.canvas, ...items])
+      updateCanvases((items) => items.some((item) => item.id === result.canvas.id) ? items : [result.canvas, ...items])
       if (!(await flushRef.current()) || requestId !== openRequest.current) return
       const first: CanvasNode = { id: uid(), type: 'canvasNode', position: { x: 80, y: 80 }, data: { kind: 'note', title: '欢迎来到墨屿', content: '从左侧添加内容，拖动画布探索空间。节点会自动保存。' } }
       activeCanvasId.current = result.canvas.id
@@ -519,8 +526,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       void flushRef.current()
       return
     }
-    const remaining = canvases.filter((canvas) => canvas.id !== id)
-    setCanvases(remaining)
+    const remaining = updateCanvases((items) => items.filter((canvas) => canvas.id !== id))
     if (activeCanvasId.current === id) {
       ++openRequest.current
       activeCanvasId.current = null
@@ -529,7 +535,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       setCurrent(null)
       setNodes([])
       setEdges([])
-      if (remaining[0]) await openCanvas(remaining[0].id)
+      const next = remaining.find((canvas) => !deletedCanvasIds.current.has(canvas.id))
+      if (next) await openCanvas(next.id)
     }
   }
   useEffect(() => {
