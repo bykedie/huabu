@@ -23,6 +23,7 @@ try {
     redeem_codes: ['id', 'code_hash', 'points', 'max_uses', 'uses', 'created_by'],
     redemptions: ['code_id', 'user_id'],
     topup_orders: ['id', 'user_id', 'amount_cents', 'points', 'status', 'proof'],
+    ...(!allowLegacy ? { admin_audit: ['id', 'actor_id', 'action', 'target_id', 'details', 'created_at'] } : {}),
     generations: ['id', 'user_id', 'request_key', ...(allowLegacy ? [] : ['request_hash']), 'reserved', 'charged', 'status'],
     ...(!allowLegacy ? { health_probe: ['id', 'value'] } : {}),
   }

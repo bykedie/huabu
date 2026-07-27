@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS topup_orders (
   points INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', proof TEXT,
   reviewed_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reviewed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id TEXT PRIMARY KEY, actor_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL,
+  target_id TEXT, details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS generations (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
   request_hash TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
@@ -52,6 +56,11 @@ CREATE TABLE IF NOT EXISTS health_probe (
 INSERT OR IGNORE INTO health_probe (id,value) VALUES (1,0);
 CREATE INDEX IF NOT EXISTS idx_canvas_user ON canvases(user_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at DESC);
+CREATE TRIGGER IF NOT EXISTS admin_audit_no_update BEFORE UPDATE ON admin_audit
+BEGIN SELECT RAISE(ABORT, 'admin audit records are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS admin_audit_no_delete BEFORE DELETE ON admin_audit
+BEGIN SELECT RAISE(ABORT, 'admin audit records are immutable'); END;
 `)
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {

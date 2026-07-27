@@ -131,7 +131,7 @@ test('database restore checker accepts only a complete, consistent canvas databa
     const legacyInitialized = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
     assert.equal(legacyInitialized.status, 0, legacyInitialized.stderr)
     const legacy = new DatabaseSync(legacyPath)
-    legacy.exec('ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE health_probe')
+    legacy.exec('ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE admin_audit; DROP TABLE health_probe')
     legacy.close()
     assert.notEqual(runDatabaseCheck(legacyPath).status, 0)
     assert.equal(runDatabaseCheck(legacyPath, true).status, 0)

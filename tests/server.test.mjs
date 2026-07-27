@@ -153,6 +153,24 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const memberTopups = await request('/topups', { token: member.token })
   assert.equal(memberTopups.body.orders[0].status, 'approved')
 
+  const rejectedTopup = await request('/topups', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ amountCents: 500, proof: 'TEST-TRADE-002' }),
+  })
+  const rejectedOrderId = rejectedTopup.body.order.id
+  assert.equal((await request(`/admin/topups/${rejectedOrderId}/reject`, { token: admin.token, method: 'POST' })).status, 200)
+  assert.equal((await request(`/admin/topups/${rejectedOrderId}/reject`, { token: admin.token, method: 'POST' })).status, 409)
+  const overview = await request('/admin/overview', { token: admin.token })
+  assert.deepEqual(overview.body.audit.map((entry) => entry.action), ['topup.reject', 'topup.approve', 'codes.create'])
+  assert.ok(overview.body.audit.every((entry) => entry.actor_email === 'admin@example.com'))
+  assert.deepEqual(overview.body.audit[0].details, { userId: member.user.id, amountCents: 500, points: 500 })
+  assert.deepEqual(overview.body.audit[2].details, { count: 1, points: 250, maxUses: 1, label: '测试码' })
+  const auditId = overview.body.audit[0].id
+  assert.throws(() => db.prepare('UPDATE admin_audit SET action=? WHERE id=?').run('tampered', auditId), /immutable/)
+  assert.throws(() => db.prepare('DELETE FROM admin_audit WHERE id=?').run(auditId), /immutable/)
+  assert.equal(Number(db.prepare('SELECT COUNT(*) count FROM admin_audit').get().count), 3)
+
   const beforeAI = (await request('/me', { token: member.token })).body.user.balance
   const ledgerBeforeUnconfiguredAI = (await request('/wallet', { token: member.token })).body.ledger.length
   const ai = await request('/ai/chat', {

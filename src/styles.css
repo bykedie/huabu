@@ -168,6 +168,9 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .codes-result .secondary { width: 100%; }
 .codes-output { min-height: 105px; resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }
 .orders .accept { color: #14756c; background: #eaf5f3; }
+.audit-list > div { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid #edf0f2; }
+.audit-list strong { font-size: 13px; font-weight: 650; }
+.audit-list small { color: #858b94; font-size: 11px; overflow-wrap: anywhere; }
 .toast { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-radius: 6px; color: #fff; background: #26323a; box-shadow: 0 8px 24px rgba(0,0,0,.18); font-size: 13px; }
 .toast.error { background: #a53b35; }
 .app-loading { height: 100%; display: flex; align-items: center; justify-content: center; gap: 12px; color: #677079; }

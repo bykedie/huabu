@@ -314,7 +314,8 @@ function AccountDrawer({ user, close, notify }: { user: User; close: () => void;
 
 function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
   type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
-  type AdminData = { stats: Record<string, number>; orders: Order[]; ai: { configured: boolean; baseUrl: string } }
+  type AuditEntry = { id: string; action: string; target_id?: string; actor_email: string; details: Record<string, string | number | null>; created_at: string }
+  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; ai: { configured: boolean; baseUrl: string } }
   const [data, setData] = useState<AdminData | null>(null)
   const [points, setPoints] = useState(100)
   const [count, setCount] = useState(1)
@@ -331,6 +332,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     try {
       const result = await api<{ codes: string[] }>('/admin/codes', { method: 'POST', body: JSON.stringify({ points, count, maxUses: 1, label: '后台生成' }) })
       setCodes(result.codes)
+      await load()
       notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
@@ -367,10 +369,14 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     } catch (err) { notify({ type: 'error', text: committed ? '订单已处理，但界面刷新失败，请重新打开运营管理' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
+  const auditText = (entry: AuditEntry) => entry.action === 'codes.create'
+    ? `生成 ${entry.details.count} 个兑换码 · 每码 ${entry.details.points} 积分`
+    : `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
   return <Drawer title="运营管理" onClose={closeAdmin}>
     {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在服务器 .env 中配置中转站地址和密钥'}</small></div></>}
     <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
     <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
+    <section className="drawer-section"><h3>操作审计</h3><div className="audit-list">{data?.audit.map((entry) => <div key={entry.id}><strong>{auditText(entry)}</strong><small>{entry.actor_email} · {new Date(entry.created_at + 'Z').toLocaleString()}</small></div>)}{data?.audit.length === 0 && <p className="muted">暂无后台操作记录</p>}</div></section>
   </Drawer>
 }
 

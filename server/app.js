@@ -87,6 +87,10 @@ const passwordSchema = z.string()
   .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, '密码 UTF-8 编码后不能超过 72 字节')
 const dummyPasswordHash = '$2b$12$lzzqDX9QaibgIjulC5Z90OuTZYz27up7324qLJZsPAUw8/0xm1xC2'
 const loginError = () => fail(401, '邮箱或密码错误')
+const auditAdmin = (actorId, action, targetId, details) => {
+  db.prepare('INSERT INTO admin_audit (id,actor_id,action,target_id,details) VALUES (?,?,?,?,?)')
+    .run(randomUUID(), actorId, action, targetId || null, JSON.stringify(details))
+}
 export const estimatePromptTokens = (messages) => messages.reduce(
   (total, message) => total + Buffer.byteLength(message.content, 'utf8') + 16,
   16,
@@ -430,9 +434,15 @@ app.get('/api/admin/overview', auth, admin, (_req, res) => {
     pendingTopups: Number(db.prepare("SELECT COUNT(*) n FROM topup_orders WHERE status='pending'").get().n),
   }
   const orders = db.prepare('SELECT o.*,u.email FROM topup_orders o JOIN users u ON u.id=o.user_id ORDER BY o.created_at DESC LIMIT 100').all()
+  const audit = db.prepare(`
+    SELECT a.id,a.action,a.target_id,a.details,a.created_at,u.email actor_email
+    FROM admin_audit a JOIN users u ON u.id=a.actor_id
+    ORDER BY a.created_at DESC,a.rowid DESC LIMIT 100
+  `).all().map((item) => ({ ...item, details: JSON.parse(item.details) }))
   res.json({
     stats,
     orders,
+    audit,
     ai: {
       configured: Boolean(process.env.AI_BASE_URL && process.env.AI_API_KEY),
       baseUrl: process.env.AI_BASE_URL || '',
@@ -451,12 +461,16 @@ app.post('/api/admin/codes', auth, admin, (req, res, next) => {
       label: z.string().trim().max(100).optional(),
       expiresAt: z.string().datetime().optional(),
     }), req.body)
-    const codes = transaction(() => Array.from({ length: body.count }, () => {
-      const code = `INK-${randomBytes(16).toString('hex').toUpperCase()}`
-      db.prepare('INSERT INTO redeem_codes (id,code_hash,label,points,max_uses,expires_at,created_by) VALUES (?,?,?,?,?,?,?)')
-        .run(randomUUID(), hashCode(code), body.label || null, body.points, body.maxUses, body.expiresAt || null, req.auth.sub)
-      return code
-    }))
+    const codes = transaction(() => {
+      const generated = Array.from({ length: body.count }, () => {
+        const code = `INK-${randomBytes(16).toString('hex').toUpperCase()}`
+        db.prepare('INSERT INTO redeem_codes (id,code_hash,label,points,max_uses,expires_at,created_by) VALUES (?,?,?,?,?,?,?)')
+          .run(randomUUID(), hashCode(code), body.label || null, body.points, body.maxUses, body.expiresAt || null, req.auth.sub)
+        return code
+      })
+      auditAdmin(req.auth.sub, 'codes.create', null, { count: body.count, points: body.points, maxUses: body.maxUses, label: body.label || null })
+      return generated
+    })
     res.status(201).json({ codes })
   } catch (error) { next(error) }
 })
@@ -469,16 +483,22 @@ app.post('/api/admin/topups/:id/approve', auth, admin, (req, res, next) => {
       db.prepare("UPDATE topup_orders SET status='approved',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?")
         .run(req.auth.sub, item.id)
       changeBalance(item.user_id, Number(item.points), 'topup', item.id, '充值到账')
+      auditAdmin(req.auth.sub, 'topup.approve', item.id, { userId: item.user_id, amountCents: Number(item.amount_cents), points: Number(item.points) })
       return { ...item, status: 'approved' }
     })
     res.json({ order })
   } catch (error) { next(error) }
 })
 app.post('/api/admin/topups/:id/reject', auth, admin, (req, res, next) => {
-  const result = db.prepare("UPDATE topup_orders SET status='rejected',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'")
-    .run(req.auth.sub, req.params.id)
-  if (!result.changes) return next(fail(409, '订单不存在或已处理'))
-  res.json({ ok: true })
+  try {
+    transaction(() => {
+      const item = db.prepare("SELECT * FROM topup_orders WHERE id=? AND status='pending'").get(req.params.id)
+      if (!item) throw fail(409, '订单不存在或已处理')
+      db.prepare("UPDATE topup_orders SET status='rejected',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").run(req.auth.sub, item.id)
+      auditAdmin(req.auth.sub, 'topup.reject', item.id, { userId: item.user_id, amountCents: Number(item.amount_cents), points: Number(item.points) })
+    })
+    res.json({ ok: true })
+  } catch (error) { next(error) }
 })
 
 app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }))
