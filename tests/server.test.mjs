@@ -8,12 +8,13 @@ const temp = mkdtempSync(join(tmpdir(), 'ink-canvas-'))
 process.env.DB_PATH = join(temp, 'test.db')
 process.env.JWT_SECRET = 'test-secret-at-least-32-characters'
 process.env.WELCOME_POINTS = '100'
+process.env.TOPUP_INSTRUCTIONS = '测试收款方式'
 process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
 
 const { default: app } = await import('../server/app.js')
-const { db } = await import('../server/db.js')
+const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
 const server = app.listen(0, '127.0.0.1')
 await new Promise((resolve) => server.once('listening', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api`
@@ -42,6 +43,10 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(admin.user.role, 'admin')
   assert.equal(member.user.role, 'user')
   assert.equal(member.user.balance, 100)
+  const config = await request('/config', { token: member.token })
+  assert.equal(config.status, 200)
+  assert.equal(config.body.centsPerPoint, 1)
+  assert.equal((await request('/missing-endpoint', { token: member.token })).status, 404)
 
   const created = await request('/canvases', {
     token: member.token,
@@ -82,9 +87,17 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   assert.equal(topup.status, 201)
   const orderId = topup.body.order.id
+  const duplicateTopup = await request('/topups', {
+    token: admin.token,
+    method: 'POST',
+    body: JSON.stringify({ amountCents: 1000, proof: 'test-trade-001' }),
+  })
+  assert.equal(duplicateTopup.status, 409)
   assert.equal((await request(`/admin/topups/${orderId}/approve`, { token: admin.token, method: 'POST' })).status, 200)
   assert.equal((await request(`/admin/topups/${orderId}/approve`, { token: admin.token, method: 'POST' })).status, 409)
   assert.equal((await request('/me', { token: member.token })).body.user.balance, 1350)
+  const memberTopups = await request('/topups', { token: member.token })
+  assert.equal(memberTopups.body.orders[0].status, 'approved')
 
   const beforeAI = (await request('/me', { token: member.token })).body.user.balance
   const ai = await request('/ai/chat', {
@@ -135,8 +148,100 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
     method: 'POST',
     body: JSON.stringify(successPayload),
   })
-  assert.deepEqual(replay.body, success.body)
+  assert.equal(success.body.cached, false)
+  assert.deepEqual(replay.body, { ...success.body, cached: true })
   assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
+
+  const interruptedId = crypto.randomUUID()
+  transaction(() => {
+    changeBalance(member.user.id, -7, 'ai_reserve', interruptedId, '模拟进程中断')
+    db.prepare('INSERT INTO generations (id,user_id,request_key,model,reserved,status) VALUES (?,?,?,?,?,?)')
+      .run(interruptedId, member.user.id, 'interrupted-request-0001', 'gpt-4o-mini', 7, 'pending')
+  })
+  assert.equal(recoverPendingGenerations(), 1)
+  assert.equal(recoverPendingGenerations(), 0)
+  assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(interruptedId).status, 'failed')
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
+  const recoveryEntries = db.prepare('SELECT amount FROM ledger WHERE reference=? ORDER BY rowid').all(interruptedId)
+  assert.deepEqual(recoveryEntries.map((entry) => Number(entry.amount)), [-7, 7])
+
+  let releaseDelayedRelay
+  const delayedRelayReady = new Promise((resolve) => { releaseDelayedRelay = resolve })
+  const delayedRelay = (await import('node:http')).createServer(async (_req, res) => {
+    await delayedRelayReady
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ choices: [{ message: { content: '不应结算的迟到回复' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }))
+  })
+  delayedRelay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => delayedRelay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${delayedRelay.address().port}/v1`
+  const overlapKey = 'recovery-overlap-request-0001'
+  const overlapCall = request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: overlapKey, messages: [{ role: 'user', content: '模拟恢复竞争' }], maxTokens: 128 }),
+  })
+  while (!db.prepare('SELECT id FROM generations WHERE request_key=?').get(overlapKey)) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  const concurrentReplay = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: overlapKey, messages: [{ role: 'user', content: '模拟恢复竞争' }], maxTokens: 128 }),
+  })
+  assert.equal(concurrentReplay.status, 409)
+  const overlapGeneration = db.prepare('SELECT id,reserved FROM generations WHERE request_key=?').get(overlapKey)
+  const beforeOverlap = (await request('/me', { token: member.token })).body.user.balance
+  assert.equal(recoverPendingGenerations(), 1)
+  releaseDelayedRelay()
+  assert.equal((await overlapCall).status, 409)
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeOverlap + Number(overlapGeneration.reserved))
+  assert.equal(db.prepare('SELECT status FROM generations WHERE request_key=?').get(overlapKey).status, 'failed')
+  await new Promise((resolve, reject) => delayedRelay.close((error) => error ? reject(error) : resolve()))
+
+  const malformedRelay = (await import('node:http')).createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ choices: [{ message: { content: { unsupported: true } } }], usage: { prompt_tokens: 'NaN', completion_tokens: -1 } }))
+  })
+  malformedRelay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => malformedRelay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${malformedRelay.address().port}/v1`
+  const beforeMalformed = (await request('/me', { token: member.token })).body.user.balance
+  const malformed = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: 'malformed-relay-request-0001', messages: [{ role: 'user', content: '格式验证' }], maxTokens: 128 }),
+  })
+  assert.equal(malformed.status, 502)
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeMalformed)
+  await new Promise((resolve, reject) => malformedRelay.close((error) => error ? reject(error) : resolve()))
+
+  const invalidJsonRelay = (await import('node:http')).createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end('{invalid')
+  })
+  invalidJsonRelay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => invalidJsonRelay.once('listening', resolve))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${invalidJsonRelay.address().port}/v1`
+  const beforeInvalidJson = (await request('/me', { token: member.token })).body.user.balance
+  const invalidJson = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: 'invalid-json-request-0001', messages: [{ role: 'user', content: 'JSON 验证' }], maxTokens: 128 }),
+  })
+  assert.equal(invalidJson.status, 502)
+  assert.equal(invalidJson.body.error, '中转站返回了无效 JSON')
+  assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeInvalidJson)
+  await new Promise((resolve, reject) => invalidJsonRelay.close((error) => error ? reject(error) : resolve()))
+  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
+  const retried = await request('/ai/chat', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ requestKey: 'invalid-json-request-0001', messages: [{ role: 'user', content: 'JSON 验证' }], maxTokens: 128 }),
+  })
+  assert.equal(retried.status, 200)
+  assert.equal(retried.body.cached, false)
+  assert.equal(retried.body.content, '这是一条模拟中转站回复')
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 

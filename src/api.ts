@@ -16,7 +16,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (response.status === 204) return undefined as T
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    if (response.status === 401) session.clear()
+    if (response.status === 401) {
+      session.clear()
+    }
     throw new Error(data.error || '请求失败，请稍后重试')
   }
   return data as T

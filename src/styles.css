@@ -90,6 +90,7 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .save-state { display: flex; align-items: center; gap: 4px; color: #858b94; font-size: 12px; white-space: nowrap; }
 .save-state.saved { color: #388078; }
+.save-state.error { color: #b24032; }
 .points-button { height: 34px; display: flex; align-items: center; gap: 6px; border: 1px solid #d7e2df; border-radius: 6px; background: #f1f7f5; color: #176c64; font-weight: 700; padding: 0 11px; }
 .menu-button { display: none; }
 .flow-wrap { position: relative; flex: 1; min-height: 0; }
@@ -139,6 +140,11 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .inline-form input { flex: 1; min-width: 0; }
 .two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .muted { color: #818791; font-size: 12px; line-height: 1.6; }
+.payment-instructions { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid #d68a19; background: #fff8e8; color: #5f5135; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.topup-history > div { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf0f2; font-size: 13px; }
+.topup-history strong { font-size: 12px; color: #8a6b27; }
+.topup-history strong.approved { color: #28786f; }
+.topup-history strong.rejected { color: #b24032; }
 .ledger > div, .orders > div { min-height: 51px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #edf0f2; }
 .ledger span, .orders span { min-width: 0; display: grid; gap: 3px; font-size: 13px; }
 .ledger small, .orders small { color: #8a9099; overflow-wrap: anywhere; }

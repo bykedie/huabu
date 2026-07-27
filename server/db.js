@@ -69,3 +69,17 @@ export function changeBalance(userId, amount, kind, reference = null, note = nul
     .run(randomUUID(), userId, amount, next, kind, reference, note)
   return next
 }
+
+export function recoverPendingGenerations() {
+  return transaction(() => {
+    const pending = db.prepare("SELECT id,user_id,reserved FROM generations WHERE status='pending'").all()
+    let recovered = 0
+    for (const item of pending) {
+      const result = db.prepare("UPDATE generations SET status='failed' WHERE id=? AND status='pending'").run(item.id)
+      if (!result.changes) continue
+      changeBalance(item.user_id, Number(item.reserved), 'ai_refund', item.id, '服务重启，AI 预占积分退回')
+      recovered += 1
+    }
+    return recovered
+  })
+}

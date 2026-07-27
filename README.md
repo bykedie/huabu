@@ -4,7 +4,7 @@
 
 ## 已实现
 
-- 邮箱注册/登录；首个注册账号自动成为管理员
+- 邮箱注册/登录；生产环境使用一次性初始化码创建首位管理员
 - 每个用户独立的多画布空间，支持节点拖拽、连线、缩放、小地图和自动保存
 - 便签、文本、图片地址、AI 对话四种节点
 - 服务端代理 OpenAI-compatible /v1/chat/completions，中转密钥不会进入浏览器
@@ -26,7 +26,9 @@ npm.cmd run dev
 
 前端地址为 http://localhost:5173，API 默认为 http://localhost:3000/api/health。开发环境下 Vite 会把 /api 代理到后端。
 
-注册第一个账号后，它会获得管理员权限。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
+开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
+
+生产示例默认 `WELCOME_POINTS=0`。站点尚未接入邮箱验证时不建议赠送注册积分，否则用户可通过批量注册重复领取。
 
 ## 对接中转站
 
@@ -34,6 +36,7 @@ npm.cmd run dev
 
 ~~~dotenv
 JWT_SECRET=使用随机生成的长密钥
+ADMIN_SETUP_TOKEN=使用另一个随机生成的长初始化码
 AI_BASE_URL=https://你的中转域名/v1
 AI_API_KEY=你的中转密钥
 AI_MODELS=gpt-4o-mini
@@ -48,11 +51,12 @@ AI_MODELS=gpt-4o-mini
 1. 克隆仓库并创建生产配置：
 
    ~~~bash
-   git clone https://github.com/bykedie/huabu.git
+   git clone --branch codex/infinite-canvas https://github.com/bykedie/huabu.git
    cd huabu
    cp .env.example .env
-   openssl rand -hex 32
-   # 将输出写入 .env 的 JWT_SECRET，并填写中转站配置
+   openssl rand -hex 32 # 生成 JWT_SECRET
+   openssl rand -hex 32 # 另生成 ADMIN_SETUP_TOKEN
+   # 将两个不同的输出写入 .env，并填写中转站配置
    docker compose up -d --build
    ~~~
 
@@ -75,9 +79,9 @@ AI_MODELS=gpt-4o-mini
 
 ## 积分与充值
 
-积分为整数。AI 调用根据输入和输出 token 分别计价；请求开始时按最大输出预占，成功后根据中转站返回的 usage 结算。若中转站不返回 usage，系统使用保守估算，避免免费超额调用。
+积分为整数。AI 调用根据输入和输出 token 分别计价；请求开始时按最大输出预占，成功后根据中转站返回的 usage 结算。若中转站不返回 usage，系统使用保守估算，避免免费超额调用。进程异常退出后，启动时会把遗留的未结算预占记录标记失败并全额退回。
 
-当前充值方式是可用的人工审核流程：用户填写金额和付款凭证，管理员确认实际收款后点击通过，积分只会到账一次。真正的微信支付或支付宝自动收款还需要商户号、证书和回调域名；拿到这些资料后应新增支付订单签名与异步回调，不要在前端直接处理支付密钥。
+当前充值方式是可用的人工审核流程：在 `.env` 的 `TOPUP_INSTRUCTIONS` 填写微信、支付宝或其他收款方式和备注要求；用户可看到预计积分、提交唯一付款交易单号并跟踪待审核/已到账/已驳回状态，重复交易单号会被拒绝，管理员确认实际收款后点击通过，积分只会到账一次。真正的微信支付或支付宝自动收款还需要商户号、证书和回调域名；拿到这些资料后应新增支付订单签名与异步回调，不要在前端直接处理支付密钥。
 
 ## 数据备份
 
@@ -101,4 +105,4 @@ npm run build
 npm audit --audit-level=low
 ~~~
 
-测试覆盖账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等，以及 AI 配置失败后的积分完整退回。
+测试覆盖生产密钥与计费配置、管理员初始化、账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等，以及 AI 失败和异常重启后的积分完整退回。

@@ -4,18 +4,40 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { db, transaction, changeBalance } from './db.js'
+import { db, transaction, changeBalance, recoverPendingGenerations } from './db.js'
 
 const app = express()
-const jwtSecret = process.env.JWT_SECRET || 'development-only-change-me'
-const welcomePoints = Number(process.env.WELCOME_POINTS || 100)
-const inputRate = Number(process.env.AI_INPUT_POINTS_PER_1K || 1)
-const outputRate = Number(process.env.AI_OUTPUT_POINTS_PER_1K || 4)
+const isProduction = process.env.NODE_ENV === 'production'
+const numberSetting = (name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER, integer = false } = {}) => {
+  const raw = process.env[name]
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    throw new Error(`${name} 配置无效`)
+  }
+  return value
+}
+const jwtSecret = process.env.JWT_SECRET || (isProduction ? '' : 'development-only-change-me')
+if (isProduction && (Buffer.byteLength(jwtSecret) < 32 || /replace|change-me/i.test(jwtSecret))) {
+  throw new Error('生产环境 JWT_SECRET 必须是至少 32 字节的随机值')
+}
+const adminSetupToken = process.env.ADMIN_SETUP_TOKEN || ''
+const hasExistingAdmin = Number(db.prepare("SELECT COUNT(*) count FROM users WHERE role='admin'").get().count) > 0
+if (isProduction && !hasExistingAdmin && (Buffer.byteLength(adminSetupToken) < 32 || /replace|change-me/i.test(adminSetupToken))) {
+  throw new Error('生产环境 ADMIN_SETUP_TOKEN 必须是至少 32 字节的随机值')
+}
+const welcomePoints = numberSetting('WELCOME_POINTS', isProduction ? 0 : 100, { min: 0, max: 10000000, integer: true })
+const inputRate = numberSetting('AI_INPUT_POINTS_PER_1K', 1, { max: 1000000 })
+const outputRate = numberSetting('AI_OUTPUT_POINTS_PER_1K', 4, { max: 1000000 })
+const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 600000, integer: true })
+const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
+const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
 const allowedModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
+if (!allowedModels.length) throw new Error('AI_MODELS 至少需要一个模型')
+recoverPendingGenerations()
 app.set('trust proxy', 1)
 app.use(helmet({
   contentSecurityPolicy: {
@@ -41,7 +63,13 @@ app.use('/api', express.json({ limit: '12mb' }))
 const fail = (status, message) => Object.assign(new Error(message), { status })
 const hashCode = (code) => createHash('sha256').update(code.trim().toUpperCase()).digest('hex')
 const publicUser = (row) => ({ id: row.id, email: row.email, name: row.name, role: row.role, balance: Number(row.balance) })
-const sign = (user) => jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { expiresIn: '7d' })
+const sign = (user) => jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { algorithm: 'HS256', expiresIn: '7d' })
+const validSetupToken = (value) => {
+  if (!adminSetupToken || typeof value !== 'string') return false
+  const actual = Buffer.from(value)
+  const expected = Buffer.from(adminSetupToken)
+  return actual.length === expected.length && timingSafeEqual(actual, expected)
+}
 
 function parse(schema, value) {
   const result = schema.safeParse(value)
@@ -52,7 +80,7 @@ function auth(req, _res, next) {
   try {
     const token = req.headers.authorization?.replace(/^Bearer /, '')
     if (!token) throw fail(401, '请先登录')
-    req.auth = jwt.verify(token, jwtSecret)
+    req.auth = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] })
     next()
   } catch { next(fail(401, '登录已失效')) }
 }
@@ -62,18 +90,20 @@ function admin(req, _res, next) {
 }
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
-app.get('/api/config', auth, (_req, res) => res.json({ aiModel: allowedModels[0] }))
+app.get('/api/config', auth, (_req, res) => res.json({ aiModel: allowedModels[0], centsPerPoint, topupInstructions }))
 app.post('/api/auth/register', (req, res, next) => {
   try {
     const body = parse(z.object({
       name: z.string().trim().min(2, '昵称至少 2 个字').max(30),
       email: z.string().trim().toLowerCase().email('邮箱格式不正确'),
       password: z.string().min(8, '密码至少 8 位').max(72),
+      setupToken: z.string().max(256).optional(),
     }), req.body)
     const id = randomUUID()
     let role
     transaction(() => {
-      role = Number(db.prepare('SELECT COUNT(*) count FROM users').get().count) === 0 ? 'admin' : 'user'
+      const hasAdmin = Number(db.prepare("SELECT COUNT(*) count FROM users WHERE role='admin'").get().count) > 0
+      role = !hasAdmin && (validSetupToken(body.setupToken) || (!adminSetupToken && !isProduction)) ? 'admin' : 'user'
       db.prepare('INSERT INTO users (id,email,password_hash,name,role,balance) VALUES (?,?,?,?,?,0)')
         .run(id, body.email, bcrypt.hashSync(body.password, 12), body.name, role)
       if (welcomePoints > 0) changeBalance(id, welcomePoints, 'welcome', id, '新用户赠送')
@@ -158,10 +188,16 @@ app.get('/api/topups', auth, (req, res) => {
 })
 app.post('/api/topups', auth, (req, res, next) => {
   try {
-    const body = parse(z.object({ amountCents: z.number().int().min(100).max(10000000), proof: z.string().trim().max(500).optional() }), req.body)
-    const order = { id: randomUUID(), points: Math.floor(body.amountCents / Number(process.env.CENTS_PER_POINT || 1)) }
-    db.prepare('INSERT INTO topup_orders (id,user_id,amount_cents,points,proof) VALUES (?,?,?,?,?)')
-      .run(order.id, req.auth.sub, body.amountCents, order.points, body.proof || null)
+    if (!topupInstructions) throw fail(503, '管理员尚未配置收款方式')
+    const body = parse(z.object({ amountCents: z.number().int().min(100).max(10000000), proof: z.string().trim().min(4, '请填写付款交易单号').max(100) }), req.body)
+    const order = { id: randomUUID(), points: Math.floor(body.amountCents / centsPerPoint) }
+    if (order.points < 1) throw fail(400, '充值金额不足以兑换 1 积分')
+    transaction(() => {
+      const duplicate = db.prepare("SELECT id FROM topup_orders WHERE proof=? COLLATE NOCASE AND status IN ('pending','approved')").get(body.proof)
+      if (duplicate) throw fail(409, '该付款交易单号已提交')
+      db.prepare('INSERT INTO topup_orders (id,user_id,amount_cents,points,proof) VALUES (?,?,?,?,?)')
+        .run(order.id, req.auth.sub, body.amountCents, order.points, body.proof)
+    })
     res.status(201).json({ order: { ...order, amount_cents: body.amountCents, status: 'pending' } })
   } catch (error) { next(error) }
 })
@@ -179,42 +215,62 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       maxTokens: z.number().int().min(16).max(8192).default(1024),
     }), req.body)
     const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
-    if (cached?.status === 'succeeded') return res.json(JSON.parse(cached.response))
-    if (cached) throw fail(409, '该请求已处理，请换一个请求标识')
+    if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
+    if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
+    if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
     const model = body.model || allowedModels[0]
     if (!allowedModels.includes(model)) throw fail(400, '该模型未开放')
     const promptTokens = body.messages.reduce((total, message) => total + Buffer.byteLength(message.content, 'utf8'), 0)
     const reserved = Math.max(1, Math.ceil(promptTokens / 1000 * inputRate + body.maxTokens / 1000 * outputRate))
     generation = { id: randomUUID(), userId: req.auth.sub, reserved }
-    transaction(() => {
-      changeBalance(req.auth.sub, -reserved, 'ai_reserve', generation.id, `AI 调用预占：${model}`)
-      db.prepare('INSERT INTO generations (id,user_id,request_key,model,reserved,status) VALUES (?,?,?,?,?,?)')
-        .run(generation.id, req.auth.sub, body.requestKey, model, reserved, 'pending')
-    })
+    try {
+      transaction(() => {
+        changeBalance(req.auth.sub, -reserved, 'ai_reserve', generation.id, `AI 调用预占：${model}`)
+        db.prepare('INSERT INTO generations (id,user_id,request_key,model,reserved,status) VALUES (?,?,?,?,?,?)')
+          .run(generation.id, req.auth.sub, body.requestKey, model, reserved, 'pending')
+      })
+    } catch (error) {
+      generation = undefined
+      if (String(error).includes('UNIQUE')) throw fail(409, '该请求正在处理中，请稍后重试')
+      throw error
+    }
     const base = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
     const key = process.env.AI_API_KEY
     if (!base || !key) throw fail(503, '管理员尚未配置 AI 中转站')
     const url = new URL(`${base}/chat/completions`)
     const allowedProtocols = process.env.NODE_ENV === 'production' ? ['https:'] : ['https:', 'http:']
     if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model, messages: body.messages, max_tokens: body.maxTokens, stream: false }),
-      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
-    })
+    let upstream
+    try {
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model, messages: body.messages, max_tokens: body.maxTokens, stream: false }),
+        signal: AbortSignal.timeout(aiTimeout),
+      })
+    } catch (error) {
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw fail(504, '中转站响应超时')
+      throw fail(502, '无法连接中转站')
+    }
     if (!upstream.ok) throw fail(502, `中转站请求失败（${upstream.status}）`)
-    const data = await upstream.json()
+    let data
+    try { data = await upstream.json() }
+    catch { throw fail(502, '中转站返回了无效 JSON') }
     const usage = data.usage || {}
+    const content = data.choices?.[0]?.message?.content
+    if (typeof content !== 'string') throw fail(502, '中转站返回格式不兼容')
+    const usageTokens = (value, fallback) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
     const actual = Math.max(1, Math.ceil(
-      Number(usage.prompt_tokens || promptTokens) / 1000 * inputRate
-      + Number(usage.completion_tokens || body.maxTokens) / 1000 * outputRate,
+      usageTokens(usage.prompt_tokens, promptTokens) / 1000 * inputRate
+      + usageTokens(usage.completion_tokens, body.maxTokens) / 1000 * outputRate,
     ))
     const charged = Math.min(actual, reserved)
-    const response = { id: generation.id, content: data.choices?.[0]?.message?.content || '', usage, charged }
+    const response = { id: generation.id, content, usage, charged, cached: false }
     transaction(() => {
+      const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id)
+      if (row?.status !== 'pending') throw fail(409, '该请求已由恢复流程终止，积分已退回')
       if (reserved > charged) changeBalance(req.auth.sub, reserved - charged, 'ai_refund', generation.id, 'AI 预占差额退回')
-      db.prepare('UPDATE generations SET status=?,charged=?,response=? WHERE id=?')
+      db.prepare("UPDATE generations SET status=?,charged=?,response=? WHERE id=? AND status='pending'")
         .run('succeeded', charged, JSON.stringify(response), generation.id)
     })
     res.json(response)
@@ -228,7 +284,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
             db.prepare('UPDATE generations SET status=? WHERE id=?').run('failed', generation.id)
           }
         })
-      } catch {}
+      } catch (refundError) { console.error('AI refund failed', refundError) }
     }
     next(error)
   }
@@ -293,6 +349,7 @@ app.post('/api/admin/topups/:id/reject', auth, admin, (req, res, next) => {
   res.json({ ok: true })
 })
 
+app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }))
 const dist = resolve('dist')
 if (existsSync(dist)) {
   app.use(express.static(dist))
