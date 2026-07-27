@@ -140,6 +140,7 @@ input:focus, textarea:focus { border-color: #318f86; box-shadow: 0 0 0 3px rgba(
 .drawer-section { padding: 20px 22px; border-bottom: 1px solid #eceef1; }
 .drawer-section h3 { margin: 0 0 15px; font-size: 14px; }
 .drawer-section > .secondary { width: 100%; }
+.account-email { margin: 0; color: #343a42; overflow-wrap: anywhere; }
 .inline-form { display: flex; gap: 8px; }
 .inline-form input { flex: 1; min-width: 0; }
 .two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

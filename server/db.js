@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
   name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
   login_failures INTEGER NOT NULL DEFAULT 0, login_failure_started_at TEXT, login_locked_until TEXT,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS canvases (
@@ -69,6 +70,9 @@ if (!userColumns.some((column) => column.name === 'login_failure_started_at')) {
 }
 if (!userColumns.some((column) => column.name === 'login_locked_until')) {
   db.exec('ALTER TABLE users ADD COLUMN login_locked_until TEXT')
+}
+if (!userColumns.some((column) => column.name === 'session_version')) {
+  db.exec('ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0')
 }
 
 export function transaction(fn) {

@@ -411,6 +411,36 @@ test('authorization uses the current database role instead of a stale JWT claim'
   assert.equal((await request('/admin/overview', { token: login.body.token })).status, 403)
 })
 
+test('changing password revokes old sessions and returns a replacement token', async () => {
+  const member = await register('Password Change User', 'password-change@example.com')
+  const wrong = await request('/auth/password', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ currentPassword: 'wrong-password', newPassword: 'replacement123' }),
+  })
+  assert.deepEqual(wrong, { status: 400, body: { error: '当前密码错误' } })
+  assert.equal(Number(db.prepare('SELECT session_version FROM users WHERE id=?').get(member.user.id).session_version), 0)
+
+  const changed = await request('/auth/password', {
+    token: member.token,
+    method: 'POST',
+    body: JSON.stringify({ currentPassword: 'password123', newPassword: 'replacement123' }),
+  })
+  assert.equal(changed.status, 200)
+  assert.ok(changed.body.token)
+  assert.equal(Number(db.prepare('SELECT session_version FROM users WHERE id=?').get(member.user.id).session_version), 1)
+  assert.equal((await request('/me', { token: member.token })).status, 401)
+  assert.equal((await request('/me', { token: changed.body.token })).status, 200)
+  assert.equal((await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'password-change@example.com', password: 'password123' }),
+  })).status, 401)
+  assert.equal((await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'password-change@example.com', password: 'replacement123' }),
+  })).status, 200)
+})
+
 test('AI relay response size is bounded and reserved points are refunded', async () => {
   const member = await register('响应限制用户', 'response-limit@example.com')
   const relay = (await import('node:http')).createServer((_req, res) => {

@@ -6,7 +6,7 @@ import {
 } from '@xyflow/react'
 import {
   Bot, Check, ChevronLeft, CircleDollarSign, Download, FilePlus2, Image, LayoutDashboard,
-  LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
+  KeyRound, LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
   Upload,
 } from 'lucide-react'
 import { api, ApiError, session, User } from './api'
@@ -278,6 +278,40 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   </Drawer>
 }
 
+function AccountDrawer({ user, close, notify }: { user: User; close: () => void; notify: (notice: Notice) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (busy) return
+    const form = new FormData(event.currentTarget)
+    const currentPassword = String(form.get('currentPassword') || '')
+    const newPassword = String(form.get('newPassword') || '')
+    if (newPassword !== String(form.get('confirmation') || '')) { setError('两次输入的新密码不一致'); return }
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<{ token: string; user: User }>('/auth/password', {
+        method: 'POST', body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      session.set(result.token)
+      close()
+      notify({ type: 'ok', text: '密码已更新，其他设备需要重新登录' })
+    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
+  return <Drawer title={'账户安全'} onClose={close}>
+    <section className={'drawer-section'}><h3>登录账号</h3><p className={'account-email'}>{user.email}</p></section>
+    <form className={'drawer-section'} onSubmit={changePassword}><h3>修改密码</h3>
+      <label>当前密码<input name={'currentPassword'} type={'password'} minLength={8} maxLength={72} autoComplete={'current-password'} required /></label>
+      <label>新密码<input name={'newPassword'} type={'password'} minLength={8} maxLength={72} autoComplete={'new-password'} required /></label>
+      <label>确认新密码<input name={'confirmation'} type={'password'} minLength={8} maxLength={72} autoComplete={'new-password'} required /></label>
+      {error && <div className={'form-error'} role={'alert'}>{error}</div>}
+      <button className={'primary full'} disabled={busy}><KeyRound size={17} />{busy ? '正在更新' : '更新密码'}</button>
+      <p className={'muted'}>更新后，其他设备上的登录会立即失效。</p>
+    </form>
+  </Drawer>
+}
+
 function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
   type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
   type AdminData = { stats: Record<string, number>; orders: Order[]; ai: { configured: boolean; baseUrl: string } }
@@ -347,7 +381,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'dirty' | 'error'>('saved')
-  const [panel, setPanel] = useState<'wallet' | 'admin' | null>(null)
+  const [panel, setPanel] = useState<'account' | 'wallet' | 'admin' | null>(null)
   const [sidebar, setSidebar] = useState(false)
   const [creatingCanvas, setCreatingCanvas] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
@@ -708,7 +742,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       <div className="sidebar-brand"><div className="brand-mark small">墨</div><strong>墨屿</strong><button className="icon-button sidebar-close" title="收起" onClick={() => setSidebar(false)}><ChevronLeft size={18} /></button></div>
       <button className="new-canvas" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button>
       <nav className="canvas-list" aria-label="我的画布">{canvases.map((canvas) => <div className={canvas.id === current?.id ? 'active' : ''} key={canvas.id}><button onClick={() => openCanvas(canvas.id)}><LayoutDashboard size={15} /><span>{canvas.name}</span></button><button className="canvas-delete" title="删除画布" onClick={() => deleteCanvas(canvas.id)}><Trash2 size={14} /></button></div>)}</nav>
-      <div className="sidebar-account"><button onClick={() => setPanel('wallet')}><div className="avatar">{user.name.slice(0, 1)}</div><span><strong>{user.name}</strong><small>{user.balance} 积分</small></span></button><button className="icon-button" title="退出登录" onClick={() => void logout()}><LogOut size={17} /></button></div>
+      <div className={'sidebar-account'}><button onClick={() => setPanel('account')}><div className={'avatar'}>{user.name.slice(0, 1)}</div><span><strong>{user.name}</strong><small>{user.balance} 积分</small></span></button><button className={'icon-button'} title={'退出登录'} onClick={() => void logout()}><LogOut size={17} /></button></div>
     </aside>
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell">
@@ -724,6 +758,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         <div className="tool-rail"><button title="便签" onClick={() => addNode('note')}><StickyNote size={19} /></button><button title="文本" onClick={() => addNode('text')}><Text size={19} /></button><button title="图片" onClick={() => addNode('image')}><Image size={19} /></button><span /><button className="ai-tool" title="AI 对话" onClick={() => addNode('ai')}><Bot size={19} /></button></div>
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
+    {panel === 'account' && <AccountDrawer user={user} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'wallet' && <WalletDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={refreshUser} />}
     {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'ok' ? <Check size={16} /> : <X size={16} />}{notice.text}</div>}

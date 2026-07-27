@@ -70,7 +70,11 @@ app.use('/api', express.json({ limit: '12mb' }))
 const fail = (status, message) => Object.assign(new Error(message), { status })
 const hashCode = (code) => createHash('sha256').update(code.trim().toUpperCase()).digest('hex')
 const publicUser = (row) => ({ id: row.id, email: row.email, name: row.name, role: row.role, balance: Number(row.balance) })
-const sign = (user) => jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { algorithm: 'HS256', expiresIn: '7d' })
+const sign = (user) => jwt.sign(
+  { sub: user.id, role: user.role, sv: Number(user.session_version) || 0 },
+  jwtSecret,
+  { algorithm: 'HS256', expiresIn: '7d' },
+)
 const validSetupToken = (value) => {
   if (!adminSetupToken || typeof value !== 'string') return false
   const actual = Buffer.from(value)
@@ -127,8 +131,8 @@ function auth(req, _res, next) {
     const token = req.headers.authorization?.replace(/^Bearer /, '')
     if (!token) throw fail(401, '请先登录')
     const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] })
-    const user = db.prepare('SELECT id,role FROM users WHERE id=?').get(payload.sub)
-    if (!user) throw fail(401, '登录已失效')
+    const user = db.prepare('SELECT id,role,session_version FROM users WHERE id=?').get(payload.sub)
+    if (!user || Number(payload.sv ?? 0) !== Number(user.session_version)) throw fail(401, '登录已失效')
     req.auth = { ...payload, sub: user.id, role: user.role }
     next()
   } catch { next(fail(401, '登录已失效')) }
@@ -203,6 +207,25 @@ app.post('/api/auth/login', async (req, res, next) => {
     })
     if (!authenticated) throw loginError()
     res.json({ token: sign(authenticated), user: publicUser(authenticated) })
+  } catch (error) { next(error) }
+})
+app.post('/api/auth/password', auth, async (req, res, next) => {
+  try {
+    const body = parse(z.object({ currentPassword: passwordSchema, newPassword: passwordSchema }), req.body)
+    if (body.currentPassword === body.newPassword) throw fail(400, '新密码不能与当前密码相同')
+    const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.sub)
+    if (!(await bcrypt.compare(body.currentPassword, user.password_hash))) throw fail(400, '当前密码错误')
+    const passwordHash = await bcrypt.hash(body.newPassword, 12)
+    const updated = transaction(() => {
+      const result = db.prepare(`
+        UPDATE users SET password_hash=?,session_version=session_version+1,
+          login_failures=0,login_failure_started_at=NULL,login_locked_until=NULL
+        WHERE id=? AND password_hash=?
+      `).run(passwordHash, user.id, user.password_hash)
+      if (!result.changes) throw fail(409, '密码已在其他设备修改，请重新登录')
+      return db.prepare('SELECT * FROM users WHERE id=?').get(user.id)
+    })
+    res.json({ token: sign(updated), user: publicUser(updated) })
   } catch (error) { next(error) }
 })
 app.get('/api/me', auth, (req, res, next) => {
