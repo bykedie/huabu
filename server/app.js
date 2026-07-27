@@ -32,6 +32,7 @@ if (isProduction && !hasExistingAdmin && (Buffer.byteLength(adminSetupToken) < 3
 const welcomePoints = numberSetting('WELCOME_POINTS', isProduction ? 0 : 100, { min: 0, max: 10000000, integer: true })
 const inputRate = numberSetting('AI_INPUT_POINTS_PER_1K', 1, { max: 1000000 })
 const outputRate = numberSetting('AI_OUTPUT_POINTS_PER_1K', 4, { max: 1000000 })
+const imagePoints = numberSetting('AI_IMAGE_POINTS', 8, { min: 1, max: 1000000, integer: true })
 const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 120000, integer: true })
 export const aiPendingRecoveryMs = numberSetting('AI_PENDING_RECOVERY_MS', aiTimeout + 60000, { min: aiTimeout + 10000, max: 3600000, integer: true })
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
@@ -451,6 +452,50 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
         })
       } catch (refundError) { console.error('AI refund failed', refundError) }
     }
+    next(error)
+  }
+})
+
+app.post('/api/ai/image', auth, async (req, res, next) => {
+  let generation
+  try {
+    const body = parse(z.object({ requestKey: z.string().min(8).max(100), model: z.string().min(1).max(100).optional(), prompt: z.string().trim().min(1).max(10000), size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024') }), req.body)
+    const relay = relaySettings()
+    const model = body.model || relay.models.find((item) => /image|dall|画图|生图/i.test(item)) || relay.models[relay.models.length - 1]
+    if (!relay.models.includes(model)) throw fail(400, '该模型未开放')
+    const requestHash = createHash('sha256').update(JSON.stringify({ ...body, model })).digest('hex')
+    const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
+    if (cached?.request_hash && cached.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
+    if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
+    if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
+    if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
+    if (!relay.baseUrl || !relay.apiKey) throw fail(503, '管理员尚未配置 AI 中转站')
+    const url = new URL(`${relay.baseUrl}/images/generations`)
+    const allowedProtocols = isProduction ? ['https:'] : ['https:', 'http:']
+    if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
+    generation = { id: randomUUID(), userId: req.auth.sub, reserved: imagePoints }
+    transaction(() => {
+      changeBalance(req.auth.sub, -imagePoints, 'ai_image_reserve', generation.id, `图片生成预占：${model}`)
+      db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,model,reserved,status) VALUES (?,?,?,?,?,?,?)').run(generation.id, req.auth.sub, body.requestKey, requestHash, model, imagePoints, 'pending')
+    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), aiTimeout)
+    let upstream
+    try {
+      upstream = await fetch(url, { method: 'POST', signal: controller.signal, headers: { authorization: `Bearer ${relay.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt: body.prompt, size: body.size, n: 1 }) })
+    } finally { clearTimeout(timer) }
+    const text = await upstream.text()
+    let payload
+    try { payload = JSON.parse(text) } catch { payload = null }
+    if (!upstream.ok) throw fail(502, `中转站返回错误：${payload?.error?.message || `HTTP ${upstream.status}`}`.slice(0, 300))
+    const image = payload?.data?.[0]
+    const imageUrl = image?.url || (image?.b64_json ? `data:image/png;base64,${image.b64_json}` : '')
+    if (!imageUrl) throw fail(502, '中转站未返回图片')
+    const response = { imageUrl, model, charged: imagePoints, cached: false }
+    transaction(() => { db.prepare("UPDATE generations SET status='succeeded',charged=?,response=? WHERE id=? AND status='pending'").run(imagePoints, JSON.stringify(response), generation.id) })
+    res.json(response)
+  } catch (error) {
+    if (generation) { try { transaction(() => { const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id); if (row?.status === 'pending') { changeBalance(generation.userId, generation.reserved, 'ai_image_refund', generation.id, '图片生成失败退回'); db.prepare("UPDATE generations SET status='failed' WHERE id=?").run(generation.id) } }) } catch (refundError) { console.error('AI image refund failed', refundError) } }
     next(error)
   }
 })

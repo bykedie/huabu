@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
-  addEdge, Background, BackgroundVariant, Connection, Controls, Edge, Handle, MiniMap,
+  addEdge, Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeLabelRenderer, EdgeProps, getBezierPath, Handle, MiniMap,
   EdgeChange, Node, NodeChange, NodeProps, Position, ReactFlow, ReactFlowInstance,
   useEdgesState, useNodesState,
 } from '@xyflow/react'
@@ -20,6 +20,7 @@ type CanvasData = {
   busy?: boolean
   onChange?: (id: string, patch: Partial<CanvasData>) => void
   onRun?: (id: string, prompt: string) => void
+  onRunImage?: (id: string, prompt: string) => void
 }
 type CanvasNode = Node<CanvasData>
 type CanvasInfo = {
@@ -78,7 +79,7 @@ function parseDraft(value: unknown): CanvasDraft | null {
     if (typeof edge.id !== 'string' || !edge.id || edge.id.length > 200 || typeof edge.source !== 'string' || typeof edge.target !== 'string' || !nodeIds.has(edge.source) || !nodeIds.has(edge.target)) return null
     if (edgeIds.has(edge.id)) return null
     if ((edge.sourceHandle !== undefined && edge.sourceHandle !== null && typeof edge.sourceHandle !== 'string') || (edge.targetHandle !== undefined && edge.targetHandle !== null && typeof edge.targetHandle !== 'string')) return null
-    edges.push({ id: edge.id, source: edge.source, target: edge.target, type: 'smoothstep', sourceHandle: edge.sourceHandle as string | null | undefined, targetHandle: edge.targetHandle as string | null | undefined })
+    edges.push({ id: edge.id, source: edge.source, target: edge.target, type: 'bezier', sourceHandle: edge.sourceHandle as string | null | undefined, targetHandle: edge.targetHandle as string | null | undefined })
     edgeIds.add(edge.id)
   }
   return { baseVersion: draft.baseVersion as number, name: draft.name, nodes, edges }
@@ -112,7 +113,7 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
         <div className="ai-body">
           <textarea className="nodrag nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} />
           {data.content && <div className="ai-answer">{data.content}</div>}
-          <button className="node-run nodrag" disabled={data.busy || !data.prompt?.trim()} onClick={() => data.onRun?.(id, data.prompt || '')}>{data.busy ? '思考中…' : <><Bot size={14} />生成</>}</button>
+          <div className="node-actions"><button className="node-run nodrag" disabled={data.busy || !data.prompt?.trim()} onClick={() => data.onRun?.(id, data.prompt || '')}>{data.busy ? '思考中…' : <><Bot size={14} />文字</>}</button><button className="node-run image-run nodrag" disabled={data.busy || !data.prompt?.trim()} onClick={() => data.onRunImage?.(id, data.prompt || '')}>{data.busy ? '生成中…' : <><Image size={14} />生图</>}</button></div>
         </div>
       ) : (
         <textarea className="node-content nodrag nowheel" placeholder="写点什么…" value={data.content || ''} onChange={(event) => data.onChange?.(id, { content: event.target.value })} />
@@ -120,6 +121,11 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
       <Handle type="source" position={Position.Right} />
     </article>
   )
+}
+
+function CanvasEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<Edge>) {
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  return <><BaseEdge id={id} path={path} /><EdgeLabelRenderer><button className="edge-delete nodrag" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} title="删除连接" aria-label="删除连接" onClick={() => (data as { onDelete?: (id: string) => void } | undefined)?.onDelete?.(id)}>×</button></EdgeLabelRenderer></>
 }
 
 function Auth({ onDone }: { onDone: (user: User) => void }) {
@@ -488,8 +494,28 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       aiInFlight.current = Math.max(0, aiInFlight.current - 1)
     }
   }, [refreshUser, setNodeBusy, updateNode])
-  const liveNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, onChange: updateNode, onRun: runAI } })), [nodes, updateNode, runAI])
+  const runImage = useCallback(async (id: string, prompt: string) => {
+    const canvasId = activeCanvasId.current
+    if (!canvasId || aiNodesInFlight.current.has(id)) return
+    aiNodesInFlight.current.add(id); aiInFlight.current += 1; setNodeBusy(id, true)
+    try {
+      if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
+      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, `image:${prompt}`)
+      const result = await api<{ imageUrl: string; charged: number; cached: boolean }>('/ai/image', { method: 'POST', body: JSON.stringify({ requestKey, prompt }) })
+      if (activeCanvasId.current === canvasId) {
+        const imageNode = nodes.find((node) => node.data.kind === 'image')
+        if (imageNode) updateNode(imageNode.id, { imageUrl: result.imageUrl })
+        else updateNode(id, { imageUrl: result.imageUrl, kind: 'image', content: '' })
+        setNodeBusy(id, false)
+      }
+      resolvedAIKeys.current.set(storageKey, revision.current); await refreshUser(); setNotice({ type: 'ok', text: result.cached ? '已恢复图片结果' : `图片生成完成，消耗 ${result.charged} 积分` })
+    } catch (err) { if (activeCanvasId.current === canvasId) setNodeBusy(id, false); setNotice({ type: 'error', text: (err as Error).message }) } finally { aiNodesInFlight.current.delete(id); aiInFlight.current = Math.max(0, aiInFlight.current - 1) }
+  }, [nodes, refreshUser, setNodeBusy, updateNode])
+  const deleteEdge = useCallback((id: string) => { setEdges((items) => items.filter((edge) => edge.id !== id)); markDirty() }, [markDirty, setEdges])
+  const liveNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, onChange: updateNode, onRun: runAI, onRunImage: runImage } })), [nodes, updateNode, runAI, runImage])
+  const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges])
   const nodeTypes = useMemo(() => ({ canvasNode: CanvasNodeView }), [])
+  const edgeTypes = useMemo(() => ({ bezier: CanvasEdgeView }), [])
   const save = useCallback(() => {
     if (!current) return Promise.resolve(true)
     const canvas = { ...current }
@@ -792,7 +818,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button import-button" title="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button></div></header>
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importDraft(file) }} />
       {current ? <div className="flow-wrap">
-        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
+        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={liveEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#c9cdd3" />
           <Controls position="bottom-right" showInteractive={false} />
           <MiniMap position="bottom-right" pannable zoomable nodeColor={(node) => node.data?.kind === 'ai' ? '#80cbc4' : node.data?.kind === 'note' ? '#efb64f' : '#aab7c8'} />
