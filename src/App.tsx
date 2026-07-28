@@ -1,12 +1,12 @@
 import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
-  addEdge, Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeLabelRenderer, EdgeProps, getBezierPath, Handle, MiniMap,
-  EdgeChange, Node, NodeChange, NodeProps, Position, ReactFlow, ReactFlowInstance,
+  addEdge, Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeLabelRenderer, EdgeProps, getBezierPath, Handle, MiniMap, NodeToolbar,
+  EdgeChange, Node, NodeChange, NodeProps, Position, ReactFlow, ReactFlowInstance, SelectionMode,
   useEdgesState, useNodesState,
 } from '@xyflow/react'
 import {
-  Bot, Check, ChevronLeft, CircleDollarSign, Download, FilePlus2, Image, LayoutDashboard,
-  KeyRound, LogOut, Menu, Plus, Save, Settings, StickyNote, Text, Trash2, X,
+  Bot, Check, ChevronLeft, CircleDollarSign, Copy, Download, FilePlus2, Image, LayoutDashboard,
+  KeyRound, LogOut, Menu, Plus, Redo2, Save, Settings, Sparkles, StickyNote, Text, Trash2, Undo2, X,
   Upload,
 } from 'lucide-react'
 import { api, ApiError, session, User } from './api'
@@ -17,11 +17,24 @@ type CanvasData = {
   content?: string
   prompt?: string
   imageUrl?: string
+  mode?: 'text' | 'image'
+  textModel?: string
+  imageModel?: string
+  imageSize?: ImageSize
+  textModels?: string[]
+  imageModels?: string[]
+  imagePoints?: number
   busy?: boolean
   onChange?: (id: string, patch: Partial<CanvasData>) => void
-  onRun?: (id: string, prompt: string) => void
-  onRunImage?: (id: string, prompt: string) => void
+  onRun?: (id: string, prompt: string, model?: string) => void
+  onRunImage?: (id: string, prompt: string, model?: string, size?: ImageSize) => void
+  onDuplicate?: (id: string) => void
+  onDelete?: (id: string) => void
+  onBranch?: (id: string) => void
+  onUpload?: (id: string, file: File) => void
+  onDownload?: (id: string) => void
 }
+type ImageSize = '1024x1024' | '1536x1024' | '1024x1536'
 type CanvasNode = Node<CanvasData>
 type CanvasInfo = {
   id: string
@@ -32,6 +45,7 @@ type CanvasInfo = {
 }
 type Notice = { type: 'ok' | 'error'; text: string } | null
 type CanvasDraft = { baseVersion: number; name: string; nodes: CanvasNode[]; edges: Edge[] }
+type CanvasSnapshot = { nodes: CanvasNode[]; edges: Edge[] }
 const uid = () => crypto.randomUUID()
 const draftKey = (userId: string, canvasId: string) => `ink-draft:${userId}:${canvasId}`
 function makeDraft(baseVersion: number, name: string, nodes: CanvasNode[], edges: Edge[]): CanvasDraft {
@@ -40,7 +54,10 @@ function makeDraft(baseVersion: number, name: string, nodes: CanvasNode[], edges
     name,
     nodes: nodes.map((node) => {
       const { selected: _selected, dragging: _dragging, measured: _measured, ...persistedNode } = node
-      return { ...persistedNode, data: { kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl } }
+      return { ...persistedNode, data: {
+        kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl,
+        mode: node.data.mode, textModel: node.data.textModel, imageModel: node.data.imageModel, imageSize: node.data.imageSize,
+      } }
     }),
     edges: edges.map((edge) => {
       const { selected: _selected, ...persistedEdge } = edge
@@ -60,13 +77,20 @@ function parseDraft(value: unknown): CanvasDraft | null {
     const position = node.position as Record<string, unknown> | undefined
     const data = node.data as Record<string, unknown> | undefined
     if (typeof node.id !== 'string' || !node.id || node.id.length > 200 || !position || typeof position.x !== 'number' || !Number.isFinite(position.x) || typeof position.y !== 'number' || !Number.isFinite(position.y) || !data || !kinds.has(data.kind as CanvasData['kind'])) return null
-    const textFields = ['title', 'content', 'prompt', 'imageUrl'] as const
+    const textFields = ['title', 'content', 'prompt', 'imageUrl', 'textModel', 'imageModel'] as const
     if (textFields.some((field) => data[field] !== undefined && typeof data[field] !== 'string')) return null
+    if (data.mode !== undefined && data.mode !== 'text' && data.mode !== 'image') return null
+    if (data.imageSize !== undefined && !['1024x1024', '1536x1024', '1024x1536'].includes(String(data.imageSize))) return null
     nodes.push({
       id: node.id,
       type: 'canvasNode',
       position: { x: position.x, y: position.y },
-      data: { kind: data.kind as CanvasData['kind'], ...Object.fromEntries(textFields.filter((field) => typeof data[field] === 'string').map((field) => [field, data[field]])) },
+      data: {
+        kind: data.kind as CanvasData['kind'],
+        ...Object.fromEntries(textFields.filter((field) => typeof data[field] === 'string').map((field) => [field, data[field]])),
+        ...(data.mode ? { mode: data.mode as CanvasData['mode'] } : {}),
+        ...(data.imageSize ? { imageSize: data.imageSize as ImageSize } : {}),
+      },
     })
   }
   const nodeIds = new Set(nodes.map((node) => node.id))
@@ -97,23 +121,68 @@ async function aiRequestKey(canvasId: string, nodeId: string, prompt: string) {
   localStorage.setItem(storageKey, requestKey)
   return { requestKey, storageKey }
 }
+async function compressedImageUrl(blob: Blob) {
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('浏览器无法处理这张图片')
+    for (const maxDimension of [1600, 1280, 1024, 896]) {
+      const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      for (const quality of [.82, .7, .58]) {
+        const dataUrl = canvas.toDataURL('image/webp', quality)
+        if (dataUrl.length <= 1_200_000) return dataUrl
+      }
+    }
+    throw new Error('图片压缩后仍然过大，请换一张尺寸更小的图片')
+  } finally { bitmap.close() }
+}
+const imageFileUrl = (file: File) => compressedImageUrl(file)
+async function persistableGeneratedImageUrl(imageUrl: string) {
+  if (!imageUrl.startsWith('data:image/')) return imageUrl
+  const comma = imageUrl.indexOf(',')
+  const header = imageUrl.slice(0, comma)
+  if (comma < 0 || !header.endsWith(';base64')) throw new Error('生图中转站返回了无效图片数据')
+  const mimeType = header.slice(5, -7) || 'image/png'
+  const binary = atob(imageUrl.slice(comma + 1))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return compressedImageUrl(new Blob([bytes], { type: mimeType }))
+}
 
 function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const icon = data.kind === 'ai' ? <Bot size={15} /> : data.kind === 'image' ? <Image size={15} /> : data.kind === 'note' ? <StickyNote size={15} /> : <Text size={15} />
+  const mode = data.mode || 'text'
+  const models = mode === 'image' ? data.imageModels || [] : data.textModels || []
+  const model = mode === 'image' ? data.imageModel || models[0] || '' : data.textModel || models[0] || ''
+  const imageSize = data.imageSize || '1024x1024'
   return (
     <article className={`canvas-node kind-${data.kind} ${selected ? 'selected' : ''}`}>
+      <NodeToolbar className="node-toolbar" isVisible={selected} position={Position.Top}>
+        {(data.kind === 'text' || data.kind === 'note') && <button title="用这段内容继续创作" onClick={() => data.onBranch?.(id)}><Sparkles size={14} />延展</button>}
+        {data.kind === 'image' && data.imageUrl && <button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button>}
+        <button title="复制节点" onClick={() => data.onDuplicate?.(id)}><Copy size={14} /></button>
+        <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={14} /></button>
+      </NodeToolbar>
       <Handle type="target" position={Position.Left} />
       <header>{icon}<input className="node-title nodrag" aria-label="节点标题" value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} /></header>
       {data.kind === 'image' ? (
         <div className="image-body">
-          {data.imageUrl && <img src={data.imageUrl} alt={data.title || '画布图片'} />}
-          <input className="node-input nodrag" placeholder="粘贴图片地址" value={data.imageUrl || ''} onChange={(event) => data.onChange?.(id, { imageUrl: event.target.value })} />
+          {data.imageUrl ? <div className="image-preview"><img src={data.imageUrl} alt={data.title || '画布图片'} /><div className="image-actions"><label title="替换图片" aria-label="替换图片"><Upload size={14} /><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label><button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button></div></div> : <label className="image-drop nodrag"><Image size={24} /><span>上传图片或粘贴地址</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}
+          <input className="node-input nodrag" placeholder="图片地址" value={data.imageUrl || ''} onChange={(event) => data.onChange?.(id, { imageUrl: event.target.value })} />
         </div>
       ) : data.kind === 'ai' ? (
         <div className="ai-body">
           <textarea className="nodrag nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} />
-          {data.content && <div className="ai-answer">{data.content}</div>}
-          <div className="node-actions"><button className="node-run nodrag" disabled={data.busy || !data.prompt?.trim()} onClick={() => data.onRun?.(id, data.prompt || '')}>{data.busy ? '思考中…' : <><Bot size={14} />文字</>}</button><button className="node-run image-run nodrag" disabled={data.busy || !data.prompt?.trim()} onClick={() => data.onRunImage?.(id, data.prompt || '')}>{data.busy ? '生成中…' : <><Image size={14} />生图</>}</button></div>
+          <div className="generation-mode nodrag" role="group" aria-label="生成类型"><button className={mode === 'text' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'text' })}><Bot size={14} />文字</button><button className={mode === 'image' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'image' })}><Image size={14} />生图</button></div>
+          <div className="generator-settings nodrag">
+            <select aria-label={mode === 'image' ? '生图模型' : '文字模型'} title={mode === 'image' ? '生图模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
+            {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
+          </div>
+          <div className="node-actions"><button className={`node-run nodrag ${mode === 'image' ? 'image-run' : ''}`} disabled={data.busy || !data.prompt?.trim() || !model} onClick={() => mode === 'image' ? data.onRunImage?.(id, data.prompt || '', model, imageSize) : data.onRun?.(id, data.prompt || '', model)}>{data.busy ? '生成中…' : <><Sparkles size={14} />{mode === 'image' ? `生成图片 · ${data.imagePoints || 8} 积分` : '生成文字'}</>}</button></div>
         </div>
       ) : (
         <textarea className="node-content nodrag nowheel" placeholder="写点什么…" value={data.content || ''} onChange={(event) => data.onChange?.(id, { content: event.target.value })} />
@@ -127,6 +196,8 @@ function CanvasEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
   return <><BaseEdge id={id} path={path} /><EdgeLabelRenderer><button className="edge-delete nodrag" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} title="删除连接" aria-label="删除连接" onClick={() => (data as { onDelete?: (id: string) => void } | undefined)?.onDelete?.(id)}>×</button></EdgeLabelRenderer></>
 }
+const canvasNodeTypes = { canvasNode: CanvasNodeView }
+const canvasEdgeTypes = { bezier: CanvasEdgeView }
 
 function Auth({ onDone }: { onDone: (user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -333,6 +404,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   const [imageBaseUrl, setImageBaseUrl] = useState('')
   const [imageApiKey, setImageApiKey] = useState('')
   const [imageModels, setImageModels] = useState('')
+  const [relayTab, setRelayTab] = useState<'text' | 'image'>('text')
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const load = useCallback(() => api<AdminData>('/admin/overview').then((result) => {
@@ -373,6 +445,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     if (busyRef.current) return
     const models = imageModels.split(',').map((item) => item.trim()).filter(Boolean)
     if (!models.length) return notify({ type: 'error', text: '请至少填写一个生图模型' })
+    if (clearApiKey && !window.confirm('确认清除后台保存的生图密钥？如果服务器 .env 中有密钥，将自动使用该密钥。')) return
     busyRef.current = true; setBusy(true)
     try { await api('/admin/image-config', { method: 'PUT', body: JSON.stringify({ baseUrl: imageBaseUrl, apiKey: imageApiKey || undefined, clearApiKey, models }) }); setImageApiKey(''); await load(); notify({ type: 'ok', text: clearApiKey ? '已清除生图密钥' : '生图中转配置已保存' }) } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
@@ -386,6 +459,17 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     try {
       const result = await api<{ reply: string }>('/admin/ai-config/test', { method: 'POST', body: JSON.stringify({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined, model }) })
       notify({ type: 'ok', text: `中转测试成功：${result.reply || '上游已响应'}` })
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
+  }
+  async function testImageConfig() {
+    if (busyRef.current) return
+    const model = imageModels.split(',').map((item) => item.trim()).filter(Boolean)[0]
+    if (!imageBaseUrl.trim() || !model) return notify({ type: 'error', text: '请先填写生图中转站地址和模型' })
+    busyRef.current = true
+    setBusy(true)
+    try {
+      await api('/admin/image-config/test', { method: 'POST', body: JSON.stringify({ baseUrl: imageBaseUrl, apiKey: imageApiKey || undefined, model }) })
+      notify({ type: 'ok', text: `生图中转测试成功：${model}` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   function closeAdmin() {
@@ -422,15 +506,17 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
   const auditText = (entry: AuditEntry) => entry.action === 'ai_config.update'
-    ? '更新 AI 中转配置'
+    ? '更新文字中转配置'
+    : entry.action === 'image_config.update'
+    ? '更新生图中转配置'
     : entry.action === 'codes.create'
     ? `生成 ${entry.details.count} 个兑换码 · 每码 ${entry.details.points} 积分`
     : `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
-  const imageConfigSection = <section className="drawer-section relay-config"><h3>生图中转配置</h3><label>生图中转站地址<input type="url" value={imageBaseUrl} onChange={(event) => setImageBaseUrl(event.target.value)} disabled={busy} /></label><label>生图 API 密钥<input type="password" value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>生图模型<input value={imageModels} onChange={(event) => setImageModels(event.target.value)} placeholder="GPT-image-2" disabled={busy} /></label><div className="relay-actions"><button className="primary" onClick={() => void saveImageConfig()} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Settings size={16} />保存生图配置</button>{data?.image.keyConfigured && <button className="secondary danger-text" onClick={() => void saveImageConfig(true)} disabled={busy}>清除生图密钥</button>}</div></section>
+  const imageConfigSection = <section className="drawer-section relay-config"><h3>生图中转配置</h3><label>生图中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={imageBaseUrl} onChange={(event) => setImageBaseUrl(event.target.value)} disabled={busy} /></label><label>生图 API 密钥<input type="password" placeholder={data?.image.keyConfigured ? '留空则保持当前密钥' : '输入生图中转密钥'} value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放生图模型<input value={imageModels} onChange={(event) => setImageModels(event.target.value)} placeholder="GPT-image-2" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveImageConfig()} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testImageConfig()} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Check size={16} />测试生图</button>{data?.image.keyConfigured && <button className="secondary danger-text" onClick={() => void saveImageConfig(true)} disabled={busy}>清除密钥</button>}</div><small>测试会向生图路由发送一条最小请求，不扣除站内用户积分，也不会保存临时密钥。</small></section>
   return <Drawer title="运营管理" onClose={closeAdmin}>
-    {imageConfigSection}
-    {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? 'AI 中转已配置' : 'AI 中转待配置'}</span><small>{data.ai.baseUrl || '请在下方设置中转站地址和密钥'}</small></div></>}
-    <section className="drawer-section relay-config"><h3>AI 中转配置</h3><label>中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} disabled={busy} /></label><label>API 密钥<input type="password" placeholder={data?.ai.keyConfigured ? '留空则保持当前密钥' : '输入中转站密钥'} value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放模型<input value={aiModels} onChange={(event) => setAiModels(event.target.value)} placeholder="gpt-4o-mini, gpt-4.1-mini" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Check size={16} />测试中转</button>{data?.ai.keyConfigured && <button className="secondary danger-text" onClick={() => void saveAIConfig(true)} disabled={busy}>清除密钥</button>}</div><small>测试只发送一条最小请求，不扣除用户积分，也不会保存临时密钥。</small></section>
+    {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className="relay-summary"><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? '文字中转已配置' : '文字中转待配置'}</span><small>{data.ai.baseUrl || '尚未设置地址和密钥'}</small></div><div className={`config-status ${data.image.configured ? 'ready' : ''}`}><span>{data.image.configured ? <Check size={16} /> : <Settings size={16} />}{data.image.configured ? '生图中转已配置' : '生图中转待配置'}</span><small>{data.image.baseUrl || '尚未设置地址和密钥'}</small></div></div></>}
+    <div className="relay-tabs" role="tablist" aria-label="中转配置类型"><button role="tab" aria-selected={relayTab === 'text'} className={relayTab === 'text' ? 'active' : ''} onClick={() => setRelayTab('text')}><Bot size={15} />文字</button><button role="tab" aria-selected={relayTab === 'image'} className={relayTab === 'image' ? 'active' : ''} onClick={() => setRelayTab('image')}><Image size={15} />生图</button></div>
+    {relayTab === 'text' ? <section className="drawer-section relay-config"><h3>文字中转配置</h3><label>文字中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} disabled={busy} /></label><label>文字 API 密钥<input type="password" placeholder={data?.ai.keyConfigured ? '留空则保持当前密钥' : '输入文字中转密钥'} value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放文字模型<input value={aiModels} onChange={(event) => setAiModels(event.target.value)} placeholder="gpt-5, gpt-4.1-mini" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Check size={16} />测试文字</button>{data?.ai.keyConfigured && <button className="secondary danger-text" onClick={() => void saveAIConfig(true)} disabled={busy}>清除密钥</button>}</div><small>测试只发送一条最小请求，不扣除用户积分，也不会保存临时密钥。</small></section> : imageConfigSection}
     <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
     <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
     <section className="drawer-section"><h3>操作审计</h3><div className="audit-list">{data?.audit.map((entry) => <div key={entry.id}><strong>{auditText(entry)}</strong><small>{entry.actor_email} · {new Date(entry.created_at + 'Z').toLocaleString()}</small></div>)}{data?.audit.length === 0 && <p className="muted">暂无后台操作记录</p>}</div></section>
@@ -443,12 +529,16 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [current, setCurrent] = useState<CanvasInfo | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const nodesRef = useRef<CanvasNode[]>([])
+  const edgesRef = useRef<Edge[]>([])
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'dirty' | 'error'>('saved')
   const [panel, setPanel] = useState<'account' | 'wallet' | 'admin' | null>(null)
   const [sidebar, setSidebar] = useState(false)
   const [creatingCanvas, setCreatingCanvas] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const [relayConfig, setRelayConfig] = useState<{ textModels: string[]; imageModels: string[]; imagePoints: number }>({ textModels: [], imageModels: [], imagePoints: 8 })
   const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | 'deleted' | null>(null)
+  const [historyVersion, setHistoryVersion] = useState(0)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
   const aiInFlight = useRef(0)
@@ -464,7 +554,39 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const deletedCanvasIds = useRef(new Set<string>())
   const openRequest = useRef(0)
+  const undoStack = useRef<CanvasSnapshot[]>([])
+  const redoStack = useRef<CanvasSnapshot[]>([])
+  const historyApplying = useRef(false)
+  const lastSnapshot = useRef<CanvasSnapshot>({ nodes: [], edges: [] })
+  const clipboard = useRef<CanvasSnapshot>({ nodes: [], edges: [] })
   activeCanvasId.current = current?.id || null
+  nodesRef.current = nodes
+  edgesRef.current = edges
+  const cloneSnapshot = useCallback((snapshot: CanvasSnapshot): CanvasSnapshot => ({
+    nodes: snapshot.nodes.map((node) => {
+      const { dragging: _dragging, measured: _measured, selected: _selected, ...rest } = node
+      return JSON.parse(JSON.stringify({ ...rest, selected: false, data: {
+        kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt, imageUrl: node.data.imageUrl,
+        mode: node.data.mode, textModel: node.data.textModel, imageModel: node.data.imageModel, imageSize: node.data.imageSize,
+      } }))
+    }),
+    edges: snapshot.edges.map((edge) => { const { selected: _selected, data: _data, ...rest } = edge; return JSON.parse(JSON.stringify({ ...rest, selected: false })) }),
+  }), [])
+  const resetHistory = useCallback((nextNodes: CanvasNode[], nextEdges: Edge[]) => { undoStack.current = []; redoStack.current = []; lastSnapshot.current = cloneSnapshot({ nodes: nextNodes, edges: nextEdges }); setHistoryVersion((value) => value + 1) }, [cloneSnapshot])
+  useEffect(() => {
+    if (historyApplying.current) { historyApplying.current = false; lastSnapshot.current = cloneSnapshot({ nodes, edges }); return }
+    const timer = window.setTimeout(() => {
+      const previous = lastSnapshot.current
+      const next = cloneSnapshot({ nodes, edges })
+      if (JSON.stringify(previous) === JSON.stringify(next)) return
+      undoStack.current.push(cloneSnapshot(previous)); if (undoStack.current.length > 50) undoStack.current.shift()
+      redoStack.current = []; lastSnapshot.current = next; setHistoryVersion((value) => value + 1)
+    }, 240)
+    return () => window.clearTimeout(timer)
+  }, [cloneSnapshot, edges, nodes])
+  const applySnapshot = useCallback((snapshot: CanvasSnapshot) => { historyApplying.current = true; const next = cloneSnapshot(snapshot); setNodes(next.nodes); setEdges(next.edges); revision.current += 1; setSaveState('dirty'); setHistoryVersion((value) => value + 1) }, [cloneSnapshot, setEdges, setNodes])
+  const undo = useCallback(() => { const previous = undoStack.current.pop(); if (!previous) return; redoStack.current.push(cloneSnapshot({ nodes: nodesRef.current, edges })); applySnapshot(previous) }, [applySnapshot, cloneSnapshot, edges])
+  const redo = useCallback(() => { const next = redoStack.current.pop(); if (!next) return; undoStack.current.push(cloneSnapshot({ nodes: nodesRef.current, edges })); applySnapshot(next) }, [applySnapshot, cloneSnapshot, edges])
   const updateCanvases = useCallback((update: CanvasInfo[] | ((items: CanvasInfo[]) => CanvasInfo[])) => {
     const next = typeof update === 'function' ? update(canvasesRef.current) : update
     canvasesRef.current = next
@@ -476,6 +598,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const result = await api<{ user: User }>('/me')
     setUser(result.user)
   }, [setUser])
+  useEffect(() => {
+    if (panel !== null) return
+    api<{ textModels: string[]; imageModels: string[]; imagePoints: number }>('/config')
+      .then((config) => setRelayConfig({ textModels: config.textModels || [], imageModels: config.imageModels || [], imagePoints: config.imagePoints || 8 }))
+      .catch((err) => setNotice({ type: 'error', text: err.message }))
+  }, [panel])
   const markDirty = useCallback(() => {
     revision.current += 1
     setSaveState('dirty')
@@ -487,7 +615,68 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const setNodeBusy = useCallback((id: string, busy: boolean) => {
     setNodes((items) => items.map((node) => node.id === id ? { ...node, data: { ...node.data, busy } } : node))
   }, [setNodes])
-  const runAI = useCallback(async (id: string, prompt: string) => {
+  const appendResultNode = useCallback((sourceId: string, data: CanvasData) => {
+    const source = nodesRef.current.find((node) => node.id === sourceId)
+    if (!source) return ''
+    const id = uid()
+    const sourceWidth = source.measured?.width || source.width || (source.data.kind === 'ai' ? 310 : 265)
+    const siblingCount = edgesRef.current.filter((edge) => edge.source === sourceId).length
+    const position = { x: source.position.x + sourceWidth + 96, y: source.position.y + siblingCount * 196 }
+    setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), { id, type: 'canvasNode', position, selected: true, data }])
+    setEdges((items) => addEdge({ id: `edge-${sourceId}-${id}`, source: sourceId, target: id, type: 'bezier' }, items))
+    markDirty()
+    window.setTimeout(() => flow.current?.fitView({ nodes: [{ id: sourceId }, { id }], padding: 0.3, duration: 320 }), 30)
+    return id
+  }, [markDirty, setEdges, setNodes])
+  const duplicateNode = useCallback((id: string) => {
+    const source = nodesRef.current.find((node) => node.id === id)
+    if (!source) return
+    const duplicateId = uid()
+    const data = {
+      kind: source.data.kind, title: `${source.data.title || '节点'} 副本`, content: source.data.content, prompt: source.data.prompt, imageUrl: source.data.imageUrl,
+      mode: source.data.mode, textModel: source.data.textModel, imageModel: source.data.imageModel, imageSize: source.data.imageSize,
+    }
+    setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), { id: duplicateId, type: 'canvasNode', position: { x: source.position.x + 38, y: source.position.y + 38 }, selected: true, data }])
+    markDirty()
+  }, [markDirty, setNodes])
+  const deleteNode = useCallback((id: string) => {
+    setNodes((items) => items.filter((node) => node.id !== id))
+    setEdges((items) => items.filter((edge) => edge.source !== id && edge.target !== id))
+    markDirty()
+  }, [markDirty, setEdges, setNodes])
+  const branchNode = useCallback((id: string) => {
+    const source = nodesRef.current.find((node) => node.id === id)
+    const prompt = source?.data.content?.trim() || source?.data.prompt?.trim()
+    if (!source || !prompt) { setNotice({ type: 'error', text: '先在节点里写下内容，再继续创作' }); return }
+    appendResultNode(id, { kind: 'ai', title: 'AI 创作', prompt, mode: 'text', textModel: relayConfig.textModels[0] })
+  }, [appendResultNode, relayConfig.textModels])
+  const uploadNodeImage = useCallback(async (id: string, file: File) => {
+    if (!file.type.startsWith('image/')) return
+    if (file.size > 8 * 1024 * 1024) { setNotice({ type: 'error', text: '图片不能超过 8MB' }); return }
+    try {
+      const imageUrl = await imageFileUrl(file)
+      updateNode(id, { imageUrl, title: file.name.replace(/\.[^.]+$/, '') || '视觉参考' })
+    } catch (err) { setNotice({ type: 'error', text: (err as Error).message || '图片读取失败' }) }
+  }, [updateNode])
+  const downloadNodeImage = useCallback(async (id: string) => {
+    const node = nodesRef.current.find((item) => item.id === id)
+    if (!node?.data.imageUrl) return
+    const filename = `${(node.data.title || '画布图片').replace(/[\/\\?%*:|"<>]/g, '-')}.png`
+    const clickLink = (href: string, revoke = false) => {
+      const link = document.createElement('a')
+      link.href = href
+      link.download = filename
+      if (!revoke) link.target = '_blank'
+      link.click()
+      if (revoke) window.setTimeout(() => URL.revokeObjectURL(href), 1000)
+    }
+    try {
+      const response = await fetch(node.data.imageUrl)
+      if (!response.ok) throw new Error()
+      clickLink(URL.createObjectURL(await response.blob()), true)
+    } catch { clickLink(node.data.imageUrl) }
+  }, [])
+  const runAI = useCallback(async (id: string, prompt: string, model?: string) => {
     const canvasId = activeCanvasId.current
     if (!canvasId || aiNodesInFlight.current.has(id)) return
     aiNodesInFlight.current.add(id)
@@ -495,9 +684,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setNodeBusy(id, true)
     try {
       if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
-      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, prompt)
-      const result = await api<{ content: string; charged: number; cached: boolean }>('/ai/chat', { method: 'POST', body: JSON.stringify({ requestKey, messages: [{ role: 'user', content: prompt }], maxTokens: 1024 }) })
-      if (activeCanvasId.current === canvasId) updateNode(id, { busy: false, content: result.content })
+      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, `text:${model || ''}:${prompt}`)
+      const result = await api<{ content: string; charged: number; cached: boolean }>('/ai/chat', { method: 'POST', body: JSON.stringify({ requestKey, model, messages: [{ role: 'user', content: prompt }], maxTokens: 1024 }) })
+      if (activeCanvasId.current === canvasId) { setNodeBusy(id, false); appendResultNode(id, { kind: 'text', title: `文字结果${model ? ` · ${model}` : ''}`, content: result.content }) }
       resolvedAIKeys.current.set(storageKey, revision.current)
       await refreshUser()
       setNotice({ type: 'ok', text: result.cached ? '已恢复生成结果，本次未重复扣分' : `生成完成，消耗 ${result.charged} 积分` })
@@ -508,29 +697,30 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       aiNodesInFlight.current.delete(id)
       aiInFlight.current = Math.max(0, aiInFlight.current - 1)
     }
-  }, [refreshUser, setNodeBusy, updateNode])
-  const runImage = useCallback(async (id: string, prompt: string) => {
+  }, [appendResultNode, refreshUser, setNodeBusy])
+  const runImage = useCallback(async (id: string, prompt: string, model?: string, size: ImageSize = '1024x1024') => {
     const canvasId = activeCanvasId.current
     if (!canvasId || aiNodesInFlight.current.has(id)) return
+    let charged = false
     aiNodesInFlight.current.add(id); aiInFlight.current += 1; setNodeBusy(id, true)
     try {
       if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
-      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, `image:${prompt}`)
-      const result = await api<{ imageUrl: string; charged: number; cached: boolean }>('/ai/image', { method: 'POST', body: JSON.stringify({ requestKey, prompt }) })
-      if (activeCanvasId.current === canvasId) {
-        const imageNode = nodes.find((node) => node.data.kind === 'image')
-        if (imageNode) updateNode(imageNode.id, { imageUrl: result.imageUrl })
-        else updateNode(id, { imageUrl: result.imageUrl, kind: 'image', content: '' })
-        setNodeBusy(id, false)
-      }
+      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, `image:${model || ''}:${size}:${prompt}`)
+      const result = await api<{ imageUrl: string; model?: string; charged: number; cached: boolean }>('/ai/image', { method: 'POST', body: JSON.stringify({ requestKey, model, prompt, size }) })
+      charged = true
+      const imageUrl = await persistableGeneratedImageUrl(result.imageUrl)
+      if (activeCanvasId.current === canvasId) { appendResultNode(id, { kind: 'image', title: `图片结果${result.model || model ? ` · ${result.model || model}` : ''}`, imageUrl }); setNodeBusy(id, false) }
       resolvedAIKeys.current.set(storageKey, revision.current); await refreshUser(); setNotice({ type: 'ok', text: result.cached ? '已恢复图片结果' : `图片生成完成，消耗 ${result.charged} 积分` })
-    } catch (err) { if (activeCanvasId.current === canvasId) setNodeBusy(id, false); setNotice({ type: 'error', text: (err as Error).message }) } finally { aiNodesInFlight.current.delete(id); aiInFlight.current = Math.max(0, aiInFlight.current - 1) }
-  }, [nodes, refreshUser, setNodeBusy, updateNode])
+    } catch (err) {
+      if (activeCanvasId.current === canvasId) setNodeBusy(id, false)
+      if (charged) await refreshUser().catch(() => {})
+      setNotice({ type: 'error', text: (err as Error).message })
+    } finally { aiNodesInFlight.current.delete(id); aiInFlight.current = Math.max(0, aiInFlight.current - 1) }
+  }, [appendResultNode, refreshUser, setNodeBusy])
   const deleteEdge = useCallback((id: string) => { setEdges((items) => items.filter((edge) => edge.id !== id)); markDirty() }, [markDirty, setEdges])
-  const liveNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, onChange: updateNode, onRun: runAI, onRunImage: runImage } })), [nodes, updateNode, runAI, runImage])
-  const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges])
-  const nodeTypes = useMemo(() => ({ canvasNode: CanvasNodeView }), [])
-  const edgeTypes = useMemo(() => ({ bezier: CanvasEdgeView }), [])
+  const liveNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, textModels: relayConfig.textModels, imageModels: relayConfig.imageModels, imagePoints: relayConfig.imagePoints, onChange: updateNode, onRun: runAI, onRunImage: runImage, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeImage, onDownload: downloadNodeImage } })), [branchNode, deleteNode, downloadNodeImage, duplicateNode, nodes, relayConfig.imageModels, relayConfig.imagePoints, relayConfig.textModels, runAI, runImage, updateNode, uploadNodeImage])
+  const selectedNodeIds = useMemo(() => new Set(nodes.filter((node) => node.selected).map((node) => node.id)), [nodes])
+  const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', className: selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target) ? 'connected' : edge.className, data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges, selectedNodeIds])
   const save = useCallback(() => {
     if (!current) return Promise.resolve(true)
     const canvas = { ...current }
@@ -611,6 +801,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         setCurrent({ ...result.canvas, name: draft.name, version: draft.baseVersion })
         setNodes(draft.nodes)
         setEdges(draft.edges)
+        resetHistory(draft.nodes, draft.edges)
         const hasConflict = draft.baseVersion !== result.canvas.version
         setSaveState(hasConflict ? 'error' : 'dirty')
         setBlockedReason(hasConflict ? 'conflict' : null)
@@ -621,13 +812,14 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         setCurrent(result.canvas)
         setNodes(result.canvas.document.nodes)
         setEdges(result.canvas.document.edges)
+        resetHistory(result.canvas.document.nodes, result.canvas.document.edges)
         setSaveState('saved')
         setBlockedReason(null)
       }
       setSidebar(false)
       window.setTimeout(() => flow.current?.fitView({ padding: 0.25 }), 30)
     } catch (err) { setNotice({ type: 'error', text: (err as Error).message }) }
-  }, [setEdges, setNodes, user.id])
+  }, [resetHistory, setEdges, setNodes, user.id])
   useEffect(() => {
     api<{ canvases: CanvasInfo[] }>('/canvases').then((result) => {
       updateCanvases(result.canvases)
@@ -659,6 +851,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       setCurrent(result.canvas)
       setNodes([first])
       setEdges([])
+      resetHistory([first], [])
       setSaveState('dirty')
       setBlockedReason(null)
     } catch (err) {
@@ -720,12 +913,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setNodes((items) => {
       const slot = items.length % 6
       const position = { x: center.x + (slot % 3) * 42, y: center.y + Math.floor(slot / 3) * 42 }
-      return [...items, { id: uid(), type: 'canvasNode', position, data: { kind, title, content: '' } }]
+      return [...items, { id: uid(), type: 'canvasNode', position, data: { kind, title, content: '', ...(kind === 'ai' ? { mode: 'text' as const, textModel: relayConfig.textModels[0], imageModel: relayConfig.imageModels[0], imageSize: '1024x1024' as const } : {}) } }]
     })
     markDirty()
   }
   const connect = useCallback((connection: Connection) => {
-    setEdges((items) => addEdge({ ...connection, type: 'smoothstep' }, items))
+    setEdges((items) => addEdge({ ...connection, type: 'bezier' }, items))
     markDirty()
   }, [markDirty, setEdges])
   const changeNodes = useCallback((changes: NodeChange<CanvasNode>[]) => {
@@ -736,6 +929,47 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     onEdgesChange(changes)
     if (changes.some((change) => change.type === 'add' || change.type === 'remove' || change.type === 'replace')) markDirty()
   }, [markDirty, onEdgesChange])
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, [contenteditable=true]')) return
+      const modifier = event.ctrlKey || event.metaKey
+      if (modifier && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return }
+      if (modifier && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); return }
+      if (modifier && event.key.toLowerCase() === 'c') {
+        const selectedNodes = nodesRef.current.filter((node) => node.selected)
+        if (!selectedNodes.length) return
+        event.preventDefault()
+        const selectedIds = new Set(selectedNodes.map((node) => node.id))
+        clipboard.current = cloneSnapshot({ nodes: selectedNodes, edges: edgesRef.current.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target)) })
+        return
+      }
+      if (modifier && event.key.toLowerCase() === 'v' && clipboard.current.nodes.length) {
+        event.preventDefault()
+        const idMap = new Map(clipboard.current.nodes.map((node) => [node.id, uid()]))
+        const copies = clipboard.current.nodes.map((node) => ({ ...node, id: idMap.get(node.id)!, position: { x: node.position.x + 42, y: node.position.y + 42 }, selected: true, data: { ...node.data } }))
+        const copiedEdges = clipboard.current.edges.map((edge) => ({ ...edge, id: uid(), source: idMap.get(edge.source)!, target: idMap.get(edge.target)!, selected: false, type: 'bezier' }))
+        setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), ...copies])
+        setEdges((items) => [...items.map((edge) => ({ ...edge, selected: false })), ...copiedEdges])
+        clipboard.current = cloneSnapshot({ nodes: copies, edges: copiedEdges })
+        markDirty()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [cloneSnapshot, markDirty, redo, setEdges, setNodes, undo])
+  const dropImage = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
+    const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'))
+    if (!file) return
+    event.preventDefault()
+    if (file.size > 8 * 1024 * 1024) { setNotice({ type: 'error', text: '图片不能超过 8MB' }); return }
+    try {
+      const imageUrl = await imageFileUrl(file)
+      const position = flow.current?.screenToFlowPosition({ x: event.clientX, y: event.clientY }) || { x: 200, y: 150 }
+      setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), { id: uid(), type: 'canvasNode', position, selected: true, data: { kind: 'image', title: file.name.replace(/\.[^.]+$/, '') || '图片', imageUrl } }])
+      markDirty()
+    } catch (err) { setNotice({ type: 'error', text: (err as Error).message || '图片读取失败' }) }
+  }, [markDirty, setNodes])
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       if (persistedRevision.current >= revision.current && aiInFlight.current === 0) return
@@ -780,12 +1014,13 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       setCurrent((item) => item?.id === canvasId ? { ...item, name: draft.name.trim() || '未命名画布', version: result.canvas.version } : item)
       setNodes(draft.nodes)
       setEdges(draft.edges)
+      resetHistory(draft.nodes, draft.edges)
       setBlockedReason(null)
       setSaveState('dirty')
       setNotice({ type: 'ok', text: '草稿已导入，正在保存' })
       window.setTimeout(() => flow.current?.fitView({ padding: 0.25 }), 30)
     } catch (err) { setNotice({ type: 'error', text: (err as Error).message }) }
-  }, [current, setEdges, setNodes])
+  }, [current, resetHistory, setEdges, setNodes])
   const chooseDraft = useCallback(() => {
     if (!current) return
     if (blockedReason === 'session') { setNotice({ type: 'error', text: '请重新登录后再导入草稿' }); return }
@@ -830,15 +1065,15 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell">
       {blockedReason && <div className="workspace-alert" role="alert"><span>{blockedReason === 'session' ? '登录已失效，本地草稿会在重新登录后恢复。' : blockedReason === 'conflict' ? '服务器存在更新，本地草稿未覆盖服务器内容。' : blockedReason === 'deleted' ? '这张画布已在其他页面删除，本地草稿尚未丢失。' : '本地草稿空间不足，请下载备份。'}</span><div><button className="icon-button" title="下载草稿" onClick={downloadDraft}><Download size={17} /></button>{blockedReason !== 'session' && blockedReason !== 'deleted' && <button className="icon-button" title="导入草稿" onClick={chooseDraft}><Upload size={17} /></button>}{blockedReason === 'session' ? <button className="secondary" onClick={() => setUser(null)}>重新登录</button> : blockedReason === 'conflict' ? <button className="secondary" onClick={discardDraft}>使用服务器版本</button> : blockedReason === 'deleted' ? <button className="secondary" onClick={abandonDeletedCanvas}>放弃本地草稿</button> : null}</div></div>}
-      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button import-button" title="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button></div></header>
+      <header className="topbar"><button className="icon-button menu-button" title="菜单" onClick={() => setSidebar(true)}><Menu size={19} /></button>{current ? <input className="canvas-name" maxLength={80} value={current.name} onChange={(event) => { setCurrent({ ...current, name: event.target.value }); markDirty() }} aria-label="画布名称" /> : <strong>我的画布</strong>}<div className="top-actions"><div className="history-actions"><button className="icon-button" title="撤销" disabled={!undoStack.current.length} onClick={undo}><Undo2 size={17} /></button><button className="icon-button" title="重做" disabled={!redoStack.current.length} onClick={redo}><Redo2 size={17} /></button></div><span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span><button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>{user.role === 'admin' && <button className="icon-button" title="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}<button className="icon-button import-button" title="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button><button className="icon-button" title="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button></div></header>
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importDraft(file) }} />
-      {current ? <div className="flow-wrap">
-        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={liveEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]}>
+      {current ? <div className="flow-wrap" onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) event.preventDefault() }} onDrop={(event) => void dropImage(event)}>
+        <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={liveEdges} nodeTypes={canvasNodeTypes} edgeTypes={canvasEdgeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onInit={(instance) => { flow.current = instance }} fitView deleteKeyCode={['Backspace', 'Delete']} minZoom={0.08} maxZoom={3} snapToGrid snapGrid={[16, 16]} selectionOnDrag selectionMode={SelectionMode.Partial} panOnDrag={[1, 2]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift">
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#c9cdd3" />
           <Controls position="bottom-right" showInteractive={false} />
           <MiniMap position="bottom-right" pannable zoomable nodeColor={(node) => node.data?.kind === 'ai' ? '#80cbc4' : node.data?.kind === 'note' ? '#efb64f' : '#aab7c8'} />
         </ReactFlow>
-        <div className="tool-rail"><button title="便签" onClick={() => addNode('note')}><StickyNote size={19} /></button><button title="文本" onClick={() => addNode('text')}><Text size={19} /></button><button title="图片" onClick={() => addNode('image')}><Image size={19} /></button><span /><button className="ai-tool" title="AI 对话" onClick={() => addNode('ai')}><Bot size={19} /></button></div>
+        <div className="tool-rail"><button title="便签" onClick={() => addNode('note')}><StickyNote size={19} /></button><button title="文本" onClick={() => addNode('text')}><Text size={19} /></button><button title="图片" onClick={() => addNode('image')}><Image size={19} /></button><span /><button className="ai-tool" title="AI 创作" onClick={() => addNode('ai')}><Sparkles size={19} /></button></div>
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
     {panel === 'account' && <AccountDrawer user={user} close={() => setPanel(null)} notify={setNotice} />}

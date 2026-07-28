@@ -36,6 +36,7 @@ const imagePoints = numberSetting('AI_IMAGE_POINTS', 8, { min: 1, max: 1000000, 
 const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 120000, integer: true })
 export const aiPendingRecoveryMs = numberSetting('AI_PENDING_RECOVERY_MS', aiTimeout + 60000, { min: aiTimeout + 10000, max: 3600000, integer: true })
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
+const aiImageMaxResponseBytes = numberSetting('AI_IMAGE_MAX_RESPONSE_BYTES', 12 * 1024 * 1024, { min: 1024, max: 50 * 1024 * 1024, integer: true })
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
 const maxCanvasesPerUser = numberSetting('MAX_CANVASES_PER_USER', 100, { min: 1, max: 10000, integer: true })
 const maxCanvasBytes = numberSetting('MAX_CANVAS_BYTES', 2 * 1024 * 1024, { min: 1024, max: 10 * 1024 * 1024, integer: true })
@@ -122,9 +123,9 @@ export const estimatePromptTokens = (messages) => messages.reduce(
 )
 const estimateTextTokens = (text) => Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
 
-async function readUpstreamJson(response) {
+async function readUpstreamText(response, maxBytes = aiMaxResponseBytes) {
   const declaredLength = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declaredLength) && declaredLength > aiMaxResponseBytes) {
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await response.body?.cancel()
     throw fail(502, '中转站返回内容过大')
   }
@@ -137,7 +138,7 @@ async function readUpstreamJson(response) {
       const { done, value } = await reader.read()
       if (done) break
       total += value.byteLength
-      if (total > aiMaxResponseBytes) {
+      if (total > maxBytes) {
         await reader.cancel()
         throw fail(502, '中转站返回内容过大')
       }
@@ -146,7 +147,12 @@ async function readUpstreamJson(response) {
   } finally {
     reader.releaseLock()
   }
-  try { return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) }
+  return Buffer.concat(chunks, total).toString('utf8')
+}
+
+async function readUpstreamJson(response) {
+  const text = await readUpstreamText(response)
+  try { return JSON.parse(text) }
   catch { throw fail(502, '中转站返回了无效 JSON') }
 }
 
@@ -180,7 +186,18 @@ app.get('/api/health', (_req, res) => {
     res.status(503).json({ ok: false })
   }
 })
-app.get('/api/config', auth, (_req, res) => res.json({ aiModel: relaySettings().models[0], centsPerPoint, topupInstructions }))
+app.get('/api/config', auth, (_req, res) => {
+  const textRelay = relaySettings()
+  const imageRelay = relaySettings('image')
+  res.json({
+    aiModel: textRelay.models[0],
+    textModels: textRelay.models,
+    imageModels: imageRelay.models,
+    imagePoints,
+    centsPerPoint,
+    topupInstructions,
+  })
+})
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const body = parse(z.object({
@@ -427,7 +444,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       + usageTokens(usage.completion_tokens, body.maxTokens, completionMinimum) / 1000 * outputRate,
     ))
     const charged = Math.min(actual, reserved)
-    const response = { id: generation.id, content, usage, charged, cached: false }
+    const response = { id: generation.id, model, content, usage, charged, cached: false }
     transaction(() => {
       const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id)
       if (row?.status !== 'pending') throw fail(409, '该请求已由恢复流程终止，积分已退回')
@@ -465,10 +482,10 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
-    if (!relay.baseUrl || !relay.apiKey) throw fail(503, '管理员尚未配置 AI 中转站')
+    if (!relay.baseUrl || !relay.apiKey) throw fail(503, '管理员尚未配置生图中转站')
     const url = new URL(`${relay.baseUrl}/images/generations`)
     const allowedProtocols = isProduction ? ['https:'] : ['https:', 'http:']
-    if (!allowedProtocols.includes(url.protocol)) throw fail(500, '中转站地址必须使用 HTTPS')
+    if (!allowedProtocols.includes(url.protocol)) throw fail(500, '生图中转站地址必须使用 HTTPS')
     generation = { id: randomUUID(), userId: req.auth.sub, reserved: imagePoints }
     transaction(() => {
       changeBalance(req.auth.sub, -imagePoints, 'ai_image_reserve', generation.id, `图片生成预占：${model}`)
@@ -479,16 +496,26 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     let upstream
     try {
       upstream = await fetch(url, { method: 'POST', signal: controller.signal, headers: { authorization: `Bearer ${relay.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt: body.prompt, size: body.size, n: 1 }) })
+    } catch (error) {
+      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '生图中转站响应超时' : '无法连接生图中转站')
     } finally { clearTimeout(timer) }
-    const text = await upstream.text()
+    const text = await readUpstreamText(upstream, upstream.ok ? aiImageMaxResponseBytes : aiMaxResponseBytes)
     let payload
     try { payload = JSON.parse(text) } catch { payload = null }
-    if (!upstream.ok) throw fail(502, `中转站返回错误：${payload?.error?.message || `HTTP ${upstream.status}`}`.slice(0, 300))
+    if (!upstream.ok) {
+      const detail = typeof payload?.error?.message === 'string' ? payload.error.message.slice(0, 240) : `HTTP ${upstream.status}`
+      throw fail(502, `生图中转站返回 ${upstream.status}：${detail}`)
+    }
     const image = payload?.data?.[0]
     const imageUrl = image?.url || (image?.b64_json ? `data:image/png;base64,${image.b64_json}` : '')
-    if (!imageUrl) throw fail(502, '中转站未返回图片')
+    if (!imageUrl) throw fail(502, '生图中转站未返回图片')
     const response = { imageUrl, model, charged: imagePoints, cached: false }
-    transaction(() => { db.prepare("UPDATE generations SET status='succeeded',charged=?,response=? WHERE id=? AND status='pending'").run(imagePoints, JSON.stringify(response), generation.id) })
+    transaction(() => {
+      const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id)
+      if (row?.status !== 'pending') throw fail(409, '该请求已由恢复流程终止，积分已退回')
+      db.prepare("UPDATE generations SET status='succeeded',charged=?,response=? WHERE id=? AND status='pending'")
+        .run(imagePoints, JSON.stringify(response), generation.id)
+    })
     res.json(response)
   } catch (error) {
     if (generation) { try { transaction(() => { const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id); if (row?.status === 'pending') { changeBalance(generation.userId, generation.reserved, 'ai_image_refund', generation.id, '图片生成失败退回'); db.prepare("UPDATE generations SET status='failed' WHERE id=?").run(generation.id) } }) } catch (refundError) { console.error('AI image refund failed', refundError) } }
@@ -601,7 +628,7 @@ app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
     } catch (error) {
       throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '中转站测试超时' : '无法连接中转站')
     } finally { clearTimeout(timer) }
-    const text = await upstream.text()
+    const text = await readUpstreamText(upstream)
     let payload
     try { payload = JSON.parse(text) } catch { payload = null }
     if (!upstream.ok) {
@@ -611,6 +638,45 @@ app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
     const content = payload?.choices?.[0]?.message?.content
     if (typeof content !== 'string') throw fail(502, '中转站响应格式不符合 Chat Completions')
     res.json({ ok: true, status: upstream.status, model: body.model, reply: content.slice(0, 240) })
+  } catch (error) { next(error) }
+})
+app.post('/api/admin/image-config/test', auth, admin, async (req, res, next) => {
+  try {
+    const body = parse(z.object({
+      baseUrl: z.string().trim().max(2000),
+      apiKey: z.string().trim().max(4000).optional(),
+      model: z.string().trim().min(1).max(100),
+    }), req.body)
+    const baseUrl = body.baseUrl.replace(/\/+$/, '')
+    let parsed
+    try { parsed = new URL(baseUrl) } catch { throw fail(400, '生图中转站地址无效') }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw fail(400, '生图中转站地址仅支持 HTTP 或 HTTPS')
+    if (isProduction && parsed.protocol !== 'https:') throw fail(400, '生产环境生图中转站地址必须使用 HTTPS')
+    const saved = relaySettings('image')
+    const key = body.apiKey || saved.apiKey
+    if (!key) throw fail(400, '请先填写或保存生图 API 密钥')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 60000))
+    let upstream
+    try {
+      upstream = await fetch(`${baseUrl}/images/generations`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: body.model, prompt: 'A simple solid white square.', size: '1024x1024', n: 1 }),
+      })
+    } catch (error) {
+      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '生图中转测试超时' : '无法连接生图中转站')
+    } finally { clearTimeout(timer) }
+    if (!upstream.ok) {
+      const text = (await readUpstreamText(upstream)).slice(0, 2000)
+      let payload
+      try { payload = JSON.parse(text) } catch { payload = null }
+      const detail = typeof payload?.error?.message === 'string' ? payload.error.message.slice(0, 240) : `HTTP ${upstream.status}`
+      throw fail(502, `生图中转站返回 ${upstream.status}：${detail}`)
+    }
+    await upstream.body?.cancel().catch(() => {})
+    res.json({ ok: true, status: upstream.status, model: body.model })
   } catch (error) { next(error) }
 })
 app.post('/api/admin/codes', auth, admin, (req, res, next) => {

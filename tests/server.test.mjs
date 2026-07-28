@@ -13,9 +13,12 @@ process.env.MAX_CANVASES_PER_USER = '3'
 process.env.MAX_CANVAS_BYTES = '2048'
 process.env.MAX_USER_STORAGE_BYTES = '3072'
 process.env.REGISTRATION_RATE_LIMIT = '100'
+process.env.AI_IMAGE_MAX_RESPONSE_BYTES = '2048'
 process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
+delete process.env.AI_IMAGE_BASE_URL
+delete process.env.AI_IMAGE_API_KEY
 
 const { default: app, estimatePromptTokens } = await import('../server/app.js')
 const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
@@ -535,6 +538,125 @@ test('AI relay chunked response size is bounded and reserved points are refunded
   assert.equal(result.body.error, '中转站返回内容过大')
   assert.equal((await request('/me', { token: member.token })).body.user.balance, before)
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+})
+
+test('image relay test uses independent settings and never charges user points', async () => {
+  const account = await register('生图配置管理员', 'image-relay-admin@example.com')
+  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(account.user.id)
+  const login = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'image-relay-admin@example.com', password: 'password123' }),
+  })
+  assert.equal(login.status, 200)
+  const adminToken = login.body.token
+  let releaseDelayedImage
+  const delayedImageReady = new Promise((resolve) => { releaseDelayedImage = resolve })
+  const relay = (await import('node:http')).createServer(async (req, res) => {
+    assert.equal(req.url, '/v1/images/generations')
+    assert.equal(req.headers.authorization, 'Bearer image-relay-key')
+    let body = ''
+    for await (const chunk of req) body += chunk
+    const payload = JSON.parse(body)
+    if (payload.model === 'denied-image-model') {
+      res.statusCode = 401
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ error: { message: 'invalid image token' } }))
+      return
+    }
+    if (payload.model === 'oversized-image-model') {
+      res.setHeader('content-type', 'application/json')
+      res.setHeader('content-length', '2049')
+      res.end()
+      return
+    }
+    if (payload.model === 'delayed-image-model') {
+      await delayedImageReady
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ data: [{ url: 'https://example.com/late.png' }] }))
+      return
+    }
+    assert.equal(payload.model, 'test-image-model')
+    assert.equal(payload.size, '1024x1024')
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ data: [{ url: 'https://example.com/test.png' }] }))
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
+
+  try {
+    const saved = await request('/admin/image-config', {
+      token: adminToken,
+      method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: 'image-relay-key', models: ['test-image-model', 'denied-image-model', 'oversized-image-model', 'delayed-image-model'] }),
+    })
+    assert.equal(saved.status, 200)
+    assert.equal(JSON.stringify(saved.body).includes('image-relay-key'), false)
+    const beforeBalance = (await request('/me', { token: adminToken })).body.user.balance
+    const beforeGenerations = Number(db.prepare('SELECT COUNT(*) count FROM generations').get().count)
+    const result = await request('/admin/image-config/test', {
+      token: adminToken,
+      method: 'POST',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, model: 'test-image-model' }),
+    })
+    assert.deepEqual(result, { status: 200, body: { ok: true, status: 200, model: 'test-image-model' } })
+    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+    assert.equal(Number(db.prepare('SELECT COUNT(*) count FROM generations').get().count), beforeGenerations)
+    const config = await request('/config', { token: adminToken })
+    assert.deepEqual(config.body.imageModels, ['test-image-model', 'denied-image-model', 'oversized-image-model', 'delayed-image-model'])
+    assert.equal(config.body.imagePoints, 8)
+
+    const denied = await request('/admin/image-config/test', {
+      token: adminToken,
+      method: 'POST',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, model: 'denied-image-model' }),
+    })
+    assert.equal(denied.status, 502)
+    assert.match(denied.body.error, /返回 401.*invalid image token/)
+    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+
+    const deniedGeneration = await request('/ai/image', {
+      token: adminToken,
+      method: 'POST',
+      body: JSON.stringify({ requestKey: 'denied-image-generation-0001', model: 'denied-image-model', prompt: 'test', size: '1024x1024' }),
+    })
+    assert.equal(deniedGeneration.status, 502)
+    assert.match(deniedGeneration.body.error, /返回 401.*invalid image token/)
+    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+
+    const oversizedGeneration = await request('/ai/image', {
+      token: adminToken,
+      method: 'POST',
+      body: JSON.stringify({ requestKey: 'oversized-image-generation-0001', model: 'oversized-image-model', prompt: 'test', size: '1024x1024' }),
+    })
+    assert.deepEqual(oversizedGeneration, { status: 502, body: { error: '中转站返回内容过大' } })
+    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+
+    const overlapKey = 'recovery-overlap-image-request-0001'
+    const overlapCall = request('/ai/image', {
+      token: adminToken,
+      method: 'POST',
+      body: JSON.stringify({ requestKey: overlapKey, model: 'delayed-image-model', prompt: 'test', size: '1024x1024' }),
+    })
+    while (!db.prepare('SELECT id FROM generations WHERE request_key=?').get(overlapKey)) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    const overlapGeneration = db.prepare('SELECT id,reserved FROM generations WHERE request_key=?').get(overlapKey)
+    const beforeRecovery = (await request('/me', { token: adminToken })).body.user.balance
+    assert.equal(recoverPendingGenerations(), 1)
+    releaseDelayedImage()
+    assert.equal((await overlapCall).status, 409)
+    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeRecovery + Number(overlapGeneration.reserved))
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(overlapGeneration.id).status, 'failed')
+  } finally {
+    releaseDelayedImage?.()
+    await request('/admin/image-config', {
+      token: adminToken,
+      method: 'PUT',
+      body: JSON.stringify({ baseUrl: '', clearApiKey: true, models: ['test-image-model'] }),
+    })
+    await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+  }
 })
 
 test.after(async () => {

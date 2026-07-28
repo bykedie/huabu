@@ -24,7 +24,7 @@ npm.cmd ci
 npm.cmd run dev
 ~~~
 
-前端地址为 http://localhost:5173，API 默认为 http://localhost:3000/api/health。开发环境下 Vite 会把 /api 代理到后端。
+前端地址为 http://localhost:5180，API 默认为 http://localhost:3100/api/health。开发环境下 Vite 会把 /api 代理到后端。
 
 开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
 
@@ -43,9 +43,12 @@ ADMIN_SETUP_TOKEN=使用另一个随机生成的长初始化码
 AI_BASE_URL=https://你的中转域名/v1
 AI_API_KEY=你的中转密钥
 AI_MODELS=gpt-4o-mini
+AI_IMAGE_BASE_URL=https://你的生图中转域名/v1
+AI_IMAGE_API_KEY=你的生图中转密钥
+AI_IMAGE_MODELS=gpt-image-1
 ~~~
 
-应用会向 AI_BASE_URL/chat/completions 发送非流式请求，协议兼容常见 OpenAI 中转站。AI_MODELS 是服务端模型白名单，多个模型用英文逗号分隔；当前界面使用列表中的第一个模型。修改积分单价后重启应用生效。
+文字会调用 `AI_BASE_URL/chat/completions`，生图会调用 `AI_IMAGE_BASE_URL/images/generations`；两套中转的地址、密钥和模型完全独立，也可以在运营管理中保存并测试。`AI_MODELS` 与 `AI_IMAGE_MODELS` 都是服务端模型白名单，多个模型用英文逗号分隔。修改环境变量中的积分单价后重启应用生效。
 
 ## 服务器与域名部署
 
@@ -78,7 +81,7 @@ AI_MODELS=gpt-4o-mini
    curl https://你的域名/api/health
    ~~~
 
-应用端口只绑定 127.0.0.1:3000，公网通过 Nginx 和 HTTPS 访问。不要把 .env、数据库或中转密钥提交到 Git。
+应用端口只绑定 127.0.0.1:3100，公网通过 Nginx 和 HTTPS 访问。不要把 .env、数据库或中转密钥提交到 Git。
 Compose 已将应用容器日志设置为单文件 10 MiB、最多保留 3 个文件，避免日志无限增长占满数据库所在磁盘。生产服务器仍应配置磁盘用量和容器健康状态告警。
 
 ## 积分与充值

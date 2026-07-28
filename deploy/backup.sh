@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 wait_for_health() {
   for _ in {1..60}; do
-    if curl -fsS http://127.0.0.1:3000/api/health >/dev/null; then
+    if curl -fsS http://127.0.0.1:3100/api/health >/dev/null; then
       return 0
     fi
     sleep 2
