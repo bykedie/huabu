@@ -1,14 +1,16 @@
 # 墨屿画布
 
-一个可自行部署的中文无限画布。用户可以在画布里创建便签、文本、图片和 AI 对话节点，拖拽、连线、缩放并自动保存。站点内置积分账本、兑换码、人工充值审核和 OpenAI-compatible 中转站代理。
+一个可自行部署的中文无限画布。用户可以在画布里创建便签、文本、图片和 AI 对话节点，拖拽、连线、缩放并自动保存。站点内置积分账本、兑换码、人工充值审核、文字/视频中转管理，以及使用用户自有密钥的图片生成代理。
 
 ## 已实现
 
 - 邮箱注册/登录；生产环境使用一次性初始化码创建首位管理员
 - 每个用户独立的多画布空间，支持节点拖拽、连线、缩放、小地图和自动保存
-- 便签、文本、图片地址、AI 对话四种节点
+- 便签、文本、图片、分组和 AI 创作节点，支持曲线连线、删除、对齐与分布
 - 服务端代理 OpenAI-compatible /v1/chat/completions，中转密钥不会进入浏览器
-- AI 请求先预占积分，成功后按 usage 结算并退回差额，失败全额退回
+- 文字 AI 请求先预占积分，成功后按 usage 结算并退回差额，失败全额退回
+- 图片生成固定使用 `https://www.bkbk.baby/v1`，每位用户在账户设置中保存自己的加密 API 密钥
+- 图片费用由中转站账户处理，不扣站内积分；相同请求标识重试可恢复缓存结果
 - 整数积分余额与不可变流水；兑换码哈希存储、限次核销
 - 用户提交充值申请，管理员审核后幂等到账
 - 管理后台统计、批量生成兑换码、充值审核和中转配置状态
@@ -24,12 +26,12 @@ npm.cmd ci
 npm.cmd run dev
 ~~~
 
-前端地址为 http://localhost:5180，API 默认为 http://localhost:3100/api/health。开发环境下 Vite 会把 /api 代理到后端。
+本地开发前端地址为 http://localhost:5182，开发 API 默认为 http://localhost:3102/api/health；Vite 会把前端发出的 `/api` 请求代理到该后端。Compose 部署时应用容器内部监听 3102，并只映射到宿主机 `127.0.0.1:3102`，不使用 5182。
 
 开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
 
 生产示例默认 `WELCOME_POINTS=0`。站点尚未接入邮箱验证时不建议赠送注册积分，否则用户可通过批量注册重复领取。
-服务端默认限制每个账号 100 张画布、单画布 2 MiB、账号总画布数据 20 MiB，并限制同一来源 IP 每 15 分钟成功注册 5 次。登录失败会按账号持久计数，15 分钟内连续失败 5 次后锁定 15 分钟，更换来源 IP 不能绕过。可按服务器磁盘和业务套餐调整 `.env` 中的 `MAX_CANVASES_PER_USER`、`MAX_CANVAS_BYTES`、`MAX_USER_STORAGE_BYTES` 和 `REGISTRATION_RATE_LIMIT`；不要只依赖前端限制。
+服务端默认限制每个账号 100 张画布、200 个素材，单画布或单素材 2 MiB，画布与素材合计 20 MiB；视频媒体另设每账号 512 MiB 配额，单个视频上传或中转响应默认最多 64 MiB。系统还限制同一来源 IP 每 15 分钟成功注册 5 次。登录失败会按账号持久计数，15 分钟内连续失败 5 次后锁定 15 分钟，更换来源 IP 不能绕过。可按服务器磁盘和业务套餐调整 `.env` 中的 `MAX_CANVASES_PER_USER`、`MAX_ASSETS_PER_USER`、`MAX_CANVAS_BYTES`、`MAX_USER_STORAGE_BYTES`、`AI_VIDEO_MAX_RESPONSE_BYTES`、`MAX_USER_MEDIA_BYTES` 和 `REGISTRATION_RATE_LIMIT`；`MAX_USER_MEDIA_BYTES` 不得低于 `AI_VIDEO_MAX_RESPONSE_BYTES`，也不要只依赖前端限制。
 用户可从侧栏头像进入“账户安全”修改密码。修改成功后，其他设备上的旧登录令牌会立即失效。
 运营管理会记录兑换码生成和充值审批操作，包含操作者、时间与积分/金额；审计记录不保存兑换码明文，并由数据库禁止更新或删除。
 
@@ -43,16 +45,50 @@ ADMIN_SETUP_TOKEN=使用另一个随机生成的长初始化码
 AI_BASE_URL=https://你的中转域名/v1
 AI_API_KEY=你的中转密钥
 AI_MODELS=gpt-4o-mini
-AI_IMAGE_BASE_URL=https://你的生图中转域名/v1
-AI_IMAGE_API_KEY=你的生图中转密钥
-AI_IMAGE_MODELS=gpt-image-1
+AI_IMAGE_MODELS=GPT-image-2
+AI_VIDEO_BASE_URL=https://你的视频中转域名/v1
+AI_VIDEO_API_KEY=你的视频中转密钥
+AI_VIDEO_MEDIA_ORIGINS=https://你的视频媒体域名
+AI_VIDEO_MODELS=你的视频模型
+AI_VIDEO_POINTS=24
+AI_VIDEO_TIMEOUT_MS=600000
+AI_VIDEO_POLL_MS=2500
+AI_VIDEO_PENDING_RECOVERY_MS=660000
+AI_VIDEO_MAX_RESPONSE_BYTES=67108864
+MAX_USER_MEDIA_BYTES=536870912
 ~~~
 
-文字会调用 `AI_BASE_URL/chat/completions`，生图会调用 `AI_IMAGE_BASE_URL/images/generations`；两套中转的地址、密钥和模型完全独立，也可以在运营管理中保存并测试。`AI_MODELS` 与 `AI_IMAGE_MODELS` 都是服务端模型白名单，多个模型用英文逗号分隔。修改环境变量中的积分单价后重启应用生效。
+文字会调用管理员配置的 `AI_BASE_URL/chat/completions`。图片生成固定调用 `https://www.bkbk.baby/v1/images/generations`，参考图编辑调用同一端点下的 `/images/edits`；每位用户从“账户安全”保存和测试自己的图片 API 密钥，密钥只在服务端加密保存且不会返回浏览器。视频会调用 `AI_VIDEO_BASE_URL/videos` 并按任务状态轮询，也可由管理员在运营管理中保存视频中转配置。`AI_IMAGE_MODELS` 与 `AI_VIDEO_MODELS` 都是服务端模型白名单，多个模型用英文逗号分隔。
+
+视频结果默认只允许从 `AI_VIDEO_BASE_URL` 的精确 origin 下载。如果中转站返回独立媒体 CDN，可在 `AI_VIDEO_MEDIA_ORIGINS` 中填写逗号分隔的精确 origin，例如 `https://media.example.com`；不得包含路径、凭据、查询参数或片段。应用会逐跳检查重定向与解析地址，拒绝回环、私网、链路本地和保留地址，并且不会把视频中转 Authorization 发送给这些额外媒体来源。
+
+`AI_VIDEO_PENDING_RECOVERY_MS` 必须至少为 `AI_VIDEO_TIMEOUT_MS + 10000`，避免仍在处理的任务被恢复流程提前标记失败；默认值 660000 比 10 分钟视频超时多保留 60 秒。`AI_VIDEO_MAX_RESPONSE_BYTES` 同时限制视频上传与中转下载响应，默认 64 MiB；`MAX_USER_MEDIA_BYTES` 是每位用户的媒体总配额，必须不小于该单次上限，默认 512 MiB。
+
+`JWT_SECRET` 当前不仅签发登录令牌，还派生数据库中已保存的文字/视频中转密钥、用户图片密钥的加密密钥，以及媒体访问签名。当前实现没有密钥迁移机制；恢复数据库或计划轮换时必须继续使用与该数据库对应的原值，不能直接生成新值替换，否则已保存密钥无法解密且已有媒体地址会失效。
 
 ## 服务器与域名部署
 
 服务器需安装 Docker Engine、Docker Compose、Nginx，并将域名 A/AAAA 记录指向服务器。
+
+### 一键部署（Ubuntu / Debian）
+
+先把域名 A/AAAA 记录指向服务器，再在服务器执行下面一行。脚本会安装 Docker、Compose、Nginx 和 Certbot，首次生成生产密钥，部署 `codex/infinite-canvas` 分支并申请 HTTPS：
+
+~~~bash
+curl -fsSL https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh | sudo bash -s -- --domain canvas.example.com --email admin@example.com
+~~~
+
+把域名和邮箱换成真实值。默认安装目录为 `/opt/moyu-canvas`，数据库使用 Docker 的 `canvas-data` volume，更新前备份写入 `/srv/canvas-backups`。同一命令可以重复执行：脚本保留已有 `.env` 和数据卷，拒绝脏仓库或非快进更新，检测到新版本时会先调用 `deploy/backup.sh` 再更新。若暂时只部署 HTTP，必须显式把 `--email ...` 换成 `--no-tls`。
+
+首次部署不会把管理员初始化码打印到安装日志。需要创建首位管理员时，在服务器执行：
+
+~~~bash
+sudo sed -n 's/^ADMIN_SETUP_TOKEN=//p' /opt/moyu-canvas/.env
+~~~
+
+首位管理员创建成功后，从 `.env` 删除 `ADMIN_SETUP_TOKEN`，再重跑同一条一键部署命令使容器使用更新后的配置。中转地址和密钥也可在 `/opt/moyu-canvas/.env` 中配置；脚本不会覆盖已有配置。
+
+### 手动部署
 
 1. 克隆仓库并创建生产配置：
 
@@ -62,7 +98,7 @@ AI_IMAGE_MODELS=gpt-image-1
    cp .env.example .env
    openssl rand -hex 32 # 生成 JWT_SECRET
    openssl rand -hex 32 # 另生成 ADMIN_SETUP_TOKEN
-   # 将两个不同的输出写入 .env，并填写中转站配置
+   # 将两个不同的输出写入 .env，并按需填写文字/视频中转配置
    docker compose up -d --build
    ~~~
 
@@ -81,12 +117,12 @@ AI_IMAGE_MODELS=gpt-image-1
    curl https://你的域名/api/health
    ~~~
 
-应用端口只绑定 127.0.0.1:3100，公网通过 Nginx 和 HTTPS 访问。不要把 .env、数据库或中转密钥提交到 Git。
+容器内应用监听 3102，Compose 只将它绑定到宿主机 `127.0.0.1:3102`；公网客户端通过 Nginx 的 80/443 端口访问，启用证书后应使用 HTTPS 443。部署示例的 Nginx 请求体上限为 64 MiB，与后端默认视频上传上限一致。不要把 `.env`、数据库或中转密钥提交到 Git。
 Compose 已将应用容器日志设置为单文件 10 MiB、最多保留 3 个文件，避免日志无限增长占满数据库所在磁盘。生产服务器仍应配置磁盘用量和容器健康状态告警。
 
 ## 积分与充值
 
-积分为整数。AI 调用根据输入和输出 token 分别计价；请求开始时按最大输出预占，成功后根据中转站返回的 usage 结算。若中转站不返回 usage，系统使用保守估算，避免免费超额调用。进程异常退出后，启动时会把遗留的未结算预占记录标记失败并全额退回。
+积分为整数。文字 AI 调用根据输入和输出 token 分别计价，视频按管理员配置计价；图片生成不扣站内积分，费用由用户自己的中转站账户处理。同一个图片请求标识成功后重放会直接返回缓存结果，不会重复请求中转站。
 
 当前充值方式是可用的人工审核流程：在 `.env` 的 `TOPUP_INSTRUCTIONS` 填写微信、支付宝或其他收款方式和备注要求；用户可看到预计积分、提交唯一付款交易单号并跟踪待审核/已到账/已驳回状态，重复交易单号会被拒绝，管理员确认实际收款后点击通过，积分只会到账一次。真正的微信支付或支付宝自动收款还需要商户号、证书和回调域名；拿到这些资料后应新增支付订单签名与异步回调，不要在前端直接处理支付密钥。
 
@@ -96,11 +132,11 @@ Compose 已将应用容器日志设置为单文件 10 MiB、最多保留 3 个�
 
 ~~~bash
 chmod +x deploy/backup.sh deploy/restore.sh
-./deploy/backup.sh
-# 也可指定备份根目录：./deploy/backup.sh /srv/canvas-backups
+./deploy/backup.sh # 默认写入 /srv/canvas-backups
+# 也可指定另一个仓库外绝对路径：./deploy/backup.sh /mnt/canvas-backups
 ~~~
 
-脚本使用秒级时间戳和进程号创建全新目录，拒绝覆盖已有备份；数据库校验成功并且应用重新恢复健康后才返回成功。请定期把备份目录同步到另一台服务器或对象存储。
+备份根目录必须使用项目仓库外的绝对路径；脚本会拒绝仓库根目录及其任何子目录，避免完整数据库进入 Git 工作区或 Docker 构建上下文。默认根目录为 `/srv/canvas-backups`，可用第一个参数覆盖。脚本使用秒级时间戳和进程号创建全新目录，拒绝覆盖已有备份；数据库校验成功并且应用重新恢复健康后才返回成功。请定期把备份目录同步到另一台服务器或对象存储。数据库备份与其对应的 `JWT_SECRET` 必须按同一生命周期安全保存和恢复；秘密应进入受控的秘密管理或加密备份流程，不要把明文密钥放入仓库、普通备份目录或文档。
 
 恢复时传入一个包含 `app.db` 的备份目录：
 
@@ -119,4 +155,4 @@ npm run build
 npm audit --audit-level=low
 ~~~
 
-测试覆盖生产密钥与计费配置、管理员初始化、账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等，以及 AI 失败和异常重启后的积分完整退回。
+测试覆盖生产密钥与计费配置、管理员初始化、账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等、用户图片密钥加密与隔离、固定图片端点、图片零站内扣费，以及文字和视频请求的积分完整性。

@@ -1,0 +1,20 @@
+# Decisions
+
+- Use the reference repository as a visual and interaction benchmark, not as a source-copy target.
+- Preserve the current commercial backend and data contracts while changing presentation.
+- Use isolated CSS override files for this parallel phase so workers cannot collide in `src/styles.css`.
+- Main thread owns integration and acceptance; workers own bounded implementation only.
+- Worker progress is persisted in repository status files approximately every two minutes.
+- Do not expose or repeat relay secrets.
+- Keep frontend on port `5182` and API on port `3102`; do not use ports `3000` or `5174`.
+- Use `PROJECT_MEMORY.md` as the durable index of user-confirmed goals, terminology, preferences, and unresolved historical conflicts. The user's latest explicit request overrides it, and secrets must never be recorded there.
+- For image generation, use the user-confirmed later scheme: lock the relay to `https://www.bkbk.baby/`, store each user's image API key encrypted on the server, and do not charge site points for image requests. Keep text and video relay behavior unchanged.
+- When an idea has been accepted for execution, create a recoverable goal before implementation. The main thread acts as commander, delegates independent work to the three collaboration threads, and owns final integration and acceptance.
+- Keep all three collaboration threads pinned. The user permits up to 10 concurrent workers for genuinely independent tasks, subject to the runtime's smaller slot limit; do not create workers just to fill capacity. Use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高") unless explicitly overridden.
+- Keep the old `app_settings.ai_image_*` columns only as inert schema-compatibility fields for existing databases. Runtime image calls, public configuration, and administrator routes must not read or expose them.
+- A user-entered image key may exist briefly in a password input's component state and request body, but it must be cleared after the request and must never enter localStorage, canvas documents, notices, logs, screenshots, API responses, or administrator state.
+- Video result downloads are restricted to the relay origin and exact origins listed in `AI_VIDEO_MEDIA_ORIGINS`. Every redirect hop is handled manually, limited to five, and revalidated for origin and unsafe DNS/IP results. The relay authorization header is sent only to the relay origin. DNS validation still has a residual resolution-to-connect rebinding TOCTOU window, which remains a documented risk.
+- An asynchronous video result that exceeds the user's media quota (`413`) is terminal: mark the generation failed and refund its reservation exactly once. Result-download `502/504` failures remain pending because a later poll can recover.
+- `JWT_SECRET` is part of the encrypted database's recovery identity. Backups and restores must retain the matching value; `server/check-db.js` must reject databases whose text relay, video relay, or user image ciphertext cannot be decrypted by the current secret.
+- Production backups must use a unique absolute directory outside the repository. Never place a full database backup in the worktree or Docker build context, and preserve the matching `JWT_SECRET` through a separate controlled secret-management process.
+- The supported one-command production path is `deploy/install.sh` on Ubuntu/Debian with systemd. It preserves an existing `.env` and Compose data volume, rejects dirty or divergent deployment repositories, accepts only a fast-forward branch update, and runs the existing validated database backup before updating a running deployment. First-run secrets are generated locally on the server and are never printed by the installer.

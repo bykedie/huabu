@@ -14,11 +14,15 @@ process.env.MAX_CANVAS_BYTES = '2048'
 process.env.MAX_USER_STORAGE_BYTES = '3072'
 process.env.REGISTRATION_RATE_LIMIT = '100'
 process.env.AI_IMAGE_MAX_RESPONSE_BYTES = '2048'
+process.env.AI_IMAGE_MODELS = 'GPT-image-2'
+process.env.AI_VIDEO_MAX_RESPONSE_BYTES = '2048'
+process.env.MAX_USER_MEDIA_BYTES = '2048'
 process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
-delete process.env.AI_IMAGE_BASE_URL
-delete process.env.AI_IMAGE_API_KEY
+delete process.env.AI_VIDEO_MEDIA_ORIGINS
+process.env.AI_IMAGE_BASE_URL = 'https://forbidden-image-environment.example/v1'
+process.env.AI_IMAGE_API_KEY = 'forbidden-image-environment-key'
 
 const { default: app, estimatePromptTokens } = await import('../server/app.js')
 const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
@@ -106,6 +110,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const document = {
     nodes: [{ id: 'n1', type: 'canvasNode', position: { x: 10, y: 20 }, data: { kind: 'note', title: '方向', content: '验证保存' } }],
     edges: [],
+    assistantMessages: [{ id: 'm1', role: 'user', content: '下一步做什么？', createdAt: 123456 }],
   }
   assert.equal((await request(`/canvases/${canvasId}`, {
     token: member.token,
@@ -226,6 +231,12 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, storedConfig.ai_api_key_encrypted)
   const configAudit = db.prepare("SELECT details FROM admin_audit WHERE action='ai_config.update' ORDER BY rowid DESC LIMIT 1").get()
   assert.equal(configAudit.details.includes('test-relay-key'), false)
+  const textUserImageKey = 'test-text-user-image-key'
+  assert.equal((await request('/me/image-key', {
+    token: member.token, method: 'PUT', body: JSON.stringify({ apiKey: textUserImageKey }),
+  })).status, 200)
+  const textUserImageCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted
+  assert.equal(textUserImageCiphertext.includes(textUserImageKey), false)
   const successPayload = {
     requestKey: 'test-request-success-0001',
     messages: [{ role: 'user', content: '请生成一个测试结果' }],
@@ -358,7 +369,40 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(retried.status, 200)
   assert.equal(retried.body.cached, false)
   assert.equal(retried.body.content, '这是一条模拟中转站回复')
+  assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted, textUserImageCiphertext)
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+})
+
+test('asset library preserves ownership and shares the account storage quota', async () => {
+  const owner = await register('资产用户', 'asset-owner@example.com')
+  const other = await register('其他资产用户', 'asset-other@example.com')
+  const invalidImage = await request('/assets', {
+    token: owner.token, method: 'POST', body: JSON.stringify({ kind: 'image', title: '错误图片', content: 'not-an-image' }),
+  })
+  assert.equal(invalidImage.status, 400)
+
+  const created = await request('/assets', {
+    token: owner.token, method: 'POST', body: JSON.stringify({ kind: 'text', title: '角色设定', content: '一位穿红色风衣的侦探', sourceCanvasId: 'canvas-a', sourceNodeId: 'node-a' }),
+  })
+  assert.equal(created.status, 201)
+  const assetId = created.body.asset.id
+  assert.equal(created.body.asset.source_canvas_id, 'canvas-a')
+  assert.deepEqual((await request('/assets', { token: owner.token })).body.assets.map((asset) => asset.id), [assetId])
+  assert.deepEqual((await request('/assets', { token: other.token })).body.assets, [])
+  assert.equal((await request(`/assets/${assetId}`, { token: other.token, method: 'DELETE' })).status, 404)
+  assert.deepEqual((await request('/assets', { token: owner.token })).body.assets.map((asset) => asset.id), [assetId])
+  assert.equal((await request(`/assets/${assetId}`, { token: owner.token, method: 'DELETE' })).status, 204)
+  assert.deepEqual((await request('/assets', { token: owner.token })).body.assets, [])
+
+  const quotaUser = await register('资产配额用户', 'asset-quota@example.com')
+  const canvas = await request('/canvases', { token: quotaUser.token, method: 'POST', body: JSON.stringify({ name: '资产配额' }) })
+  const quotaDocument = { nodes: [{ id: 'n', position: { x: 0, y: 0 }, data: { kind: 'text', content: 'x'.repeat(1200) } }], edges: [] }
+  assert.equal((await request(`/canvases/${canvas.body.canvas.id}`, { token: quotaUser.token, method: 'PUT', body: JSON.stringify({ name: '资产配额', version: 0, document: quotaDocument }) })).status, 200)
+  const canvasBytes = Number(db.prepare('SELECT length(CAST(document AS BLOB)) bytes FROM canvases WHERE id=?').get(canvas.body.canvas.id).bytes)
+  const contentLength = 3072 - canvasBytes + 1
+  assert.ok(contentLength > 0 && contentLength <= 2048)
+  const overQuota = await request('/assets', { token: quotaUser.token, method: 'POST', body: JSON.stringify({ kind: 'text', title: '超出配额', content: 'y'.repeat(contentLength) }) })
+  assert.equal(overQuota.status, 413)
 })
 
 test('AI billing applies local minimums when relay reports zero usage', async () => {
@@ -540,122 +584,537 @@ test('AI relay chunked response size is bounded and reserved points are refunded
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 
-test('image relay test uses independent settings and never charges user points', async () => {
-  const account = await register('生图配置管理员', 'image-relay-admin@example.com')
-  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(account.user.id)
-  const login = await request('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email: 'image-relay-admin@example.com', password: 'password123' }),
+test('video relay configuration and billing remain independent from user image keys', async () => {
+  const admin = await register('视频配置管理员', 'video-relay-admin@example.com')
+  const member = await register('视频生成用户', 'video-relay-member@example.com')
+  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(admin.user.id)
+  const memberImageKey = 'test-video-user-image-key'
+  assert.equal((await request('/me/image-key', {
+    token: member.token, method: 'PUT', body: JSON.stringify({ apiKey: memberImageKey }),
+  })).status, 200)
+  const memberImageCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted
+  assert.equal(memberImageCiphertext.includes(memberImageKey), false)
+
+  let createCalls = 0
+  let contentCalls = 0
+  let redirectCalls = 0
+  let externalMediaCalls = 0
+  let externalMediaAuthorizationPresent = false
+  let unsafeTargetFetches = 0
+  const videoKey = 'test-video-relay-key'
+  const externalMedia = (await import('node:http')).createServer((req, res) => {
+    externalMediaCalls += 1
+    externalMediaAuthorizationPresent ||= Boolean(req.headers.authorization)
+    assert.equal(req.url, '/external.mp4')
+    res.setHeader('content-type', 'video/mp4')
+    res.end(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42')]))
   })
-  assert.equal(login.status, 200)
-  const adminToken = login.body.token
-  let releaseDelayedImage
-  const delayedImageReady = new Promise((resolve) => { releaseDelayedImage = resolve })
+  externalMedia.listen(0, '127.0.0.1')
+  await new Promise((resolve) => externalMedia.once('listening', resolve))
+  const externalMediaOrigin = `http://127.0.0.1:${externalMedia.address().port}`
+  const unsafeHosts = new Set(['169.254.169.254', '10.0.0.1'])
+  process.env.AI_VIDEO_MEDIA_ORIGINS = [externalMediaOrigin, ...[...unsafeHosts].map((host) => `http://${host}`)].join(',')
+  const fetchBeforeVideoSsrf = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const value = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (unsafeHosts.has(new URL(value).hostname)) {
+      unsafeTargetFetches += 1
+      throw new Error('unsafe video target fetch attempted')
+    }
+    return fetchBeforeVideoSsrf(input, init)
+  }
   const relay = (await import('node:http')).createServer(async (req, res) => {
-    assert.equal(req.url, '/v1/images/generations')
-    assert.equal(req.headers.authorization, 'Bearer image-relay-key')
-    let body = ''
-    for await (const chunk of req) body += chunk
-    const payload = JSON.parse(body)
-    if (payload.model === 'denied-image-model') {
-      res.statusCode = 401
+    assert.equal(req.headers.authorization, `Bearer ${videoKey}`)
+    if (req.method === 'POST' && req.url === '/v1/videos') {
+      createCalls += 1
+      for await (const _chunk of req) { /* drain multipart request */ }
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ error: { message: 'invalid image token' } }))
+      if (createCalls === 2) {
+        res.statusCode = 500
+        res.end(JSON.stringify({ error: { message: 'simulated video failure' } }))
+        return
+      }
+      if (createCalls === 3) {
+        res.end(JSON.stringify({ video_url: `${externalMediaOrigin}/external.mp4` }))
+        return
+      }
+      if (createCalls === 4) {
+        res.end(JSON.stringify({ video_url: 'http://169.254.169.254/result.mp4' }))
+        return
+      }
+      if (createCalls === 5) {
+        const port = relay.address().port
+        res.end(JSON.stringify({ video_url: `http://127.0.0.1:${port}/redirect-private` }))
+        return
+      }
+      if (createCalls === 6) {
+        res.end(JSON.stringify({ id: 'quota-task', status: 'queued' }))
+        return
+      }
+      if (createCalls === 7) {
+        res.end(JSON.stringify({ id: 'download-error-task', status: 'queued' }))
+        return
+      }
+      if (createCalls === 8) {
+        res.end(JSON.stringify({ id: 'download-timeout-task', status: 'queued' }))
+        return
+      }
+      if (createCalls === 9) {
+        res.end(JSON.stringify({ id: 'unsafe-poll-task', status: 'queued' }))
+        return
+      }
+      const port = relay.address().port
+      res.end(JSON.stringify({ video_url: `http://127.0.0.1:${port}/result.mp4` }))
       return
     }
-    if (payload.model === 'oversized-image-model') {
+    if (req.method === 'GET' && ['/v1/videos/quota-task', '/v1/videos/download-error-task'].includes(req.url)) {
       res.setHeader('content-type', 'application/json')
-      res.setHeader('content-length', '2049')
+      res.end(JSON.stringify({ id: req.url.split('/').at(-1), status: 'completed' }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/v1/videos/download-timeout-task') {
+      const port = relay.address().port
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ id: 'download-timeout-task', status: 'completed', video_url: `http://127.0.0.1:${port}/timeout.mp4` }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/v1/videos/unsafe-poll-task') {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ id: 'unsafe-poll-task', status: 'completed', video_url: 'http://10.0.0.1/result.mp4' }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/redirect-private') {
+      redirectCalls += 1
+      res.writeHead(302, { location: 'http://169.254.169.254/redirected.mp4' })
       res.end()
       return
     }
-    if (payload.model === 'delayed-image-model') {
-      await delayedImageReady
+    if (req.method === 'GET' && req.url === '/v1/videos/download-error-task/content') {
+      res.statusCode = 502
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data: [{ url: 'https://example.com/late.png' }] }))
+      res.end(JSON.stringify({ error: { message: 'simulated download failure' } }))
       return
     }
-    assert.equal(payload.model, 'test-image-model')
-    assert.equal(payload.size, '1024x1024')
-    res.setHeader('content-type', 'application/json')
-    res.end(JSON.stringify({ data: [{ url: 'https://example.com/test.png' }] }))
+    if (req.method === 'GET' && req.url === '/v1/videos/quota-task/content') {
+      contentCalls += 1
+      res.setHeader('content-type', 'video/mp4')
+      res.end(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42')]))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/result.mp4') {
+      contentCalls += 1
+      res.setHeader('content-type', 'video/mp4')
+      res.end(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42')]))
+      return
+    }
+    res.statusCode = 404
+    res.end()
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
   const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
 
   try {
-    const saved = await request('/admin/image-config', {
-      token: adminToken,
-      method: 'PUT',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: 'image-relay-key', models: ['test-image-model', 'denied-image-model', 'oversized-image-model', 'delayed-image-model'] }),
+    const forbidden = await request('/admin/video-config', {
+      token: member.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: videoKey, models: ['test-video-model'], points: 7 }),
     })
-    assert.equal(saved.status, 200)
-    assert.equal(JSON.stringify(saved.body).includes('image-relay-key'), false)
-    const beforeBalance = (await request('/me', { token: adminToken })).body.user.balance
-    const beforeGenerations = Number(db.prepare('SELECT COUNT(*) count FROM generations').get().count)
-    const result = await request('/admin/image-config/test', {
-      token: adminToken,
-      method: 'POST',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, model: 'test-image-model' }),
-    })
-    assert.deepEqual(result, { status: 200, body: { ok: true, status: 200, model: 'test-image-model' } })
-    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
-    assert.equal(Number(db.prepare('SELECT COUNT(*) count FROM generations').get().count), beforeGenerations)
-    const config = await request('/config', { token: adminToken })
-    assert.deepEqual(config.body.imageModels, ['test-image-model', 'denied-image-model', 'oversized-image-model', 'delayed-image-model'])
-    assert.equal(config.body.imagePoints, 8)
+    assert.equal(forbidden.status, 403)
 
-    const denied = await request('/admin/image-config/test', {
-      token: adminToken,
-      method: 'POST',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, model: 'denied-image-model' }),
+    const saved = await request('/admin/video-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: videoKey, models: ['test-video-model'], points: 7 }),
     })
-    assert.equal(denied.status, 502)
-    assert.match(denied.body.error, /返回 401.*invalid image token/)
-    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+    assert.deepEqual(saved, {
+      status: 200,
+      body: { configured: true, keyConfigured: true, baseUrl: relayBaseUrl, models: ['test-video-model'], source: 'database', points: 7 },
+    })
+    assert.equal(JSON.stringify(saved.body).includes(videoKey), false)
+    const stored = db.prepare('SELECT ai_video_api_key_encrypted FROM app_settings WHERE id=1').get().ai_video_api_key_encrypted
+    assert.equal(stored.includes(videoKey), false)
+    const audit = db.prepare("SELECT details FROM admin_audit WHERE action='video_config.update' ORDER BY rowid DESC LIMIT 1").get()
+    assert.equal(audit.details.includes(videoKey), false)
 
-    const deniedGeneration = await request('/ai/image', {
-      token: adminToken,
-      method: 'POST',
-      body: JSON.stringify({ requestKey: 'denied-image-generation-0001', model: 'denied-image-model', prompt: 'test', size: '1024x1024' }),
-    })
-    assert.equal(deniedGeneration.status, 502)
-    assert.match(deniedGeneration.body.error, /返回 401.*invalid image token/)
-    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
+    const config = await request('/config', { token: member.token })
+    assert.deepEqual(config.body.videoModels, ['test-video-model'])
+    assert.equal(config.body.videoPoints, 7)
+    assert.equal(config.body.imageEndpoint, 'https://www.bkbk.baby/')
+    assert.equal(config.body.imageConfigured, true)
 
-    const oversizedGeneration = await request('/ai/image', {
-      token: adminToken,
-      method: 'POST',
-      body: JSON.stringify({ requestKey: 'oversized-image-generation-0001', model: 'oversized-image-model', prompt: 'test', size: '1024x1024' }),
-    })
-    assert.deepEqual(oversizedGeneration, { status: 502, body: { error: '中转站返回内容过大' } })
-    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeBalance)
-
-    const overlapKey = 'recovery-overlap-image-request-0001'
-    const overlapCall = request('/ai/image', {
-      token: adminToken,
-      method: 'POST',
-      body: JSON.stringify({ requestKey: overlapKey, model: 'delayed-image-model', prompt: 'test', size: '1024x1024' }),
-    })
-    while (!db.prepare('SELECT id FROM generations WHERE request_key=?').get(overlapKey)) {
-      await new Promise((resolve) => setTimeout(resolve, 5))
+    const walletBefore = await request('/wallet', { token: member.token })
+    const payload = {
+      requestKey: 'video-relay-success-0001', model: 'test-video-model',
+      prompt: 'generate a test video', size: '1280x720', seconds: 6,
     }
-    const overlapGeneration = db.prepare('SELECT id,reserved FROM generations WHERE request_key=?').get(overlapKey)
-    const beforeRecovery = (await request('/me', { token: adminToken })).body.user.balance
-    assert.equal(recoverPendingGenerations(), 1)
-    releaseDelayedImage()
-    assert.equal((await overlapCall).status, 409)
-    assert.equal((await request('/me', { token: adminToken })).body.user.balance, beforeRecovery + Number(overlapGeneration.reserved))
-    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(overlapGeneration.id).status, 'failed')
-  } finally {
-    releaseDelayedImage?.()
-    await request('/admin/image-config', {
-      token: adminToken,
-      method: 'PUT',
-      body: JSON.stringify({ baseUrl: '', clearApiKey: true, models: ['test-image-model'] }),
+    const generated = await request('/ai/video', {
+      token: member.token, method: 'POST', body: JSON.stringify(payload),
     })
+    assert.equal(generated.status, 200)
+    assert.equal(generated.body.status, 'completed')
+    assert.equal(generated.body.charged, 7)
+    assert.equal(generated.body.cached, false)
+    assert.match(generated.body.videoUrl, /^\/api\/media\/[a-f0-9-]+\?token=/)
+    assert.equal(createCalls, 1)
+    assert.equal(contentCalls, 1)
+    assert.deepEqual({ ...db.prepare('SELECT kind,reserved,charged,status FROM generations WHERE request_key=?').get(payload.requestKey) }, {
+      kind: 'video', reserved: 7, charged: 7, status: 'succeeded',
+    })
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, walletBefore.body.balance - 7)
+    assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted, memberImageCiphertext)
+
+    const mediaResponse = await fetch(`http://127.0.0.1:${server.address().port}${generated.body.videoUrl}`)
+    assert.equal(mediaResponse.status, 200)
+    assert.equal(mediaResponse.headers.get('content-type'), 'video/mp4')
+    assert.equal((await mediaResponse.arrayBuffer()).byteLength, 12)
+
+    const replay = await request('/ai/video', {
+      token: member.token, method: 'POST', body: JSON.stringify(payload),
+    })
+    assert.equal(replay.status, 200)
+    assert.equal(replay.body.cached, true)
+    assert.equal(createCalls, 1)
+    assert.equal(contentCalls, 1)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, walletBefore.body.balance - 7)
+
+    const beforeFailure = (await request('/me', { token: member.token })).body.user.balance
+    const failed = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-failure-0001', prompt: 'trigger the simulated failure' }),
+    })
+    assert.equal(failed.status, 502)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeFailure)
+    assert.deepEqual({ ...db.prepare('SELECT reserved,charged,status FROM generations WHERE request_key=?').get('video-relay-failure-0001') }, {
+      reserved: 7, charged: null, status: 'failed',
+    })
+    assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=(SELECT id FROM generations WHERE request_key=?) ORDER BY rowid').all('video-relay-failure-0001').map((entry) => ({ ...entry, amount: Number(entry.amount) })), [
+      { kind: 'ai_video_reserve', amount: -7 },
+      { kind: 'ai_video_refund', amount: 7 },
+    ])
+
+    const beforeExternalMedia = (await request('/me', { token: member.token })).body.user.balance
+    const externalMediaResult = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-external-media-0001', prompt: 'download from an allowed media origin' }),
+    })
+    assert.equal(externalMediaResult.status, 200)
+    assert.equal(externalMediaResult.body.charged, 7)
+    assert.equal(externalMediaCalls, 1)
+    assert.equal(externalMediaAuthorizationPresent, false)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeExternalMedia - 7)
+
+    const beforeUnsafeDirect = (await request('/me', { token: member.token })).body.user.balance
+    const unsafeDirect = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-unsafe-direct-0001', prompt: 'reject a direct private result URL' }),
+    })
+    assert.equal(unsafeDirect.status, 502)
+    assert.equal(unsafeTargetFetches, 0)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeUnsafeDirect)
+    assert.deepEqual({ ...db.prepare('SELECT reserved,status FROM generations WHERE request_key=?').get('video-relay-unsafe-direct-0001') }, { reserved: 7, status: 'failed' })
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=(SELECT id FROM generations WHERE request_key=?)').get('video-relay-unsafe-direct-0001').count, 2)
+
+    const beforeUnsafeRedirect = (await request('/me', { token: member.token })).body.user.balance
+    const unsafeRedirect = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-unsafe-redirect-0001', prompt: 'reject a redirect to a private result URL' }),
+    })
+    assert.equal(unsafeRedirect.status, 502)
+    assert.equal(redirectCalls, 1)
+    assert.equal(unsafeTargetFetches, 0)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeUnsafeRedirect)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE request_key=?').get('video-relay-unsafe-redirect-0001').status, 'failed')
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=(SELECT id FROM generations WHERE request_key=?)').get('video-relay-unsafe-redirect-0001').count, 2)
+
+    db.prepare('INSERT INTO media (id,user_id,kind,file_name,mime_type,bytes,data) VALUES (?,?,?,?,?,?,?)')
+      .run('quota-filler-media', member.user.id, 'video', 'quota-filler.mp4', 'video/mp4', 2030, Buffer.alloc(2030))
+    const beforeQuota = (await request('/me', { token: member.token })).body.user.balance
+    const quotaCreated = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-quota-0001', prompt: 'create an asynchronous quota result' }),
+    })
+    assert.equal(quotaCreated.status, 202)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeQuota - 7)
+    const quotaPoll = await request(`/ai/video/${quotaCreated.body.id}`, { token: member.token })
+    assert.equal(quotaPoll.status, 413)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(quotaCreated.body.id).status, 'failed')
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeQuota)
+    assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=? ORDER BY rowid').all(quotaCreated.body.id).map((entry) => ({ ...entry, amount: Number(entry.amount) })), [
+      { kind: 'ai_video_reserve', amount: -7 },
+      { kind: 'ai_video_refund', amount: 7 },
+    ])
+    assert.equal((await request(`/ai/video/${quotaCreated.body.id}`, { token: member.token })).status, 409)
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeQuota)
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(quotaCreated.body.id).count, 2)
+
+    const beforeDownloadFailure = (await request('/me', { token: member.token })).body.user.balance
+    const downloadFailureCreated = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-download-failure-0001', prompt: 'create a transient download failure' }),
+    })
+    assert.equal(downloadFailureCreated.status, 202)
+    assert.equal((await request(`/ai/video/${downloadFailureCreated.body.id}`, { token: member.token })).status, 502)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(downloadFailureCreated.body.id).status, 'pending')
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeDownloadFailure - 7)
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(downloadFailureCreated.body.id).count, 1)
+
+    const beforeDownloadTimeout = (await request('/me', { token: member.token })).body.user.balance
+    const downloadTimeoutCreated = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-download-timeout-0001', prompt: 'create a transient download timeout' }),
+    })
+    assert.equal(downloadTimeoutCreated.status, 202)
+    const timeoutUrl = `http://127.0.0.1:${relay.address().port}/timeout.mp4`
+    const fetchBeforeTimeout = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url === timeoutUrl) {
+        const error = new Error('simulated timeout')
+        error.name = 'AbortError'
+        throw error
+      }
+      return fetchBeforeTimeout(input, init)
+    }
+    let downloadTimeout
+    try { downloadTimeout = await request(`/ai/video/${downloadTimeoutCreated.body.id}`, { token: member.token }) }
+    finally { globalThis.fetch = fetchBeforeTimeout }
+    assert.equal(downloadTimeout.status, 504)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(downloadTimeoutCreated.body.id).status, 'pending')
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeDownloadTimeout - 7)
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(downloadTimeoutCreated.body.id).count, 1)
+
+    const beforeUnsafePoll = (await request('/me', { token: member.token })).body.user.balance
+    const unsafePollCreated = await request('/ai/video', {
+      token: member.token, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-relay-unsafe-poll-0001', prompt: 'reject a polled private result URL' }),
+    })
+    assert.equal(unsafePollCreated.status, 202)
+    assert.equal((await request(`/ai/video/${unsafePollCreated.body.id}`, { token: member.token })).status, 502)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(unsafePollCreated.body.id).status, 'pending')
+    assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeUnsafePoll - 7)
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(unsafePollCreated.body.id).count, 1)
+    assert.equal(unsafeTargetFetches, 0)
+    assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted, memberImageCiphertext)
+  } finally {
+    globalThis.fetch = fetchBeforeVideoSsrf
+    delete process.env.AI_VIDEO_MEDIA_ORIGINS
     await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+    await new Promise((resolve, reject) => externalMedia.close((error) => error ? reject(error) : resolve()))
+  }
+})
+
+test('user-owned image keys stay private, isolated, fixed-endpoint, and free of site charges', async () => {
+  const originalFetch = globalThis.fetch
+  const generationUrl = 'https://www.bkbk.baby/v1/images/generations'
+  const editUrl = 'https://www.bkbk.baby/v1/images/edits'
+  const calls = []
+  let deniedAttempts = 0
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url !== generationUrl && url !== editUrl) {
+      const parsed = new URL(url)
+      if (['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)) return originalFetch(input, init)
+      throw new Error(`unexpected external fetch: ${parsed.origin}${parsed.pathname}`)
+    }
+    const headers = new Headers(init.headers)
+    const authorization = headers.get('authorization')
+    const call = { url, authorization }
+    if (url === generationUrl) {
+      const payload = JSON.parse(String(init.body))
+      Object.assign(call, { model: payload.model, prompt: payload.prompt, size: payload.size })
+      calls.push(call)
+      if (payload.prompt === 'reject this image key' && ++deniedAttempts === 1) {
+        return new Response(JSON.stringify({ error: { message: 'secret upstream detail' } }), {
+          status: 401, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ data: [{ url: 'https://images.example.test/generated.png' }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    assert.ok(init.body instanceof FormData)
+    Object.assign(call, {
+      model: init.body.get('model'),
+      prompt: init.body.get('prompt'),
+      size: init.body.get('size'),
+      imageName: init.body.get('image')?.name,
+    })
+    calls.push(call)
+    return new Response(JSON.stringify({ data: [{ image_url: 'https://images.example.test/edited.png' }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  try {
+    const legacyShared = await register('旧共享图片配置', 'legacy-shared-image@example.com')
+    const legacySharedKey = 'forbidden-legacy-shared-image-key'
+    assert.equal((await request('/me/image-key', {
+      token: legacyShared.token, method: 'PUT', body: JSON.stringify({ apiKey: legacySharedKey }),
+    })).status, 200)
+    const legacySharedCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(legacyShared.user.id).image_api_key_encrypted
+    db.prepare('UPDATE app_settings SET ai_image_base_url=?,ai_image_api_key_encrypted=?,ai_image_models=?,ai_image_points=? WHERE id=1')
+      .run('https://forbidden-legacy-image.example/v1', legacySharedCiphertext, JSON.stringify(['forbidden-legacy-image-model']), 999)
+    const owner = await register('用户密钥甲', 'user-image-key-a@example.com')
+    const other = await register('用户密钥乙', 'user-image-key-b@example.com')
+    const ownerKey = 'test-user-a-image-key'
+    const replacementKey = 'test-user-a-replacement-key'
+    const otherKey = 'test-user-b-image-key'
+    const temporaryKey = 'test-temporary-image-key'
+    const initialOwner = await request('/me', { token: owner.token })
+    assert.equal(initialOwner.body.user.imageApiKeyConfigured, false)
+    assert.equal('imageApiKey' in initialOwner.body.user, false)
+
+    const temporaryTest = await request('/me/image-key/test', {
+      token: owner.token, method: 'POST', body: JSON.stringify({ apiKey: temporaryKey, model: 'GPT-image-2' }),
+    })
+    assert.deepEqual(temporaryTest, { status: 200, body: { ok: true, status: 200, model: 'GPT-image-2' } })
+    assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted, null)
+    assert.equal((await request('/me', { token: owner.token })).body.user.imageApiKeyConfigured, false)
+
+    const savedOwner = await request('/me/image-key', {
+      token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: ownerKey }),
+    })
+    assert.deepEqual(savedOwner, {
+      status: 200, body: { configured: true, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+    })
+    const ownerCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
+    assert.equal(ownerCiphertext.split('.').length, 3)
+    assert.equal(ownerCiphertext.includes(ownerKey), false)
+    const ownerProfile = await request('/me', { token: owner.token })
+    assert.equal(ownerProfile.body.user.imageApiKeyConfigured, true)
+    assert.equal('imageApiKey' in ownerProfile.body.user, false)
+    assert.equal('image_api_key_encrypted' in ownerProfile.body.user, false)
+    assert.equal(JSON.stringify(ownerProfile.body).includes(ownerKey), false)
+
+    const savedKeyTest = await request('/me/image-key/test', {
+      token: owner.token, method: 'POST', body: JSON.stringify({ model: 'GPT-image-2' }),
+    })
+    assert.deepEqual(savedKeyTest, { status: 200, body: { ok: true, status: 200, model: 'GPT-image-2' } })
+
+    const replacedOwner = await request('/me/image-key', {
+      token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: replacementKey }),
+    })
+    assert.deepEqual(replacedOwner, {
+      status: 200, body: { configured: true, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+    })
+    const replacementCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
+    assert.notEqual(replacementCiphertext, ownerCiphertext)
+    assert.equal(replacementCiphertext.includes(ownerKey), false)
+    assert.equal(replacementCiphertext.includes(replacementKey), false)
+
+    assert.equal((await request('/me', { token: other.token })).body.user.imageApiKeyConfigured, false)
+    assert.equal((await request('/config', { token: other.token })).body.imageConfigured, false)
+    assert.equal((await request('/me/image-key', {
+      token: other.token, method: 'PUT', body: JSON.stringify({ apiKey: otherKey }),
+    })).status, 200)
+    const otherCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(other.user.id).image_api_key_encrypted
+    assert.equal(otherCiphertext.split('.').length, 3)
+    assert.equal(otherCiphertext.includes(otherKey), false)
+    assert.notEqual(otherCiphertext, ownerCiphertext)
+    assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted, replacementCiphertext)
+
+    const ownerWalletBefore = await request('/wallet', { token: owner.token })
+    const otherWalletBefore = await request('/wallet', { token: other.token })
+    const generated = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+    })
+    assert.deepEqual(generated, {
+      status: 200,
+      body: { imageUrl: 'https://images.example.test/generated.png', model: 'GPT-image-2', charged: 0, cached: false },
+    })
+    const successfulRow = db.prepare('SELECT kind,reserved,charged,status FROM generations WHERE request_key=?').get('user-owned-image-success-0001')
+    assert.deepEqual({ ...successfulRow }, { kind: 'image', reserved: 0, charged: 0, status: 'succeeded' })
+
+    const edited = await request('/ai/image', {
+      token: other.token, method: 'POST',
+      body: JSON.stringify({
+        requestKey: 'user-owned-image-edit-0001', model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024',
+        references: ['data:image/png;base64,iVBORw0KGgo='],
+      }),
+    })
+    assert.equal(edited.status, 200)
+    assert.equal(edited.body.imageUrl, 'https://images.example.test/edited.png')
+    assert.equal(edited.body.charged, 0)
+    assert.deepEqual({ ...db.prepare('SELECT reserved,charged,status FROM generations WHERE request_key=?').get('user-owned-image-edit-0001') }, {
+      reserved: 0, charged: 0, status: 'succeeded',
+    })
+
+    const callsBeforeReplay = calls.length
+    const replay = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+    })
+    assert.equal(replay.status, 200)
+    assert.equal(replay.body.cached, true)
+    assert.equal(calls.length, callsBeforeReplay)
+    const conflict = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'different content', size: '1024x1024' }),
+    })
+    assert.equal(conflict.status, 409)
+    assert.equal(calls.length, callsBeforeReplay)
+
+    const denied = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-denied-0001', model: 'GPT-image-2', prompt: 'reject this image key', size: '1024x1024' }),
+    })
+    assert.equal(denied.status, 400)
+    assert.equal(denied.body.error, 'API 密钥无效、已过期或没有生图权限')
+    assert.equal(JSON.stringify(denied.body).includes('secret upstream detail'), false)
+    assert.deepEqual({ ...db.prepare('SELECT reserved,charged,status FROM generations WHERE request_key=?').get('user-owned-image-denied-0001') }, {
+      reserved: 0, charged: 0, status: 'failed',
+    })
+    const deniedRetry = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-denied-0001', model: 'GPT-image-2', prompt: 'reject this image key', size: '1024x1024' }),
+    })
+    assert.deepEqual(deniedRetry, {
+      status: 200,
+      body: { imageUrl: 'https://images.example.test/generated.png', model: 'GPT-image-2', charged: 0, cached: false },
+    })
+    assert.deepEqual({ ...db.prepare('SELECT reserved,charged,status FROM generations WHERE request_key=?').get('user-owned-image-denied-0001') }, {
+      reserved: 0, charged: 0, status: 'succeeded',
+    })
+
+    const cleared = await request('/me/image-key', { token: owner.token, method: 'DELETE' })
+    assert.deepEqual(cleared, {
+      status: 200, body: { configured: false, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+    })
+    assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted, null)
+    assert.equal((await request('/me', { token: owner.token })).body.user.imageApiKeyConfigured, false)
+    const callsBeforeClearedReplay = calls.length
+    const clearedReplay = await request('/ai/image', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+    })
+    assert.equal(clearedReplay.status, 400)
+    assert.match(clearedReplay.body.error, /保存生图 API 密钥/)
+    assert.equal(calls.length, callsBeforeClearedReplay)
+
+    const ownerWalletAfter = await request('/wallet', { token: owner.token })
+    const otherWalletAfter = await request('/wallet', { token: other.token })
+    assert.deepEqual(ownerWalletAfter.body, ownerWalletBefore.body)
+    assert.deepEqual(otherWalletAfter.body, otherWalletBefore.body)
+    assert.deepEqual(calls.map(({ url, authorization }) => ({ url, authorization })), [
+      { url: generationUrl, authorization: `Bearer ${temporaryKey}` },
+      { url: generationUrl, authorization: `Bearer ${ownerKey}` },
+      { url: generationUrl, authorization: `Bearer ${replacementKey}` },
+      { url: editUrl, authorization: `Bearer ${otherKey}` },
+      { url: generationUrl, authorization: `Bearer ${replacementKey}` },
+      { url: generationUrl, authorization: `Bearer ${replacementKey}` },
+    ])
+    assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' })
+    assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024', imageName: 'reference-1.png' })
+    assert.deepEqual({ ...db.prepare('SELECT ai_image_base_url,ai_image_api_key_encrypted,ai_image_models,ai_image_points FROM app_settings WHERE id=1').get() }, {
+      ai_image_base_url: 'https://forbidden-legacy-image.example/v1',
+      ai_image_api_key_encrypted: legacySharedCiphertext,
+      ai_image_models: JSON.stringify(['forbidden-legacy-image-model']),
+      ai_image_points: 999,
+    })
+    assert.equal(calls.some((call) => call.authorization === `Bearer ${legacySharedKey}`), false)
+    assert.equal(calls.some((call) => call.authorization === 'Bearer forbidden-image-environment-key'), false)
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })
 

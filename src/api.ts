@@ -1,4 +1,11 @@
-export type User = { id: string; email: string; name: string; role: 'admin' | 'user'; balance: number }
+export type User = {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'user'
+  balance: number
+  imageApiKeyConfigured: boolean
+}
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
     super(message)
@@ -23,7 +30,7 @@ export const session = {
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
-  if (options.body) headers.set('content-type', 'application/json')
+  if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
   const token = session.get()
   if (token) headers.set('authorization', `Bearer ${token}`)
   const response = await fetch(`/api${path}`, { ...options, headers })

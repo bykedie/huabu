@@ -4,10 +4,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      PORT: "3100"
+      PORT: "3102"
       DB_PATH: /app/data/app.db
     ports:
-      - "127.0.0.1:3100:3100"
+      - "127.0.0.1:3102:3102"
     volumes:
       - canvas-data:/app/data
     logging:

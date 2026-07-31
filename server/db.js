@@ -11,6 +11,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
   name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
+  image_api_key_encrypted TEXT,
   login_failures INTEGER NOT NULL DEFAULT 0, login_failure_started_at TEXT, login_locked_until TEXT,
   session_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -20,6 +21,17 @@ CREATE TABLE IF NOT EXISTS canvases (
   name TEXT NOT NULL, document TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
   version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+  source_canvas_id TEXT, source_node_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS media (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, file_name TEXT NOT NULL UNIQUE, mime_type TEXT NOT NULL, bytes INTEGER NOT NULL, data BLOB,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS ledger (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), amount INTEGER NOT NULL,
@@ -46,12 +58,13 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 );
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1), ai_base_url TEXT, ai_api_key_encrypted TEXT,
-  ai_models TEXT, ai_image_base_url TEXT, ai_image_api_key_encrypted TEXT, ai_image_models TEXT,
+  ai_models TEXT, ai_image_base_url TEXT, ai_image_api_key_encrypted TEXT, ai_image_models TEXT, ai_image_points INTEGER,
+  ai_video_base_url TEXT, ai_video_api_key_encrypted TEXT, ai_video_models TEXT, ai_video_points INTEGER,
   updated_by TEXT REFERENCES users(id), updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS generations (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
-  request_hash TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
+  request_hash TEXT, kind TEXT NOT NULL DEFAULT 'text', model TEXT NOT NULL, reserved INTEGER NOT NULL, charged INTEGER, status TEXT NOT NULL,
   response TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, request_key)
 );
@@ -61,6 +74,8 @@ CREATE TABLE IF NOT EXISTS health_probe (
 INSERT OR IGNORE INTO health_probe (id,value) VALUES (1,0);
 INSERT OR IGNORE INTO app_settings (id) VALUES (1);
 CREATE INDEX IF NOT EXISTS idx_canvas_user ON canvases(user_id);
+CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_user ON media(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at DESC);
 CREATE TRIGGER IF NOT EXISTS admin_audit_no_update BEFORE UPDATE ON admin_audit
@@ -72,15 +87,28 @@ const settingsColumns = db.prepare('PRAGMA table_info(app_settings)').all()
 if (!settingsColumns.some((column) => column.name === 'ai_image_base_url')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_base_url TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_image_api_key_encrypted')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_api_key_encrypted TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_image_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_models TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_image_points')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_points INTEGER')
+if (!settingsColumns.some((column) => column.name === 'ai_video_base_url')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_base_url TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_video_api_key_encrypted')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_api_key_encrypted TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_video_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_models TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_video_points')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_points INTEGER')
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {
   db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')
 }
+if (!generationColumns.some((column) => column.name === 'kind')) {
+  db.exec("ALTER TABLE generations ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
+}
+const mediaColumns = db.prepare('PRAGMA table_info(media)').all()
+if (!mediaColumns.some((column) => column.name === 'data')) db.exec('ALTER TABLE media ADD COLUMN data BLOB')
 const canvasColumns = db.prepare('PRAGMA table_info(canvases)').all()
 if (!canvasColumns.some((column) => column.name === 'version')) {
   db.exec('ALTER TABLE canvases ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
 }
 const userColumns = db.prepare('PRAGMA table_info(users)').all()
+if (!userColumns.some((column) => column.name === 'image_api_key_encrypted')) {
+  db.exec('ALTER TABLE users ADD COLUMN image_api_key_encrypted TEXT')
+}
 if (!userColumns.some((column) => column.name === 'login_failures')) {
   db.exec('ALTER TABLE users ADD COLUMN login_failures INTEGER NOT NULL DEFAULT 0')
 }
@@ -129,16 +157,17 @@ export function changeBalance(userId, amount, kind, reference = null, note = nul
   return next
 }
 
-export function recoverPendingGenerations(minAgeMs = 0) {
+export function recoverPendingGenerations(minAgeMs = 0, videoMinAgeMs = minAgeMs) {
   return transaction(() => {
     const minimumAgeSeconds = Math.max(0, Math.ceil(minAgeMs / 1000))
-    const pending = db.prepare("SELECT id,user_id,reserved FROM generations WHERE status='pending' AND created_at <= datetime('now', ?)")
-      .all(`-${minimumAgeSeconds} seconds`)
+    const videoMinimumAgeSeconds = Math.max(0, Math.ceil(videoMinAgeMs / 1000))
+    const pending = db.prepare("SELECT id,user_id,reserved,kind FROM generations WHERE status='pending' AND ((kind='video' AND created_at <= datetime('now', ?)) OR (kind<>'video' AND created_at <= datetime('now', ?)))")
+      .all(`-${videoMinimumAgeSeconds} seconds`, `-${minimumAgeSeconds} seconds`)
     let recovered = 0
     for (const item of pending) {
       const result = db.prepare("UPDATE generations SET status='failed' WHERE id=? AND status='pending'").run(item.id)
       if (!result.changes) continue
-      changeBalance(item.user_id, Number(item.reserved), 'ai_refund', item.id, '服务重启，AI 预占积分退回')
+      if (Number(item.reserved) > 0) changeBalance(item.user_id, Number(item.reserved), 'ai_refund', item.id, '服务重启，AI 预占积分退回')
       recovered += 1
     }
     return recovered

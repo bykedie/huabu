@@ -13,7 +13,7 @@ backup_dir=$(cd "$1" && pwd)
 
 wait_for_health() {
   for _ in {1..60}; do
-    if curl -fsS http://127.0.0.1:3100/api/health >/dev/null; then
+    if curl -fsS http://127.0.0.1:3102/api/health >/dev/null; then
       return 0
     fi
     sleep 2

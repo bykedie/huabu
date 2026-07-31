@@ -3,10 +3,11 @@ set -Eeuo pipefail
 umask 077
 
 cd "$(dirname "$0")/.."
+project_root=$(pwd -P)
 
 wait_for_health() {
   for _ in {1..60}; do
-    if curl -fsS http://127.0.0.1:3100/api/health >/dev/null; then
+    if curl -fsS http://127.0.0.1:3102/api/health >/dev/null; then
       return 0
     fi
     sleep 2
@@ -14,9 +15,26 @@ wait_for_health() {
   return 1
 }
 
-backup_root=${1:-"$PWD/backups"}
-mkdir -p "$backup_root"
-backup_root=$(cd "$backup_root" && pwd)
+requested_root=${1:-/srv/canvas-backups}
+if [[ $requested_root != /* ]]; then
+  echo "备份根目录必须是项目目录外的绝对路径。" >&2
+  exit 64
+fi
+if ! backup_root=$(realpath -m -- "$requested_root" 2>/dev/null); then
+  echo "无法解析备份根目录。" >&2
+  exit 64
+fi
+case "$backup_root" in
+  "$project_root"|"$project_root"/*)
+    echo "备份根目录必须位于项目目录之外。" >&2
+    exit 64
+    ;;
+esac
+if ! mkdir -p -- "$backup_root" 2>/dev/null; then
+  echo "无法创建备份根目录，请检查路径和权限。" >&2
+  exit 73
+fi
+backup_root=$(cd "$backup_root" && pwd -P)
 backup_dir="$backup_root/canvas-$(date +%Y%m%d-%H%M%S)-$$"
 mkdir "$backup_dir"
 app_stopped=0
