@@ -2,7 +2,7 @@
 
 ## Current
 
-- Active goal: add and validate a safe one-command Ubuntu/Debian deployment path, then commit and push the accepted worktree to the configured GitHub repository.
+- The one-command deployment and GitHub push goal is complete. No implementation goal is currently active.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
@@ -10,7 +10,7 @@
 - Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
 - The isolated acceptance tab was closed, its temporary viewport was reset, processes `22464` (`3103`) and `23452` (`3113`) were stopped only after command-line and listener verification, and `.codex-acceptance` was removed. Only the real `3102/5182` listeners remain.
 - Collaboration workers use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高"). Activate one worker at a time by default; the user may explicitly approve a higher concurrency for a particular task, up to the runtime limit.
-- The worktree remains intentionally dirty. Do not reset, checkout, clean, or overwrite unrelated modifications.
+- The accepted delivery was committed and pushed on `codex/infinite-canvas`. Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
 - Browser acceptance, document synchronization, isolated-environment cleanup, and the fresh final gate rerun are complete.
 
 ## Completed
@@ -31,9 +31,9 @@
 
 ## Next
 
-1. Review all intended files, stage the complete accepted worktree and inspect the staged diff.
-2. Create and push the delivery commit to `codex/infinite-canvas` without force.
-3. Record the pushed commit in the goal/status ledger, commit that closeout and push it without force.
+1. Wait for the next user-confirmed idea, then create a new recoverable goal before editing.
+2. For server deployment, replace the example domain/email in the README one-line command and run it on an Ubuntu/Debian systemd host.
+3. Preserve the existing Git history, production `.env`, Docker data volume and matching `JWT_SECRET`.
 
 ## Blockers
 
@@ -56,3 +56,4 @@
 - Mobile Account Security and Operations drawers: width `390`, no horizontal overflow; fixed endpoint displayed exactly as `https://www.bkbk.baby/`; old shared-image controls had zero DOM matches.
 - Browser runtime checks: no console warning/error, page error, failed request, HTTP error, or external request in the accepted isolated scenarios.
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
+- GitHub delivery: commit `d5006e0` pushed normally to `origin/codex/infinite-canvas`; the documented remote installer returned HTTP 200 and matched the local committed file byte-for-byte.

@@ -6,7 +6,7 @@ Before editing, read `HANDOFF.md`, `GOALS.md`, `PROJECT_MEMORY.md`, `SPEC.md`, `
 
 ## Shared Workspace
 
-- The worktree is intentionally dirty. Never reset, checkout, or revert unrelated changes.
+- The accepted delivery baseline is committed on `codex/infinite-canvas`. The worktree may become dirty during later tasks; never reset, checkout, or revert unrelated changes.
 - The current local app is served at `http://127.0.0.1:5182/`; the API uses port `3102`. Do not occupy ports `3000` or `5174`.
 - The reference repository is at `C:/Users/Administrator/AppData/Local/Temp/basketikun-infinite-canvas-review`.
 - The reference is AGPL-3.0. Use it as a behavioral and visual benchmark; do not blindly copy its source.

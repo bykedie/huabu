@@ -107,10 +107,11 @@ After a restart, do not reconstruct history. Read `GOALS.md`, `PROJECT_MEMORY.md
 
 This goal has no incomplete step. On restart, inspect the current Git state and documents, preserve all dirty-worktree changes and the real browser draft, and create a new recoverable goal only after the user confirms a new idea for execution.
 
-## Active Goal: One-Click Deployment and GitHub Push
+## Completed Goal: One-Click Deployment and GitHub Push
 
-- Status: active
+- Status: complete
 - Started: 2026-07-31
+- Completed: 2026-07-31 21:14 +08:00
 - Commander thread: current main thread
 - Objective: add a safe, repeatable one-command Ubuntu/Debian deployment path, validate it against the current production contract, commit the complete accepted worktree and push the current `codex/infinite-canvas` branch to `https://github.com/bykedie/huabu.git`.
 
@@ -129,4 +130,16 @@ This goal has no incomplete step. On restart, inspect the current Git state and 
 | Inspect remote, branch and current deployment contract | Commander | complete | `origin` and Docker/Nginx/backup files inspected |
 | Implement installer, one-line command and deployment contract test | Commander | complete | Installer and README command added; focused production suite passed 7/7; three shell scripts passed `bash -n` |
 | Run deployment-focused and complete gates | Commander | complete | Build passed; full tests 21/21; production checks 7/7; three shell scripts, Node syntax, diff and secret checks passed |
-| Review, commit and push current branch | Commander | in progress | GitHub is reachable and remote branch remains at `5a6bacc`; staging review pending |
+| Review, commit and push current branch | Commander | complete | 35 intended files committed as `d5006e0` and pushed without force; remote installer returned HTTP 200 and matched the committed local file exactly |
+
+### Completion Notes
+
+- Delivery branch: `codex/infinite-canvas`.
+- GitHub repository: `https://github.com/bykedie/huabu.git`.
+- Main delivery commit: `d5006e0` (`feat: complete relay migration and deployment workflow`).
+- Public installer URL: `https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh`; verified as `200 text/plain`, with content identical to the committed installer.
+- No force push was used. `.env`, database, backup, log and generated build files were excluded from the commit.
+
+### Recovery Instructions
+
+This goal has no incomplete implementation or push step. Start the next accepted idea as a new recoverable goal, inspect the current Git state first, and preserve the real browser draft and running `3102/5182` services.
