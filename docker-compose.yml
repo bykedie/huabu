@@ -7,7 +7,7 @@ services:
       PORT: "3102"
       DB_PATH: /app/data/app.db
     ports:
-      - "127.0.0.1:3102:3102"
+      - "${PUBLIC_BIND:-0.0.0.0}:${PUBLIC_PORT:-3102}:3102"
     volumes:
       - canvas-data:/app/data
     logging:

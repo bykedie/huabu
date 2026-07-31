@@ -26,7 +26,7 @@ npm.cmd ci
 npm.cmd run dev
 ~~~
 
-本地开发前端地址为 http://localhost:5182，开发 API 默认为 http://localhost:3102/api/health；Vite 会把前端发出的 `/api` 请求代理到该后端。Compose 部署时应用容器内部监听 3102，并只映射到宿主机 `127.0.0.1:3102`，不使用 5182。
+本地开发前端地址为 http://localhost:5182，开发 API 默认为 http://localhost:3102/api/health；Vite 会把前端发出的 `/api` 请求代理到该后端。Compose 部署时应用容器内部监听 3102，宿主机发布地址由 `PUBLIC_BIND` 与 `PUBLIC_PORT` 决定，默认是 `0.0.0.0:3102`，不使用 5182。
 
 开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可生成兑换码、审核充值申请并查看中转站配置状态。
 
@@ -66,19 +66,21 @@ MAX_USER_MEDIA_BYTES=536870912
 
 `JWT_SECRET` 当前不仅签发登录令牌，还派生数据库中已保存的文字/视频中转密钥、用户图片密钥的加密密钥，以及媒体访问签名。当前实现没有密钥迁移机制；恢复数据库或计划轮换时必须继续使用与该数据库对应的原值，不能直接生成新值替换，否则已保存密钥无法解密且已有媒体地址会失效。
 
-## 服务器与域名部署
+## 服务器部署与公网访问
 
-服务器需安装 Docker Engine、Docker Compose、Nginx，并将域名 A/AAAA 记录指向服务器。
+一键脚本默认直接发布公网 IP 加端口，不要求域名或 Nginx。默认地址是 http://公网IP:3102；这是未加密的 HTTP，登录密码和 API 密钥不应在长期生产环境中通过该地址传输。正式使用请在安装后通过 h 配置域名和 HTTPS。
 
 ### 一键部署（Ubuntu / Debian）
 
-先把域名 A/AAAA 记录指向服务器，再在服务器执行下面一行。脚本会安装 Docker、Compose、Nginx 和 Certbot，首次生成生产密钥，部署 `codex/infinite-canvas` 分支并申请 HTTPS：
+在 Ubuntu/Debian systemd 服务器执行下面一行即可。脚本会安装 Docker/Compose，首次生成生产密钥，部署 `codex/infinite-canvas` 分支，并输出探测到的公网 IPv4 地址：
 
 ~~~bash
-curl -fsSL https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh | sudo bash -s -- --domain canvas.example.com --email admin@example.com
+curl -fsSL https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh | sudo bash
 ~~~
 
-把域名和邮箱换成真实值。默认安装目录为 `/opt/moyu-canvas`，数据库使用 Docker 的 `canvas-data` volume，更新前备份写入 `/srv/canvas-backups`。同一命令可以重复执行：脚本保留已有 `.env` 和数据卷，拒绝脏仓库或非快进更新，检测到新版本时会先调用 `deploy/backup.sh` 再更新。若暂时只部署 HTTP，必须显式把 `--email ...` 换成 `--no-tls`。
+默认安装目录为 `/opt/moyu-canvas`，数据库使用 Docker 的 `canvas-data` volume，更新前备份写入 `/srv/canvas-backups`。同一命令可以重复执行：脚本保留已有 `.env` 和数据卷，拒绝脏仓库或非快进更新，检测到新版本时会先备份再更新。可用 `--port 8080` 改宿主端口，`--bind 127.0.0.1` 改为仅本机访问；容器内部端口始终是 3102。
+
+安装器会创建 /usr/local/bin/h。若该路径已有不属于本项目的命令，脚本会拒绝覆盖。输入 sudo h 打开管理面板；sudo h status 查看服务状态和访问地址。面板可启动、停止、重启、执行安全快进更新、修改端口、配置域名/HTTPS、管理文字和视频中转、商业配额、备份恢复、日志、诊断及管理员初始化码。API 密钥使用隐藏输入且不会在状态中显示。
 
 首次部署不会把管理员初始化码打印到安装日志。需要创建首位管理员时，在服务器执行：
 
@@ -102,7 +104,7 @@ sudo sed -n 's/^ADMIN_SETUP_TOKEN=//p' /opt/moyu-canvas/.env
    docker compose up -d --build
    ~~~
 
-2. 将 deploy/nginx.conf 复制到服务器的 Nginx 站点目录，把 canvas.example.com 改成真实域名，然后启用配置：
+2. 如需手动域名代理，将 deploy/nginx.conf 复制到服务器的 Nginx 站点目录，把 `__DOMAIN__` 和 `__PUBLIC_PORT__` 替换为真实值，然后启用配置：
 
    ~~~bash
    sudo nginx -t
@@ -117,7 +119,7 @@ sudo sed -n 's/^ADMIN_SETUP_TOKEN=//p' /opt/moyu-canvas/.env
    curl https://你的域名/api/health
    ~~~
 
-容器内应用监听 3102，Compose 只将它绑定到宿主机 `127.0.0.1:3102`；公网客户端通过 Nginx 的 80/443 端口访问，启用证书后应使用 HTTPS 443。部署示例的 Nginx 请求体上限为 64 MiB，与后端默认视频上传上限一致。不要把 `.env`、数据库或中转密钥提交到 Git。
+容器内应用监听 3102，Compose 通过 PUBLIC_BIND:PUBLIC_PORT 发布到宿主机；公网模式默认是 0.0.0.0:3102。域名模式由 Nginx 代理到当前 PUBLIC_PORT。部署示例的 Nginx 请求体上限为 64 MiB，与后端默认视频上传上限一致。不要把 `.env`、数据库或中转密钥提交到 Git。
 Compose 已将应用容器日志设置为单文件 10 MiB、最多保留 3 个文件，避免日志无限增长占满数据库所在磁盘。生产服务器仍应配置磁盘用量和容器健康状态告警。
 
 ## 积分与充值

@@ -148,6 +148,8 @@ AI、线程和运行进程可能随时消失，文件会保留。任何宕机后
 - docker-compose.yml 管理生产容器和持久化数据卷。
 - deploy/nginx.conf 将公网流量代理到应用。
 - deploy/install.sh 在 Ubuntu/Debian systemd 服务器上执行首次安装或安全快进更新：保留现有 `.env` 和数据卷，更新前备份运行中的数据库，并配置 Nginx/可选 HTTPS。
+- deploy/install.sh 默认使用 0.0.0.0:3102 公网 IP+端口，不要求域名；提供域名时才安装/配置 Nginx，可选 Certbot HTTPS。
+- 安装器会把 deploy/manage.sh 安装为 /usr/local/bin/h；sudo h 打开管理面板，sudo h status 输出状态和地址。面板负责服务启停、仅快进更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份恢复、日志、诊断和管理员初始化码轮换/清除。
 - deploy/backup.sh 停止应用、复制数据目录、校验数据库并恢复服务健康。
 - deploy/restore.sh 校验和迁移候选数据库、保留回滚快照、恢复后再次校验并检查健康。
 
@@ -169,7 +171,7 @@ Windows PowerShell 常用命令：
 
 npm.cmd run dev 会同时启动 Vite 和被监视的 API。启动前检查 5182 和 3102 是否已经运行。如果已有健康的服务，复用它，不要启动重复进程。
 
-生产运行方式以 README.md、Dockerfile 和 docker-compose.yml 为准。不得临时编造生产密钥，也不得公开 SQLite 数据目录。
+生产运行方式以 README.md、Dockerfile 和 docker-compose.yml 为准。默认公网 HTTP 未加密，不能用于长期传输登录密码或 API 密钥；完成首次部署后应通过 h 配置域名和 HTTPS。不得临时编造生产密钥，也不得公开 SQLite 数据目录。
 
 ## 九、环境变量与秘密
 
@@ -451,3 +453,14 @@ localhost 工作优先使用内置浏览器。
 - 最终说明明确区分已完成工作和剩余风险。
 
 上下文不足、AI 宕机、线程消失或进程重启都不等于完成。停止前应写下精确检查点，使下一位 AI 能安全继续。
+
+## 二十二、当前交接点：公网端口与 h 面板
+
+本轮目标已经实现，尚待主线程提交并推送。先读取 `GOALS.md`、`STATUS.md`、`DECISIONS.md` 与当前 `git diff`，不要重建历史对话。
+
+- `docker-compose.yml` 默认发布 `${PUBLIC_BIND:-0.0.0.0}:${PUBLIC_PORT:-3102}:3102`；`.env.example` 提供 `PUBLIC_BIND=0.0.0.0` 和 `PUBLIC_PORT=3102`。
+- `deploy/install.sh` 默认不要求域名，支持 `--port` 和 `--bind`，保留已有 `.env`/数据，拒绝脏仓库和非快进更新，更新前备份，按实际端口健康检查，输出公网 IP URL 并警告 HTTP 未加密。只有 `--domain` 才安装/配置 Nginx；Certbot 失败会恢复站点文件。
+- `deploy/manage.sh` 由 `sudo h` 或 `h` 启动，`h status` 可非交互查看状态。面板覆盖服务、更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份/恢复、日志、诊断和管理员初始化码。密钥使用 `read -r -s`，状态不回显秘密。
+- `deploy/backup.sh` 与 `deploy/restore.sh` 从 `.env` 读取并校验 `PUBLIC_PORT`，健康检查始终访问 `127.0.0.1:<PUBLIC_PORT>`。
+- 当前验证：`npm.cmd run build`、`npm.cmd test`（21/21）、`node --test tests/production-config.test.mjs`（7/7）、四个部署脚本 `bash -n`、两个 Node syntax check、`git diff --check` 均通过。Docker 不在本机，Ubuntu/Debian 实机部署仍需验证。
+- 不要提交 `.env`、`data/`、Docker 数据卷、备份、日志、`dist/` 或任何真实 API 密钥。图片参考仍一次只处理一张。

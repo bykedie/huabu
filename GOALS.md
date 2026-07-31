@@ -143,3 +143,37 @@ This goal has no incomplete step. On restart, inspect the current Git state and 
 ### Recovery Instructions
 
 This goal has no incomplete implementation or push step. Start the next accepted idea as a new recoverable goal, inspect the current Git state first, and preserve the real browser draft and running `3102/5182` services.
+
+## Active Goal: Public-Port Deployment and `h` Management Panel
+
+- Status: active
+- Started: 2026-07-31
+- Commander thread: current main thread
+- Objective: make first deployment usable through public IP plus port without requiring a domain, and add a terminal management panel launched with `h` for ongoing configuration, operations, backup/recovery and optional domain/HTTPS setup.
+
+### Success Criteria
+
+- Compose defaults to `0.0.0.0:3102` while allowing a validated configurable host bind and port without changing the container port.
+- The one-line installer succeeds without domain arguments, preserves existing secrets/data, reports the public IP URL, warns that HTTP is not encrypted and safely installs the `h` command.
+- Domain and HTTPS remain an optional later upgrade and a certificate failure cannot damage the working IP/port deployment.
+- `h` provides actionable status, service, update, port, domain/HTTPS, relay, commercial/quota, backup/restore, log/diagnostic and administrator-bootstrap controls without displaying stored secrets.
+- Shell syntax, focused deployment tests, full tests, build, diff/secret checks and real local health checks pass before a normal GitHub push.
+
+### Ownership
+
+| Surface | Owner | Status |
+| --- | --- | --- |
+| `deploy/manage.sh` | Shell collaboration thread / commander integration | complete |
+| `deploy/install.sh` | Controls collaboration thread / commander integration | complete |
+| `tests/production-config.test.mjs` | Nodes collaboration thread / commander integration | complete |
+| Compose/env/docs/integration/acceptance/push | Commander | in progress |
+
+### Current Evidence
+
+- `npm.cmd run build`: passed.
+- `npm.cmd test`: 21/21 passed.
+- `node --test tests/production-config.test.mjs`: 7/7 passed.
+- `bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh`: passed.
+- `node --check server/app.js` and `node --check server/check-db.js`: passed.
+- `git diff --check`: passed with existing LF-to-CRLF warnings only.
+- Docker is unavailable on this Windows workstation; actual Ubuntu/Debian Compose, Nginx, Certbot and UFW execution remains a deployment-host verification.

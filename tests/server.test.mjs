@@ -54,6 +54,7 @@ test('AI prompt estimation includes per-message protocol overhead', () => {
 })
 
 test('health check verifies SQLite read and write access', async () => {
+  assert.equal(app.get('trust proxy'), 'loopback')
   const before = Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value)
   const health = await request('/health')
   assert.equal(health.status, 200)

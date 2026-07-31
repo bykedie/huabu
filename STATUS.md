@@ -2,7 +2,7 @@
 
 ## Current
 
-- The one-command deployment and GitHub push goal is complete. No implementation goal is currently active.
+- Active goal: default production deployment to public IP plus configurable port and add an `h` terminal management panel for future configuration and maintenance. Implementation and automated gates are complete; commit and push are the remaining steps.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
@@ -27,17 +27,16 @@
 - Updated deployment examples and project memory/decision documents for the fixed endpoint and user-owned-key scheme.
 - Added and accepted the video node UI, independent video administration, async generation/polling, upload/download/asset flow, exact-origin media allowlist, unsafe DNS/IP rejection, manual redirect validation, authorization-header isolation, quota-terminal refund, and recoverable download-error behavior.
 - Synchronized `AGENTS.md`, handoff/memory/decision files, the archived visual specification/plan, and all three worker status files with the accepted implementation and browser evidence.
-- Added `deploy/install.sh` and a documented one-line Ubuntu/Debian deployment command. First run installs dependencies and generates secrets without printing them; reruns preserve `.env`/data, reject dirty or divergent repositories, back up a running database, and only fast-forward the configured branch.
+- Added `deploy/install.sh` and `deploy/manage.sh` with a documented one-line Ubuntu/Debian deployment command. Default install publishes 0.0.0.0:3102, accepts validated --port/--bind, preserves .env/data, rejects dirty or divergent repositories, backs up before fast-forward updates, safely installs /usr/local/bin/h, reports the public IP URL and warns about unencrypted HTTP. The h panel covers service, update, port, domain/HTTPS, text/video relay, quota, backup/restore, logs, diagnostics and administrator-token operations with hidden secret input.
 
 ## Next
 
-1. Wait for the next user-confirmed idea, then create a new recoverable goal before editing.
-2. For server deployment, replace the example domain/email in the README one-line command and run it on an Ubuntu/Debian systemd host.
-3. Preserve the existing Git history, production `.env`, Docker data volume and matching `JWT_SECRET`.
+1. Run the final secret/worktree/runtime review and stage only intended files.
+2. Commit the public-port installer and h management panel, then push normally to GitHub.
 
 ## Blockers
 
-- No technical blocker is known.
+- No technical blocker is known. Docker/Nginx/Certbot execution remains a deployment-host check because Docker is unavailable on this Windows workstation.
 - The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
 
 ## Evidence
@@ -57,3 +56,4 @@
 - Browser runtime checks: no console warning/error, page error, failed request, HTTP error, or external request in the accepted isolated scenarios.
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
 - GitHub delivery: commit `d5006e0` pushed normally to `origin/codex/infinite-canvas`; the documented remote installer returned HTTP 200 and matched the local committed file byte-for-byte.
+- Current goal gates: npm.cmd run build passed; npm.cmd test passed 21/21; node --test tests/production-config.test.mjs passed 7/7; bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh passed; Node syntax checks passed; git diff --check passed with existing LF-to-CRLF warnings.

@@ -58,7 +58,7 @@ if (!imageModels.length) throw new Error('AI_IMAGE_MODELS 至少需要一个模�
 const imageRelayEndpoint = 'https://www.bkbk.baby/'
 const imageRelayBaseUrl = imageRelayEndpoint + 'v1'
 recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs)
-app.set('trust proxy', 1)
+app.set('trust proxy', 'loopback')
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {

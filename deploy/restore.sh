@@ -11,9 +11,26 @@ cd "$(dirname "$0")/.."
 backup_dir=$(cd "$1" && pwd)
 [[ -s "$backup_dir/app.db" ]] || { echo "备份目录缺少非空 app.db" >&2; exit 65; }
 
+read_public_port() {
+  local value=3102
+  if [[ -f .env ]]; then
+    value=$(sed -n 's/^PUBLIC_PORT=//p' .env | tail -n 1)
+    value=${value%$'\r'}
+    [[ -n $value ]] || value=3102
+  fi
+  if [[ ! $value =~ ^[0-9]+$ || ${#value} -gt 5 ]] \
+    || (( 10#$value < 1 || 10#$value > 65535 )); then
+    echo "PUBLIC_PORT 必须是 1-65535 的整数。" >&2
+    return 78
+  fi
+  printf '%s' "$((10#$value))"
+}
+
+public_port=$(read_public_port)
+
 wait_for_health() {
   for _ in {1..60}; do
-    if curl -fsS http://127.0.0.1:3102/api/health >/dev/null; then
+    if curl -fsS "http://127.0.0.1:${public_port}/api/health" >/dev/null; then
       return 0
     fi
     sleep 2
