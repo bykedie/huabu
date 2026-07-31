@@ -2,9 +2,10 @@
 
 ## Current
 
-- Active goal: production backup permission compatibility. The Ubuntu deployment remained on `56e29a7` after its update-time backup gate reported `/backup/app.db` missing. The old container has recovered healthy, the live database and sidecars remain in `/app/data`, and an independent private recovery backup under `/srv/canvas-backups` has passed the database checker.
+- Active goal: none. The production backup permission incident is fixed, verified, committed as `e261aeb`, pushed to `origin/codex/infinite-canvas`, and deployed to the Ubuntu host.
 - Confirmed root cause: `docker compose cp` created the expected flat backup layout, but `umask 077` made the host backup directory `0700 root:root`; the default `node` validation container could not traverse the bind-mounted `/backup` directory and misreported the existing database as missing.
-- Local fix in progress: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions are not relaxed.
+- Accepted fix: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions remain `0700`.
+- Production now runs clean commit `e261aeb`; the app is `running/healthy`, binds `0.0.0.0:3102`, and returns a healthy response on the host endpoint.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
@@ -12,7 +13,7 @@
 - Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
 - The isolated acceptance tab was closed, its temporary viewport was reset, processes `22464` (`3103`) and `23452` (`3113`) were stopped only after command-line and listener verification, and `.codex-acceptance` was removed. Only the real `3102/5182` listeners remain.
 - Collaboration workers use `gpt-5.6-sol` with `Ultra` reasoning. Activate one worker at a time by default; the user may explicitly approve higher concurrency for a particular task, up to the runtime limit. Only the current commander thread is pinned; child/collaboration threads remain unpinned.
-- The latest accepted deployment hardening was committed and pushed on `codex/infinite-canvas` as `7c48c59` (`feat: harden deployment maintenance workflows`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
+- The latest accepted production fix was committed and pushed on `codex/infinite-canvas` as `e261aeb` (`fix: validate private deployment backups`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
 - Browser acceptance, document synchronization, isolated-environment cleanup, and the fresh final gate rerun are complete.
 
 ## Completed
@@ -34,19 +35,25 @@
 - Added encrypted terminal relay maintenance with managed tombstones for legacy `.env` migration and explicit `CLEAR`; URLs with embedded credentials are rejected, legacy environment keys are cleared, and the app container is force-recreated.
 - Enforced `127.0.0.1` binding for existing domain deployments, ignored forwarded headers in public mode and trusted one loopback Nginx hop in domain mode.
 - Rejected backup/restore database symlinks and rechecked canonical backup roots after creation; validated backups survive service-recovery failure.
+- Fixed private deployment backup validation without relaxing permissions: one-shot database maintenance runs as root, restored files return to the application owner, and both update-time and manual production backups now pass.
 
 ## Next
 
-1. Review the four-file implementation/test diff, commit it, and push it normally to `origin/codex/infinite-canvas`.
-2. Rerun the one-click installer on the existing Ubuntu host so the old deployment creates a validated private backup, fast-forwards, rebuilds, and restores health.
-3. Confirm the final Git HEAD, Compose health, `/api/health`, database path/size and retained recovery/update backups without exposing database contents or secrets.
+1. If public IP access still times out, add or verify an Alibaba Cloud security-group inbound rule for TCP `3102`; host UFW already allows it and Docker listens on `0.0.0.0:3102`.
+2. Configure a domain and HTTPS through `sudo h` before transmitting passwords or API keys over the public Internet.
+3. Begin the next user-confirmed goal from a fresh status check.
 
 ## Blockers
 
-- No current technical blocker. MobaXterm's bundled OpenSSH client and the existing deployment key provide a non-interactive connection to the authorized Ubuntu host.
+- No blocker remains for the database backup or production update goal. Public-IP reachability may still depend on the Alibaba Cloud security group, which was not inspectable from the instance because no RAM role or Alibaba CLI was available.
 - The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
 
 ## Evidence
+
+- Production incident verification on 2026-08-01: old HEAD `56e29a7`; live database `/app/data/app.db` with WAL/SHM; the default `node` maintenance container could not traverse a `0700 root:root` backup bind, while `--user 0:0` could.
+- Delivery commit `e261aeb` pushed normally and deployed by the exact SHA-256-verified installer. The update created a validated backup before fast-forwarding `56e29a7..e261aeb`, rebuilt the image, and returned healthy.
+- Post-update manual `deploy/backup.sh` completed and produced another private `0700` backup. Production repository is clean, container state is `running/healthy`, host bind is `0.0.0.0:3102`, UFW allows TCP `3102`, and the local health endpoint returns an OK response.
+- Update-before and live database checks passed. Core business-table counts and irreversible hashes matched before/after; this new deployment currently contains zero rows in users, canvases, assets, media, ledger, redeem, top-up, audit and generation tables. Live database ownership remains `1000:1000`.
 
 - `npm.cmd run build`: passed on 2026-07-31; final assets are `index-DEhlsHSV.css` and `index-UkhmACLV.js`.
 - `npm.cmd test`: final suite with deployment coverage passed 23/23.

@@ -1,7 +1,7 @@
 # Infinite Canvas Goals
 
 > This file is the recoverable execution ledger for accepted ideas.
-> Last update: 2026-07-31, Asia/Shanghai.
+> Last update: 2026-08-01, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
 ## Goal Workflow
@@ -15,17 +15,18 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
-## Active Goal: Production Backup Permission Compatibility
+## Completed Goal: Production Backup Permission Compatibility
 
-- Status: active
+- Status: complete
 - Started: 2026-08-01
+- Completed: 2026-08-01
 - Commander thread: current main thread
 - Objective: recover the existing Ubuntu deployment, identify why the pre-update database gate reports `/backup/app.db` missing, make old deployments compatible without weakening backup privacy, verify the patch, push it, and safely retry the production update.
 
 ### Confirmed Facts
 
-- The production repository remains on `56e29a7`; the failed update did not merge the fetched commits or replace the database.
-- The existing app container has recovered and is healthy on its loopback-bound host port.
+- The original failed update left production on `56e29a7`; it did not merge the fetched commits or replace the database.
+- Production now runs `e261aeb`; the repository is clean and the app container is `running/healthy`.
 - The live database is `/app/data/app.db` in the Compose `canvas-data` volume, with non-empty WAL and SHM sidecars.
 - `docker compose cp -a app:/app/data/. <backup>/` produces the expected flat layout. The failure is permissions: `umask 077` creates the host backup directory as `0700 root:root`, while the validation container defaults to the unprivileged `node` user and cannot traverse `/backup`.
 - A separate `0700` recovery backup was created under `/srv/canvas-backups` and passed `server/check-db.js` when the one-shot validation container ran as root. The old app was restarted and returned a healthy response afterward.
@@ -46,13 +47,25 @@ When an idea has been accepted for implementation:
 | Reproduce the backup gate failure | complete | Default `node` maintenance container cannot traverse the `0700 root:root` backup bind; root maintenance container can |
 | Create an independent validated recovery backup | complete | Private recovery directory retained under `/srv/canvas-backups`; database checker passed and old service recovered healthy |
 | Implement and test private-directory compatibility | complete | Maintenance containers use `--user 0:0`; restore returns ownership to the runtime UID/GID; build, 23/23 full tests, 9/9 focused tests and syntax/diff checks passed |
-| Commit and push the patch | pending | Awaiting final diff review |
-| Retry production update and verify existing data/health | pending | Must confirm new HEAD, backup, container health and database continuity |
+| Commit and push the patch | complete | `e261aeb` pushed normally to `origin/codex/infinite-canvas` |
+| Retry production update and verify existing data/health | complete | Installer created a validated private backup, fast-forwarded `56e29a7..e261aeb`, rebuilt successfully and returned healthy |
 
 ### Safety Boundary
 
 - Do not remove volumes, reinitialize the database, overwrite `.env`, expose secret values, or delete existing backups.
 - Do not relax private backup directories from `0700`; use an explicit root maintenance user only for bounded one-shot database operations.
+
+### Completion Notes
+
+- The update-time backup and a post-update manual `deploy/backup.sh` run both completed with private `0700 root:root` backup directories and database validation.
+- Production listens on `0.0.0.0:3102`; UFW allows `3102/tcp`; the local health endpoint returns an OK response.
+- The update-before backup and live database passed their respective database checks. Core business-table counts and irreversible hashes matched before and after the update; this new deployment currently has zero rows in those tables.
+- The live database remains owned by the application runtime UID/GID `1000:1000`. Three private backups are retained under the configured backup root.
+- Public access from the current workstation still timed out after host-level checks passed. If public IP access is required, verify the Alibaba Cloud security group admits inbound TCP `3102`; no instance RAM role or local Alibaba CLI was available to inspect or change that cloud rule from SSH.
+
+### Recovery Instructions
+
+This goal has no incomplete backup or update step. Future maintenance should use `sudo h` or the one-click installer. Preserve the existing backups and `.env`; create a new goal for any Alibaba Cloud security-group change or domain/HTTPS setup.
 
 ## Completed Goal: User-Owned Image Relay Key
 
