@@ -393,7 +393,7 @@ backup_deployment() {
     rm -rf -- "$backup_dir"
     return 1
   fi
-  if ! docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app node server/check-db.js /backup/app.db; then
+  if ! docker compose run --rm -T --no-deps --user 0:0 -v "$backup_dir:/backup:ro" app node server/check-db.js /backup/app.db; then
     docker compose start app >/dev/null 2>&1 || true
     wait_for_health "$current_port" || true
     rm -rf -- "$backup_dir"

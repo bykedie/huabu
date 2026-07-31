@@ -63,12 +63,15 @@ wait_for_health() {
 
 restore_from() {
   source_dir=$1
-  docker compose run --rm --no-deps -v "$source_dir:/restore:ro" app sh -c '
+  docker compose run --rm -T --no-deps --user 0:0 -v "$source_dir:/restore:ro" app sh -c '
+    owner=$(stat -c "%u:%g" /app)
     rm -f /app/data/app.db /app/data/app.db-wal /app/data/app.db-shm
     cp -a /restore/app.db /app/data/app.db
+    chown "$owner" /app/data/app.db
     for suffix in -wal -shm; do
       if [ -f "/restore/app.db$suffix" ]; then
         cp -a "/restore/app.db$suffix" "/app/data/app.db$suffix"
+        chown "$owner" "/app/data/app.db$suffix"
       fi
     done
   '
@@ -116,19 +119,19 @@ trap 'on_failure 130' INT
 trap 'on_failure 143' TERM
 
 # 先确认候选是完整的本项目历史库，再在副本上迁移并严格校验。
-docker compose run --rm --no-deps -v "$candidate_dir:/candidate:ro" app \
+docker compose run --rm -T --no-deps --user 0:0 -v "$candidate_dir:/candidate:ro" app \
   node server/check-db.js --allow-legacy /candidate/app.db
-docker compose run --rm --no-deps -v "$candidate_dir:/candidate" \
+docker compose run --rm -T --no-deps --user 0:0 -v "$candidate_dir:/candidate" \
   -e DB_PATH=/candidate/app.db app node --input-type=module --eval \
   "const { db } = await import('./server/db.js'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close()"
-docker compose run --rm --no-deps -v "$candidate_dir:/candidate:ro" app \
+docker compose run --rm -T --no-deps --user 0:0 -v "$candidate_dir:/candidate:ro" app \
   node server/check-db.js /candidate/app.db
 
 app_stopped=1
 docker compose stop app
 docker compose cp -a app:/app/data/. "$rollback_dir/"
 validate_database_files "$rollback_dir" "回滚快照"
-docker compose run --rm --no-deps -v "$rollback_dir:/rollback:ro" app \
+docker compose run --rm -T --no-deps --user 0:0 -v "$rollback_dir:/rollback:ro" app \
   node server/check-db.js /rollback/app.db
 rollback_ready=1
 

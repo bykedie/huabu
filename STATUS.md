@@ -2,7 +2,9 @@
 
 ## Current
 
-- Active goal: none. The public-IP deployment and `h` management safety hardening is implemented, verified, committed as `7c48c59`, and pushed to `origin/codex/infinite-canvas`. Start a new recoverable goal only after the user confirms the next execution request.
+- Active goal: production backup permission compatibility. The Ubuntu deployment remained on `56e29a7` after its update-time backup gate reported `/backup/app.db` missing. The old container has recovered healthy, the live database and sidecars remain in `/app/data`, and an independent private recovery backup under `/srv/canvas-backups` has passed the database checker.
+- Confirmed root cause: `docker compose cp` created the expected flat backup layout, but `umask 077` made the host backup directory `0700 root:root`; the default `node` validation container could not traverse the bind-mounted `/backup` directory and misreported the existing database as missing.
+- Local fix in progress: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions are not relaxed.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
@@ -35,12 +37,13 @@
 
 ## Next
 
-1. Validate Docker Compose, Nginx, Certbot, UFW and post-recreate container environment behavior on an actual Ubuntu/Debian systemd deployment host.
-2. Begin the next user-confirmed goal from a fresh status check; child threads should remain unpinned.
+1. Review the four-file implementation/test diff, commit it, and push it normally to `origin/codex/infinite-canvas`.
+2. Rerun the one-click installer on the existing Ubuntu host so the old deployment creates a validated private backup, fast-forwards, rebuilds, and restores health.
+3. Confirm the final Git HEAD, Compose health, `/api/health`, database path/size and retained recovery/update backups without exposing database contents or secrets.
 
 ## Blockers
 
-- No technical blocker is known. Docker/Nginx/Certbot execution remains a deployment-host check because Docker is unavailable on this Windows workstation.
+- No current technical blocker. MobaXterm's bundled OpenSSH client and the existing deployment key provide a non-interactive connection to the authorized Ubuntu host.
 - The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
 
 ## Evidence

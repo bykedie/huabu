@@ -15,6 +15,45 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
+## Active Goal: Production Backup Permission Compatibility
+
+- Status: active
+- Started: 2026-08-01
+- Commander thread: current main thread
+- Objective: recover the existing Ubuntu deployment, identify why the pre-update database gate reports `/backup/app.db` missing, make old deployments compatible without weakening backup privacy, verify the patch, push it, and safely retry the production update.
+
+### Confirmed Facts
+
+- The production repository remains on `56e29a7`; the failed update did not merge the fetched commits or replace the database.
+- The existing app container has recovered and is healthy on its loopback-bound host port.
+- The live database is `/app/data/app.db` in the Compose `canvas-data` volume, with non-empty WAL and SHM sidecars.
+- `docker compose cp -a app:/app/data/. <backup>/` produces the expected flat layout. The failure is permissions: `umask 077` creates the host backup directory as `0700 root:root`, while the validation container defaults to the unprivileged `node` user and cannot traverse `/backup`.
+- A separate `0700` recovery backup was created under `/srv/canvas-backups` and passed `server/check-db.js` when the one-shot validation container ran as root. The old app was restarted and returned a healthy response afterward.
+
+### Success Criteria
+
+- Update-time, manual, candidate, and rollback database checks can read private root-owned maintenance directories without changing those directories to group/world-readable permissions.
+- Restore writes database files back with the application runtime owner's UID/GID.
+- Build, full tests, focused deployment tests, Shell/Node syntax and diff checks pass.
+- The patch is committed and normally pushed to `origin/codex/infinite-canvas`.
+- Production fast-forwards from `56e29a7`, creates and validates another pre-update backup, rebuilds successfully, and returns healthy with the existing database.
+
+### Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Recover old service and locate the database | complete | Compose reports the old app healthy; `/app/data/app.db`, WAL and SHM confirmed in the named volume |
+| Reproduce the backup gate failure | complete | Default `node` maintenance container cannot traverse the `0700 root:root` backup bind; root maintenance container can |
+| Create an independent validated recovery backup | complete | Private recovery directory retained under `/srv/canvas-backups`; database checker passed and old service recovered healthy |
+| Implement and test private-directory compatibility | complete | Maintenance containers use `--user 0:0`; restore returns ownership to the runtime UID/GID; build, 23/23 full tests, 9/9 focused tests and syntax/diff checks passed |
+| Commit and push the patch | pending | Awaiting final diff review |
+| Retry production update and verify existing data/health | pending | Must confirm new HEAD, backup, container health and database continuity |
+
+### Safety Boundary
+
+- Do not remove volumes, reinitialize the database, overwrite `.env`, expose secret values, or delete existing backups.
+- Do not relax private backup directories from `0700`; use an explicit root maintenance user only for bounded one-shot database operations.
+
 ## Completed Goal: User-Owned Image Relay Key
 
 - Status: complete

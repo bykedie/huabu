@@ -99,7 +99,7 @@ app_stopped=1
 docker compose stop app
 docker compose cp -a app:/app/data/. "$backup_dir/"
 validate_database_files "$backup_dir"
-docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app \
+docker compose run --rm -T --no-deps --user 0:0 -v "$backup_dir:/backup:ro" app \
   node server/check-db.js /backup/app.db
 backup_valid=1
 docker compose start app

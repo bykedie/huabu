@@ -147,6 +147,18 @@ test('public-port deployment and h management preserve the production contract',
     assert.doesNotMatch(script, /127\.0\.0\.1:3102\/api\/health/)
   }
   assert.match(backup, /backup_root=\$\(cd "\$backup_root" && pwd -P\)\r?\ncase "\$backup_root" in/)
+  assert.match(backup, /docker compose run --rm -T --no-deps --user 0:0 -v "\$backup_dir:\/backup:ro"/)
+  assert.match(installer, /docker compose run --rm -T --no-deps --user 0:0 -v "\$backup_dir:\/backup:ro"/)
+  for (const mount of [
+    '\\$source_dir:/restore:ro',
+    '\\$candidate_dir:/candidate:ro',
+    '\\$candidate_dir:/candidate',
+    '\\$rollback_dir:/rollback:ro',
+  ]) {
+    assert.match(restore, new RegExp(`docker compose run --rm -T --no-deps --user 0:0 -v \"${mount}\"`))
+  }
+  assert.match(restore, /owner=\$\(stat -c "%u:%g" \/app\)/)
+  assert.match(restore, /chown "\$owner" \/app\/data\/app\.db/)
 
   for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_domain', 'configure_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
