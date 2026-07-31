@@ -96,7 +96,7 @@ After a restart, do not reconstruct history. Read `GOALS.md`, `PROJECT_MEMORY.md
 
 ### Completion Notes
 
-- Workers use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高"). Activate one worker at a time by default; higher concurrency requires the user's explicit approval for the current task and remains subject to the runtime limit.
+- Historical note: this completed audit used the then-current `gpt-5.6-luna`/`xhigh` setting. The current project rule is `gpt-5.6-sol` with `Ultra`, one worker at a time by default, and child threads remain unpinned.
 - The worktree is intentionally dirty; never reset, checkout, clean, or overwrite unrelated changes.
 - Do not open or mutate the real browser draft while auditing.
 - Isolated desktop/mobile acceptance and document synchronization are complete. The isolated browser tab is closed, the viewport override is reset, `3103/3113` are stopped, `.codex-acceptance` is removed, and only real `3102/5182` remain.
@@ -185,3 +185,37 @@ This goal has no incomplete implementation or push step. Start the next accepted
 ### Recovery Instructions
 
 This goal is complete. Start the next accepted idea as a new recoverable goal, inspect the current Git state first, and preserve the real browser draft and running `3102/5182` services.
+
+## Completed Goal: Deployment Maintenance Safety Hardening
+
+- Status: complete
+- Started: 2026-07-31
+- Completed: 2026-07-31
+- Commander thread: `019fb394-3b22-7111-87ad-f4ae56f97411`
+- Objective: harden repeat installs, `h` operations, relay-secret migration, proxy trust, backup/restore boundaries and failure rollback, then verify, commit and push the current branch.
+
+### Success Criteria
+
+- Repeat installs and `h safe_update` use the fetched commit, accept only fast-forward updates, create a validated backup and restore code/environment/application/Nginx state on failure without falsely reporting success.
+- Existing domain deployments bind the app to loopback so the public application port cannot bypass Nginx/HTTPS; public mode ignores forged forwarding headers.
+- Text/video relay keys migrate from legacy `.env` storage into encrypted SQLite settings; blank keeps the current key, `CLEAR` remains cleared, stored keys are never displayed and credential-bearing URLs are rejected.
+- Backup roots and database files cannot escape through symbolic links; validated backups and rescue snapshots remain available when service recovery itself fails.
+- Build, complete tests, focused deployment tests, Shell/Node syntax, diff/secret checks, local health and final review pass before normal GitHub push.
+
+### Steps
+
+| Step | Owner | Status | Verification |
+| --- | --- | --- | --- |
+| Inspect current deployment and relay maintenance failures | Commander plus one read-only auditor | complete | Latest worktree and failure paths reviewed; final auditor found no P0-P3 reproducible code issue |
+| Harden installer, manager, backup/restore and relay configuration | Commander | complete | Deployment contract tests cover rollback, managed keys, URL credentials, proxy trust and canonical backup boundaries |
+| Run final gates and local health/secret checks | Commander | complete | Build passed; full tests 23/23; focused tests 9/9; four Shell and four Node syntax checks; diff check; 44-file scan; 3102/5182 HTTP 200 |
+| Commit and push implementation | Commander | complete | `7c48c59` pushed normally to `origin/codex/infinite-canvas` |
+| Synchronize durable status, memory and decisions | Commander | complete | AGENTS/HANDOFF/GOALS/PROJECT_MEMORY/STATUS/DECISIONS updated with current model, pinning and deployment contracts |
+
+### Residual Host Validation
+
+- This Windows workstation does not provide Docker, Nginx, Certbot or UFW. Run failure injection on an actual Ubuntu/Debian systemd host and use `docker inspect` to confirm old environment secrets are physically absent after force recreation. This is an integration-host limitation, not a current P0-P2 code blocker.
+
+### Recovery Instructions
+
+The goal is complete. Start from `git status`, `STATUS.md` and the actual remote branch. Keep only the current commander thread pinned; child threads remain unpinned and default to `gpt-5.6-sol` with `Ultra` reasoning.

@@ -2,15 +2,15 @@
 
 ## Current
 
-- Active goal: none. The public-IP deployment path and `h` terminal management panel are implemented, verified, committed as `d3a9d5e`, and pushed to `origin/codex/infinite-canvas`. Start a new recoverable goal only after the user confirms the next execution request.
+- Active goal: none. The public-IP deployment and `h` management safety hardening is implemented, verified, committed as `7c48c59`, and pushed to `origin/codex/infinite-canvas`. Start a new recoverable goal only after the user confirms the next execution request.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
 - Text and video server contracts and billing remain independent from user image keys. The operations drawer contains separate text and video relay administration; the old shared image configuration remains absent.
 - Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
 - The isolated acceptance tab was closed, its temporary viewport was reset, processes `22464` (`3103`) and `23452` (`3113`) were stopped only after command-line and listener verification, and `.codex-acceptance` was removed. Only the real `3102/5182` listeners remain.
-- Collaboration workers use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高"). Activate one worker at a time by default; the user may explicitly approve a higher concurrency for a particular task, up to the runtime limit.
-- The accepted delivery was committed and pushed on `codex/infinite-canvas` as `d3a9d5e` (`feat: add public port deployment and h management panel`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
+- Collaboration workers use `gpt-5.6-sol` with `Ultra` reasoning. Activate one worker at a time by default; the user may explicitly approve higher concurrency for a particular task, up to the runtime limit. Only the current commander thread is pinned; child/collaboration threads remain unpinned.
+- The latest accepted deployment hardening was committed and pushed on `codex/infinite-canvas` as `7c48c59` (`feat: harden deployment maintenance workflows`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
 - Browser acceptance, document synchronization, isolated-environment cleanup, and the fresh final gate rerun are complete.
 
 ## Completed
@@ -28,11 +28,15 @@
 - Added and accepted the video node UI, independent video administration, async generation/polling, upload/download/asset flow, exact-origin media allowlist, unsafe DNS/IP rejection, manual redirect validation, authorization-header isolation, quota-terminal refund, and recoverable download-error behavior.
 - Synchronized `AGENTS.md`, handoff/memory/decision files, the archived visual specification/plan, and all three worker status files with the accepted implementation and browser evidence.
 - Added `deploy/install.sh` and `deploy/manage.sh` with a documented one-line Ubuntu/Debian deployment command. Default install publishes 0.0.0.0:3102, accepts validated --port/--bind, preserves .env/data, rejects dirty or divergent repositories, backs up before fast-forward updates, safely installs /usr/local/bin/h, reports the public IP URL and warns about unencrypted HTTP. The h panel covers service, update, port, domain/HTTPS, text/video relay, quota, backup/restore, logs, diagnostics and administrator-token operations with hidden secret input.
+- Hardened repeat installs and `h safe_update` with `FETCH_HEAD`, fast-forward validation, validated backups, code/environment/application/Nginx rollback, clean-worktree checks, accurate recovery messages and retained `0600` rescue snapshots when rollback cannot be confirmed.
+- Added encrypted terminal relay maintenance with managed tombstones for legacy `.env` migration and explicit `CLEAR`; URLs with embedded credentials are rejected, legacy environment keys are cleared, and the app container is force-recreated.
+- Enforced `127.0.0.1` binding for existing domain deployments, ignored forwarded headers in public mode and trusted one loopback Nginx hop in domain mode.
+- Rejected backup/restore database symlinks and rechecked canonical backup roots after creation; validated backups survive service-recovery failure.
 
 ## Next
 
-1. Keep the repository clean and begin the next user-confirmed goal from a fresh status check.
-2. Validate Docker/Nginx/Certbot/UFW behavior on an actual Ubuntu/Debian deployment host; those tools are unavailable on this Windows workstation.
+1. Validate Docker Compose, Nginx, Certbot, UFW and post-recreate container environment behavior on an actual Ubuntu/Debian systemd deployment host.
+2. Begin the next user-confirmed goal from a fresh status check; child threads should remain unpinned.
 
 ## Blockers
 
@@ -42,12 +46,12 @@
 ## Evidence
 
 - `npm.cmd run build`: passed on 2026-07-31; final assets are `index-DEhlsHSV.css` and `index-UkhmACLV.js`.
-- `npm.cmd test`: final suite with deployment coverage passed 21/21.
-- `node --test tests/production-config.test.mjs`: deployment-focused suite passed 7/7.
-- `node --check server/app.js` and `node --check server/check-db.js`: passed.
+- `npm.cmd test`: final suite with deployment coverage passed 23/23.
+- `node --test tests/production-config.test.mjs`: deployment-focused suite passed 9/9.
+- `node --check server/manage-config.js`, `server/app.js`, `server/db.js`, and `server/check-db.js`: passed.
 - `git diff --check`: passed with existing LF-to-CRLF warnings only.
-- Secret-pattern review scanned 39 current tracked/untracked source and document files without echoing candidate values; suspicious candidates: 0.
-- Git runtime Bash: `bash -n deploy/install.sh deploy/backup.sh deploy/restore.sh` passed; `deploy/install.sh --help` also passed. Docker is unavailable on this host, so no local Compose/Nginx/Certbot install was attempted.
+- Secret-pattern review scanned 44 current tracked/untracked files without echoing candidate values; common secret matches: 0; URL credential matches: 0.
+- Git runtime Bash: `bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh` passed; `deploy/install.sh --help` also passed. Docker is unavailable on this host, so no local Compose/Nginx/Certbot/UFW install was attempted.
 - Post-cleanup runtime health: `http://127.0.0.1:3102/api/health` returned `200 {"ok":true}` and `http://127.0.0.1:5182/` returned `200 text/html`; only ports `3102/5182` were listening among `3102/3103/3113/5182`.
 - Desktop toolbar with panel open: center `x=860`, matching the visible canvas center; panel closed: center `x=720`, matching the viewport center.
 - Desktop settings popover: fully visible inside `1440x1000`; page `scrollWidth=clientWidth=1440`.
@@ -55,5 +59,5 @@
 - Mobile Account Security and Operations drawers: width `390`, no horizontal overflow; fixed endpoint displayed exactly as `https://www.bkbk.baby/`; old shared-image controls had zero DOM matches.
 - Browser runtime checks: no console warning/error, page error, failed request, HTTP error, or external request in the accepted isolated scenarios.
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
-- GitHub delivery: commit `d3a9d5e` pushed normally to `origin/codex/infinite-canvas` (push response advanced `56e29a7..d3a9d5e`). A follow-up `git ls-remote` was attempted but timed out due to transient GitHub connectivity; the push command itself returned success.
-- Current goal gates: npm.cmd run build passed; npm.cmd test passed 21/21; node --test tests/production-config.test.mjs passed 7/7; bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh passed; Node syntax checks passed; git diff --check passed with existing LF-to-CRLF warnings.
+- GitHub delivery: commit `7c48c59` pushed normally to `origin/codex/infinite-canvas` (push response advanced `467ce07..7c48c59`).
+- Current goal gates: npm.cmd run build passed; npm.cmd test passed 23/23; node --test tests/production-config.test.mjs passed 9/9; bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh passed; four Node syntax checks passed; git diff --check passed with existing LF-to-CRLF warnings.

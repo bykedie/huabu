@@ -86,8 +86,8 @@
 5. 主线程检查实际差异，不仅相信实施者摘要。
 6. 主线程负责跨文件集成、测试和浏览器验收。
 7. 停止工作前，主线程同步 STATUS.md、相关角色状态和长期决定。
-8. 三个置顶协作线程继续保留；用户允许最多同时启用 10 个子智能体，但只拆分真正独立的工作，不为凑数量创建线程，并服从平台实际提供的更小并发上限。
-9. 子智能体默认使用 `gpt-5.6-luna` 与 `xhigh`（超高）推理强度，除非用户当次明确覆盖。
+8. 只置顶当前指挥官主线程；协作线程和子智能体不要置顶。用户允许最多同时启用 10 个子智能体，但只拆分真正独立的工作，不为凑数量创建线程，并服从平台实际提供的更小并发上限。
+9. 子智能体默认使用 `gpt-5.6-sol` 与 `Ultra` 推理强度，除非用户当次明确覆盖。
 
 AI、线程和运行进程可能随时消失，文件会保留。任何宕机后仍需要知道的信息，都必须写进项目文件。
 
@@ -149,7 +149,9 @@ AI、线程和运行进程可能随时消失，文件会保留。任何宕机后
 - deploy/nginx.conf 将公网流量代理到应用。
 - deploy/install.sh 在 Ubuntu/Debian systemd 服务器上执行首次安装或安全快进更新：保留现有 `.env` 和数据卷，更新前备份运行中的数据库，并配置 Nginx/可选 HTTPS。
 - deploy/install.sh 默认使用 0.0.0.0:3102 公网 IP+端口，不要求域名；提供域名时才安装/配置 Nginx，可选 Certbot HTTPS。
-- 安装器会把 deploy/manage.sh 安装为 /usr/local/bin/h；sudo h 打开管理面板，sudo h status 输出状态和地址。面板负责服务启停、仅快进更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份恢复、日志、诊断和管理员初始化码轮换/清除。
+- 旧域名部署重跑会继续强制 `PUBLIC_BIND=127.0.0.1`；公网模式不信任转发头，域名模式只信任回环 Nginx 的一个代理跳数。
+- 安装器会把 deploy/manage.sh 安装为 /usr/local/bin/h；sudo h 打开管理面板，sudo h status 输出状态和地址。面板负责服务启停、安全快进更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份恢复、日志、诊断和管理员初始化码轮换/清除。
+- `h` 中转配置使用隐藏输入；留空保留，`CLEAR` 显式清除。密钥经 NUL 分隔标准输入进入一次性维护进程，加密写入数据库，旧 `.env` 密钥清空并强制重建主容器。
 - deploy/backup.sh 停止应用、复制数据目录、校验数据库并恢复服务健康。
 - deploy/restore.sh 校验和迁移候选数据库、保留回滚快照、恢复后再次校验并检查健康。
 
@@ -306,7 +308,7 @@ npm.cmd run dev 会同时启动 Vite 和被监视的 API。启动前检查 5182 
 - Controls、Shell 和 Nodes 参考层均已实现并完成桌面/移动验收；Dock 居中、移动外观弹层、图片工具栏和视频预览/设置几何缺陷均已修复。
 - 用户自有图片密钥迁移已实现：固定 `https://www.bkbk.baby/v1`、用户密钥 AES-GCM 服务端保存、图片生成与编辑零站内积分、旧管理员共享图片职责已移除。
 - 视频链路支持独立管理员配置、模型/尺寸/1-20 秒、异步轮询、下载、上传和存资产；结果下载具有精确来源白名单、逐跳重定向检查、DNS/IP 防护和认证头隔离。
-- 最近一次集成验证：构建通过、完整测试 21/21、生产配置测试 7/7、三个部署 shell 脚本的 `bash -n`、Node 语法检查和 `git diff --check` 通过，仅有既存换行符提示。
+- 最近一次集成验证：构建通过、完整测试 23/23、生产配置测试 9/9、四个部署 Shell 脚本的 `bash -n`、四个 Node 语法检查和 `git diff --check` 通过，仅有既存换行符提示。
 - 桌面 `1440x1000` 和移动 `390x844` 已完成视频节点、工具栏、Dock、导航、账户安全抽屉、运营管理抽屉、遮挡、横向溢出、控制台和网络检查。视频媒体成功解码并可存为资产。
 - 未配置用户点击生成图片时，会在任何保存、参考图处理或 API 请求前打开账户安全；验收记录的点击后请求数为零。
 - 隔离验收标签、`3103/3113` 临时进程和 `.codex-acceptance` 已在核对命令行后清理；真实 `3102/5182` 未被停止或打开。
@@ -319,7 +321,7 @@ npm.cmd run dev 会同时启动 Vite 和被监视的 API。启动前检查 5182 
 
 1. 读取 `GOALS.md`、`STATUS.md`、`coordination/STATUS-*.md`、当前 Git 差异和最新测试结果。
 2. 当前已登记目标均已完成；收到确定执行的新想法后，先创建新的可恢复目标和可观察门禁。
-3. 默认一次只激活一个 `gpt-5.6-luna`、`xhigh` 子智能体；只有用户当次明确批准并发时才增加。
+3. 默认一次只激活一个 `gpt-5.6-sol`、`Ultra` 子智能体；只有用户当次明确批准并发时才增加，且子智能体不要置顶。
 4. 不要为了开始新任务而重置、提交、清理或覆盖当前脏工作区。
 5. 新的视觉任务仍须逐场景验收，参考图片一次只处理一张。
 
@@ -435,9 +437,9 @@ localhost 工作优先使用内置浏览器。
 - 浏览器本地草稿不在 Git 内，清理浏览器存储或冲突操作可能导致丢失。
 - 参考仓库和截图目录属于本机临时路径。
 - 活跃开发期间环境示例可能落后，部署前要比较 .env.example、README 和代码。
-- 当前完整测试为 21/21，生产配置测试为 7/7；扩展高风险路径时仍需增加对应测试，不能用另一类媒体测试替代。
+- 当前完整测试为 23/23，生产配置测试为 9/9；扩展高风险路径时仍需增加对应测试，不能用另一类媒体测试替代。
 - 视频下载在请求前检查 DNS/IP，但 DNS 校验和实际连接之间仍存在 rebinding TOCTOU 窗口。需要进一步收紧时，应使用能够把已验证地址绑定到实际连接的网络层实现。
-- 当前 Git 运行时自带 Bash；`deploy/install.sh`、`deploy/backup.sh` 和 `deploy/restore.sh` 均已通过 `bash -n`。本机没有 Docker，因此一键安装仍需在实际 Ubuntu/Debian systemd 服务器完成容器、Nginx 和 Certbot 实跑。
+- 当前 Git 运行时自带 Bash；`deploy/install.sh`、`deploy/manage.sh`、`deploy/backup.sh` 和 `deploy/restore.sh` 均已通过 `bash -n`。本机没有 Docker，因此一键安装仍需在实际 Ubuntu/Debian systemd 服务器完成 Docker Compose、Nginx、Certbot、UFW 和容器秘密清除实跑。
 
 ## 二十一、完成定义
 
@@ -456,11 +458,11 @@ localhost 工作优先使用内置浏览器。
 
 ## 二十二、当前交接点：公网端口与 h 面板
 
-本轮目标已经实现，尚待主线程提交并推送。先读取 `GOALS.md`、`STATUS.md`、`DECISIONS.md` 与当前 `git diff`，不要重建历史对话。
+本轮部署维护安全加固已经实现并作为 `7c48c59` 推送到 `origin/codex/infinite-canvas`。先读取 `GOALS.md`、`STATUS.md`、`DECISIONS.md` 与当前 `git status`，不要重建历史对话。
 
 - `docker-compose.yml` 默认发布 `${PUBLIC_BIND:-0.0.0.0}:${PUBLIC_PORT:-3102}:3102`；`.env.example` 提供 `PUBLIC_BIND=0.0.0.0` 和 `PUBLIC_PORT=3102`。
-- `deploy/install.sh` 默认不要求域名，支持 `--port` 和 `--bind`，保留已有 `.env`/数据，拒绝脏仓库和非快进更新，更新前备份，按实际端口健康检查，输出公网 IP URL 并警告 HTTP 未加密。只有 `--domain` 才安装/配置 Nginx；Certbot 失败会恢复站点文件。
-- `deploy/manage.sh` 由 `sudo h` 或 `h` 启动，`h status` 可非交互查看状态。面板覆盖服务、更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份/恢复、日志、诊断和管理员初始化码。密钥使用 `read -r -s`，状态不回显秘密。
+- `deploy/install.sh` 默认不要求域名，支持 `--port` 和 `--bind`，保留已有 `.env`/数据，拒绝脏仓库和非快进更新，更新前校验备份，并对代码、环境、应用和已捕获 Nginx 状态执行失败回滚。首次域名/TLS 失败回退公网 HTTP 时会明确警告未加密；自动恢复失败会保留 `0600` 救援快照。
+- `deploy/manage.sh` 由 `sudo h` 或 `h` 启动，`h status` 可非交互查看状态。面板覆盖服务、安全更新、端口、域名/HTTPS、文字/视频中转、商业配额、备份/恢复、日志、诊断和管理员初始化码。中转 URL 拒绝内嵌凭据，密钥不回显并迁移到数据库密文。
 - `deploy/backup.sh` 与 `deploy/restore.sh` 从 `.env` 读取并校验 `PUBLIC_PORT`，健康检查始终访问 `127.0.0.1:<PUBLIC_PORT>`。
-- 当前验证：`npm.cmd run build`、`npm.cmd test`（21/21）、`node --test tests/production-config.test.mjs`（7/7）、四个部署脚本 `bash -n`、两个 Node syntax check、`git diff --check` 均通过。Docker 不在本机，Ubuntu/Debian 实机部署仍需验证。
+- 当前验证：`npm.cmd run build`、`npm.cmd test`（23/23）、`node --test tests/production-config.test.mjs`（9/9）、四个部署脚本 `bash -n`、四个 Node syntax check、`git diff --check`、44 文件秘密扫描和本地 `3102/5182` 健康检查均通过。Docker 不在本机，Ubuntu/Debian 实机部署仍需验证。
 - 不要提交 `.env`、`data/`、Docker 数据卷、备份、日志、`dist/` 或任何真实 API 密钥。图片参考仍一次只处理一张。

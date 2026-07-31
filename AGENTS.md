@@ -16,19 +16,19 @@ Before editing, read `HANDOFF.md`, `GOALS.md`, `PROJECT_MEMORY.md`, `SPEC.md`, `
 
 ### Execution Concurrency
 
-- Keep the three pinned collaboration threads available and use additional bounded workers only for genuinely independent tasks.
+- Keep only the current commander/main thread pinned. Collaboration and subagent threads must remain unpinned unless the user explicitly changes this preference.
 - Activate one worker at a time by default. Use concurrent workers only when the user explicitly approves it for the current task.
 - The user allows up to 10 concurrent workers/subagents. Do not create workers merely to reach that number, and obey the smaller runtime concurrency limit when the platform exposes fewer slots.
-- Collaboration threads use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高") unless the user explicitly overrides those settings.
+- Collaboration threads use `gpt-5.6-sol` with `ultra` reasoning unless the user explicitly overrides those settings.
 - When concurrency is reduced, extra workers must stop after safely closing temporary browsers and clearing any test-only data they created.
 
-Each worker owns exactly one implementation file and one status file:
+The following ownership table is historical context for the completed visual-alignment goal, not a standing assignment:
 
 - Shell worker: `src/styles/canvas-shell-reference.css` and `coordination/STATUS-shell.md`
 - Controls worker: `src/styles/canvas-controls-reference.css` and `coordination/STATUS-controls.md`
 - Nodes worker: `src/styles/canvas-nodes-reference.css` and `coordination/STATUS-nodes.md`
 
-Do not edit another worker's implementation or status file. Do not edit `src/App.tsx`, `src/styles.css`, or `src/main.tsx` unless the main acceptance thread explicitly asks for it.
+For each new multi-worker goal, define current file ownership before editing and do not overlap another active worker. Do not infer present ownership from the archived visual table.
 
 ## Progress Reporting
 
