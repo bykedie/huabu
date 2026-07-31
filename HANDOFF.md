@@ -288,7 +288,7 @@ npm.cmd run dev 会同时启动 Vite 和被监视的 API。启动前检查 5182 
 
 当前分支为 codex/infinite-canvas，并跟踪 origin/codex/infinite-canvas。
 
-本轮完整交付已提交并推送到 `origin/codex/infinite-canvas`，主交付提交为 `d5006e0`。后续工作区仍可能出现新的未提交修改；绝不能使用 reset、checkout 或清理命令覆盖他人的工作。
+本轮完整交付已提交并推送到 `origin/codex/infinite-canvas`，部署交付提交为 `d3a9d5e`。后续工作区仍可能出现新的未提交修改；绝不能使用 reset、checkout 或清理命令覆盖他人的工作。
 
 当前差异中已经实现的主要能力：
 

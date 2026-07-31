@@ -144,9 +144,9 @@ This goal has no incomplete step. On restart, inspect the current Git state and 
 
 This goal has no incomplete implementation or push step. Start the next accepted idea as a new recoverable goal, inspect the current Git state first, and preserve the real browser draft and running `3102/5182` services.
 
-## Active Goal: Public-Port Deployment and `h` Management Panel
+## Completed Goal: Public-Port Deployment and `h` Management Panel
 
-- Status: active
+- Status: complete
 - Started: 2026-07-31
 - Commander thread: current main thread
 - Objective: make first deployment usable through public IP plus port without requiring a domain, and add a terminal management panel launched with `h` for ongoing configuration, operations, backup/recovery and optional domain/HTTPS setup.
@@ -166,7 +166,7 @@ This goal has no incomplete implementation or push step. Start the next accepted
 | `deploy/manage.sh` | Shell collaboration thread / commander integration | complete |
 | `deploy/install.sh` | Controls collaboration thread / commander integration | complete |
 | `tests/production-config.test.mjs` | Nodes collaboration thread / commander integration | complete |
-| Compose/env/docs/integration/acceptance/push | Commander | in progress |
+| Compose/env/docs/integration/acceptance/push | Commander | complete |
 
 ### Current Evidence
 
@@ -177,3 +177,11 @@ This goal has no incomplete implementation or push step. Start the next accepted
 - `node --check server/app.js` and `node --check server/check-db.js`: passed.
 - `git diff --check`: passed with existing LF-to-CRLF warnings only.
 - Docker is unavailable on this Windows workstation; actual Ubuntu/Debian Compose, Nginx, Certbot and UFW execution remains a deployment-host verification.
+
+- Final delivery commit: `d3a9d5e` (`feat: add public port deployment and h management panel`).
+- Push result: `origin/codex/infinite-canvas` accepted the update without force-push.
+- Follow-up `git ls-remote` was attempted for confirmation but timed out due to transient GitHub connectivity after the successful push response.
+
+### Recovery Instructions
+
+This goal is complete. Start the next accepted idea as a new recoverable goal, inspect the current Git state first, and preserve the real browser draft and running `3102/5182` services.

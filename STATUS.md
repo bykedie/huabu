@@ -2,7 +2,7 @@
 
 ## Current
 
-- Active goal: default production deployment to public IP plus configurable port and add an `h` terminal management panel for future configuration and maintenance. Implementation and automated gates are complete; commit and push are the remaining steps.
+- Active goal: none. The public-IP deployment path and `h` terminal management panel are implemented, verified, committed as `d3a9d5e`, and pushed to `origin/codex/infinite-canvas`. Start a new recoverable goal only after the user confirms the next execution request.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
@@ -10,7 +10,7 @@
 - Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
 - The isolated acceptance tab was closed, its temporary viewport was reset, processes `22464` (`3103`) and `23452` (`3113`) were stopped only after command-line and listener verification, and `.codex-acceptance` was removed. Only the real `3102/5182` listeners remain.
 - Collaboration workers use `gpt-5.6-luna` with `xhigh` reasoning (user wording: "超高"). Activate one worker at a time by default; the user may explicitly approve a higher concurrency for a particular task, up to the runtime limit.
-- The accepted delivery was committed and pushed on `codex/infinite-canvas`. Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
+- The accepted delivery was committed and pushed on `codex/infinite-canvas` as `d3a9d5e` (`feat: add public port deployment and h management panel`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
 - Browser acceptance, document synchronization, isolated-environment cleanup, and the fresh final gate rerun are complete.
 
 ## Completed
@@ -31,8 +31,8 @@
 
 ## Next
 
-1. Run the final secret/worktree/runtime review and stage only intended files.
-2. Commit the public-port installer and h management panel, then push normally to GitHub.
+1. Keep the repository clean and begin the next user-confirmed goal from a fresh status check.
+2. Validate Docker/Nginx/Certbot/UFW behavior on an actual Ubuntu/Debian deployment host; those tools are unavailable on this Windows workstation.
 
 ## Blockers
 
@@ -55,5 +55,5 @@
 - Mobile Account Security and Operations drawers: width `390`, no horizontal overflow; fixed endpoint displayed exactly as `https://www.bkbk.baby/`; old shared-image controls had zero DOM matches.
 - Browser runtime checks: no console warning/error, page error, failed request, HTTP error, or external request in the accepted isolated scenarios.
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
-- GitHub delivery: commit `d5006e0` pushed normally to `origin/codex/infinite-canvas`; the documented remote installer returned HTTP 200 and matched the local committed file byte-for-byte.
+- GitHub delivery: commit `d3a9d5e` pushed normally to `origin/codex/infinite-canvas` (push response advanced `56e29a7..d3a9d5e`). A follow-up `git ls-remote` was attempted but timed out due to transient GitHub connectivity; the push command itself returned success.
 - Current goal gates: npm.cmd run build passed; npm.cmd test passed 21/21; node --test tests/production-config.test.mjs passed 7/7; bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh passed; Node syntax checks passed; git diff --check passed with existing LF-to-CRLF warnings.
