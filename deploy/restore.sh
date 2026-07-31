@@ -6,10 +6,23 @@ if [[ $# -ne 1 ]]; then
   echo "用法：$0 /绝对路径/备份目录" >&2
   exit 64
 fi
+[[ $1 == /* ]] || { echo "备份目录必须是绝对路径" >&2; exit 64; }
 
 cd "$(dirname "$0")/.."
-backup_dir=$(cd "$1" && pwd)
-[[ -s "$backup_dir/app.db" ]] || { echo "备份目录缺少非空 app.db" >&2; exit 65; }
+project_root=$(pwd -P)
+backup_dir=$(cd "$1" && pwd -P)
+case "$backup_dir" in
+  "$project_root"|"$project_root"/*)
+    echo "备份目录必须位于项目目录之外" >&2
+    exit 64
+    ;;
+esac
+[[ -f "$backup_dir/app.db" && ! -L "$backup_dir/app.db" && -s "$backup_dir/app.db" ]] \
+  || { echo "备份目录必须包含非空且非符号链接的普通 app.db" >&2; exit 65; }
+for sidecar in app.db-wal app.db-shm; do
+  [[ ! -e "$backup_dir/$sidecar" || (! -L "$backup_dir/$sidecar" && -f "$backup_dir/$sidecar") ]] \
+    || { echo "备份中的 $sidecar 必须是普通文件且不能是符号链接" >&2; exit 65; }
+done
 
 read_public_port() {
   local value=3102
@@ -27,6 +40,16 @@ read_public_port() {
 }
 
 public_port=$(read_public_port)
+
+validate_database_files() {
+  local directory=$1 label=$2 sidecar
+  [[ -f "$directory/app.db" && ! -L "$directory/app.db" && -s "$directory/app.db" ]] \
+    || { echo "$label 缺少非空且非符号链接的普通 app.db" >&2; return 65; }
+  for sidecar in app.db-wal app.db-shm; do
+    [[ ! -e "$directory/$sidecar" || (! -L "$directory/$sidecar" && -f "$directory/$sidecar") ]] \
+      || { echo "$label 中的 $sidecar 必须是普通文件且不能是符号链接" >&2; return 65; }
+  done
+}
 
 wait_for_health() {
   for _ in {1..60}; do
@@ -60,6 +83,7 @@ candidate_dir="$work_dir/candidate"
 rollback_dir="$work_dir/rollback"
 mkdir "$candidate_dir" "$rollback_dir"
 cp -a "$backup_dir/." "$candidate_dir/"
+validate_database_files "$candidate_dir" "候选副本"
 app_stopped=0
 rollback_ready=0
 replacement_started=0
@@ -103,6 +127,7 @@ docker compose run --rm --no-deps -v "$candidate_dir:/candidate:ro" app \
 app_stopped=1
 docker compose stop app
 docker compose cp -a app:/app/data/. "$rollback_dir/"
+validate_database_files "$rollback_dir" "回滚快照"
 docker compose run --rm --no-deps -v "$rollback_dir:/rollback:ro" app \
   node server/check-db.js /rollback/app.db
 rollback_ready=1

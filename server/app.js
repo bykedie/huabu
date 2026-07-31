@@ -58,7 +58,10 @@ if (!imageModels.length) throw new Error('AI_IMAGE_MODELS 至少需要一个模�
 const imageRelayEndpoint = 'https://www.bkbk.baby/'
 const imageRelayBaseUrl = imageRelayEndpoint + 'v1'
 recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs)
-app.set('trust proxy', 'loopback')
+// Public-port mode ignores client-supplied forwarding headers. Domain mode
+// trusts exactly the loopback Nginx hop.
+const proxyDomain = (process.env.MOYU_DOMAIN || process.env.PUBLIC_DOMAIN || '').trim()
+app.set('trust proxy', process.env.PUBLIC_BIND === '127.0.0.1' && proxyDomain ? 1 : false)
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -83,6 +86,17 @@ app.use('/api/ai', limiter(40))
 app.use('/api', express.json({ limit: '12mb' }))
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
+const normalizeRelayBaseUrl = (value, label, status = 500) => {
+  const input = String(value || '').trim().replace(/\/+$/, '')
+  if (!input) return ''
+  let url
+  try { url = new URL(input) } catch { throw fail(status, label + '地址无效') }
+  if (!(isProduction ? ['https:'] : ['https:', 'http:']).includes(url.protocol)) {
+    throw fail(status, label + '地址必须使用 HTTPS')
+  }
+  if (url.username || url.password) throw fail(status, label + '地址不能包含用户名或密码')
+  return url.toString().replace(/\/+$/, '')
+}
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
   const iv = randomBytes(12)
@@ -100,19 +114,21 @@ const relaySettings = (kind = 'text') => {
   const row = db.prepare('SELECT * FROM app_settings WHERE id=1').get()
   const video = kind === 'video'
   const encrypted = video ? row?.ai_video_api_key_encrypted : row?.ai_api_key_encrypted
+  const keyManaged = Number(video ? row?.ai_video_api_key_managed : row?.ai_api_key_managed) === 1
+  const storedBaseUrl = video ? row?.ai_video_base_url : row?.ai_base_url
+  const storedModels = video ? row?.ai_video_models : row?.ai_models
+  const databaseConfigured = keyManaged || [storedBaseUrl, encrypted, storedModels].some((value) => value !== null && value !== undefined)
   let storedKey = ''
   if (encrypted) { try { storedKey = decryptSetting(encrypted) } catch { throw fail(500, '已保存的中转站密钥无法解密，请管理员重新设置') } }
-  const baseUrl = video
-    ? (row?.ai_video_base_url || process.env.AI_VIDEO_BASE_URL || '')
-    : (row?.ai_base_url || process.env.AI_BASE_URL || '')
-  const envKey = video ? process.env.AI_VIDEO_API_KEY : process.env.AI_API_KEY
-  const models = video
-    ? (row?.ai_video_models ? JSON.parse(row.ai_video_models) : (process.env.AI_VIDEO_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean))
-    : (row?.ai_models ? JSON.parse(row.ai_models) : envModels)
-  const databaseConfigured = video
-    ? row?.ai_video_base_url || row?.ai_video_api_key_encrypted || row?.ai_video_models
-    : row?.ai_base_url || row?.ai_api_key_encrypted || row?.ai_models
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey: storedKey || envKey || '', models, source: databaseConfigured ? 'database' : 'environment' }
+  const rawBaseUrl = databaseConfigured
+    ? (storedBaseUrl || '')
+    : (video ? process.env.AI_VIDEO_BASE_URL : process.env.AI_BASE_URL) || ''
+  const baseUrl = normalizeRelayBaseUrl(rawBaseUrl, video ? '视频中转站' : '中转站')
+  const envKey = ((video ? process.env.AI_VIDEO_API_KEY : process.env.AI_API_KEY) || '').trim()
+  const models = databaseConfigured
+    ? (storedModels ? JSON.parse(storedModels) : [])
+    : (video ? (process.env.AI_VIDEO_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean) : envModels)
+  return { baseUrl, apiKey: keyManaged ? storedKey : (storedKey || envKey || ''), models, source: databaseConfigured ? 'database' : 'environment' }
 }
 const videoPointCost = () => {
   const value = Number(db.prepare('SELECT ai_video_points FROM app_settings WHERE id=1').get()?.ai_video_points)
@@ -258,6 +274,7 @@ const allowedRelayUrl = (value, label) => {
   let url
   try { url = new URL(value) } catch { throw fail(502, label + '地址无效') }
   if (!(isProduction ? ['https:'] : ['https:', 'http:']).includes(url.protocol)) throw fail(502, label + '地址必须使用 HTTPS')
+  if (url.username || url.password) throw fail(502, label + '地址不能包含用户名或密码')
   return url
 }
 const videoLoopbackAddresses = new BlockList()
@@ -1121,22 +1138,19 @@ app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
       models: z.array(z.string().trim().min(1).max(100)).min(1).max(50),
     }), req.body)
     if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
-    let normalizedBase = body.baseUrl.replace(/\/+$/, '')
-    if (normalizedBase) {
-      let url
-      try { url = new URL(normalizedBase) } catch { throw fail(400, '中转站地址无效') }
-      if (!['http:', 'https:'].includes(url.protocol)) throw fail(400, '中转站地址仅支持 HTTP 或 HTTPS')
-      if (isProduction && url.protocol !== 'https:') throw fail(400, '生产环境中转站地址必须使用 HTTPS')
-      normalizedBase = url.toString().replace(/\/+$/, '')
-    }
+    const normalizedBase = normalizeRelayBaseUrl(body.baseUrl, '中转站', 400)
     const models = [...new Set(body.models)]
     const before = relaySettings()
-    const encryptedKey = body.apiKey ? encryptSetting(body.apiKey) : null
+    const current = db.prepare('SELECT ai_api_key_encrypted,ai_api_key_managed FROM app_settings WHERE id=1').get()
+    let encryptedKey = current?.ai_api_key_encrypted || null
+    if (body.apiKey) encryptedKey = encryptSetting(body.apiKey)
+    else if (body.clearApiKey) encryptedKey = null
+    else if (!Number(current?.ai_api_key_managed) && !encryptedKey && process.env.AI_API_KEY?.trim()) encryptedKey = encryptSetting(process.env.AI_API_KEY.trim())
     transaction(() => {
       db.prepare(`UPDATE app_settings SET ai_base_url=?,
-        ai_api_key_encrypted=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE ai_api_key_encrypted END,
+        ai_api_key_encrypted=?,ai_api_key_managed=1,
         ai_models=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-        .run(normalizedBase || null, body.clearApiKey ? 1 : 0, encryptedKey, encryptedKey, JSON.stringify(models), req.auth.sub)
+        .run(normalizedBase || null, encryptedKey, JSON.stringify(models), req.auth.sub)
       auditAdmin(req.auth.sub, 'ai_config.update', null, {
         baseUrlChanged: before.baseUrl !== normalizedBase,
         keyChanged: Boolean(body.apiKey || body.clearApiKey),
@@ -1155,14 +1169,17 @@ app.put('/api/admin/video-config', auth, admin, (req, res, next) => {
       points: z.number().int().min(1).max(1000000),
     }), req.body)
     if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
-    let base = body.baseUrl.replace(/\/+$/, '')
-    if (base) { let url; try { url = new URL(base) } catch { throw fail(400, '视频中转站地址无效') }; if (!['http:', 'https:'].includes(url.protocol) || (isProduction && url.protocol !== 'https:')) throw fail(400, '视频中转站地址必须使用 HTTPS'); base = url.toString().replace(/\/+$/, '') }
+    const base = normalizeRelayBaseUrl(body.baseUrl, '视频中转站', 400)
     const before = relaySettings('video')
-    const encrypted = body.apiKey ? encryptSetting(body.apiKey) : null
+    const current = db.prepare('SELECT ai_video_api_key_encrypted,ai_video_api_key_managed FROM app_settings WHERE id=1').get()
+    let encrypted = current?.ai_video_api_key_encrypted || null
+    if (body.apiKey) encrypted = encryptSetting(body.apiKey)
+    else if (body.clearApiKey) encrypted = null
+    else if (!Number(current?.ai_video_api_key_managed) && !encrypted && process.env.AI_VIDEO_API_KEY?.trim()) encrypted = encryptSetting(process.env.AI_VIDEO_API_KEY.trim())
     const models = [...new Set(body.models)]
     transaction(() => {
-      db.prepare('UPDATE app_settings SET ai_video_base_url=?, ai_video_api_key_encrypted=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE ai_video_api_key_encrypted END, ai_video_models=?, ai_video_points=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=1')
-        .run(base || null, body.clearApiKey ? 1 : 0, encrypted, encrypted, JSON.stringify(models), body.points, req.auth.sub)
+      db.prepare('UPDATE app_settings SET ai_video_base_url=?, ai_video_api_key_encrypted=?, ai_video_api_key_managed=1, ai_video_models=?, ai_video_points=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=1')
+        .run(base || null, encrypted, JSON.stringify(models), body.points, req.auth.sub)
       auditAdmin(req.auth.sub, 'video_config.update', null, { baseUrlChanged: before.baseUrl !== base, keyChanged: Boolean(body.apiKey || body.clearApiKey), modelsChanged: JSON.stringify(before.models) !== JSON.stringify(models), points: body.points })
     })
     const relay = relaySettings('video')
@@ -1176,11 +1193,8 @@ app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
       apiKey: z.string().trim().max(4000).optional(),
       model: z.string().trim().min(1).max(100),
     }), req.body)
-    let baseUrl = body.baseUrl.replace(/\/+$/, '')
-    let parsed
-    try { parsed = new URL(baseUrl) } catch { throw fail(400, '中转站地址无效') }
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw fail(400, '中转站地址仅支持 HTTP 或 HTTPS')
-    if (isProduction && parsed.protocol !== 'https:') throw fail(400, '生产环境中转站地址必须使用 HTTPS')
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, '中转站', 400)
+    if (!baseUrl) throw fail(400, '中转站地址无效')
     const saved = relaySettings()
     const key = body.apiKey || saved.apiKey
     if (!key) throw fail(400, '请先填写或保存 API 密钥')
@@ -1212,7 +1226,8 @@ app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
 app.post('/api/admin/video-config/test', auth, admin, async (req, res, next) => {
   try {
     const body = parse(z.object({ baseUrl: z.string().trim().max(2000), apiKey: z.string().trim().max(4000).optional(), model: z.string().trim().min(1).max(100) }), req.body)
-    const baseUrl = body.baseUrl.replace(/\/+$/, '')
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, '视频中转站', 400)
+    if (!baseUrl) throw fail(400, '视频中转站地址无效')
     allowedRelayUrl(baseUrl, '视频中转站')
     const saved = relaySettings('video')
     const key = body.apiKey || saved.apiKey

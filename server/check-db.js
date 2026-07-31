@@ -27,7 +27,7 @@ try {
     redemptions: ['code_id', 'user_id'],
     topup_orders: ['id', 'user_id', 'amount_cents', 'points', 'status', 'proof'],
     ...(!allowLegacy ? { admin_audit: ['id', 'actor_id', 'action', 'target_id', 'details', 'created_at'] } : {}),
-    ...(!allowLegacy ? { app_settings: ['id', 'ai_base_url', 'ai_api_key_encrypted', 'ai_models', 'ai_image_base_url', 'ai_image_api_key_encrypted', 'ai_image_models', 'ai_image_points', 'ai_video_base_url', 'ai_video_api_key_encrypted', 'ai_video_models', 'ai_video_points', 'updated_by', 'updated_at'] } : {}),
+    ...(!allowLegacy ? { app_settings: ['id', 'ai_base_url', 'ai_api_key_encrypted', 'ai_api_key_managed', 'ai_models', 'ai_image_base_url', 'ai_image_api_key_encrypted', 'ai_image_models', 'ai_image_points', 'ai_video_base_url', 'ai_video_api_key_encrypted', 'ai_video_api_key_managed', 'ai_video_models', 'ai_video_points', 'updated_by', 'updated_at'] } : {}),
     generations: ['id', 'user_id', 'request_key', ...(allowLegacy ? [] : ['request_hash', 'kind']), 'reserved', 'charged', 'status'],
     ...(!allowLegacy ? { health_probe: ['id', 'value'] } : {}),
   }

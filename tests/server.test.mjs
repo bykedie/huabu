@@ -21,6 +21,7 @@ process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
 delete process.env.AI_VIDEO_MEDIA_ORIGINS
+delete process.env.PUBLIC_BIND
 process.env.AI_IMAGE_BASE_URL = 'https://forbidden-image-environment.example/v1'
 process.env.AI_IMAGE_API_KEY = 'forbidden-image-environment-key'
 
@@ -54,7 +55,7 @@ test('AI prompt estimation includes per-message protocol overhead', () => {
 })
 
 test('health check verifies SQLite read and write access', async () => {
-  assert.equal(app.get('trust proxy'), 'loopback')
+  assert.equal(app.get('trust proxy'), false)
   const before = Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value)
   const health = await request('/health')
   assert.equal(health.status, 200)
@@ -216,6 +217,12 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
     token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'file:///tmp/relay', apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
   })
   assert.equal(invalidConfig.status, 400)
+  const credentialConfig = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+  })
+  assert.equal(credentialConfig.status, 400)
+  assert.match(credentialConfig.body.error, /用户名或密码/)
+  assert.equal(JSON.stringify(credentialConfig.body).includes('user:password'), false)
   const savedConfig = await request('/admin/ai-config', {
     token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: `${relayBaseUrl}/`, apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
   })
@@ -285,12 +292,16 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const recoveryEntries = db.prepare('SELECT amount FROM ledger WHERE reference=? ORDER BY rowid').all(interruptedId)
   assert.deepEqual(recoveryEntries.map((entry) => Number(entry.amount)), [-7, 7])
 
+  process.env.AI_API_KEY = 'environment-key-must-not-override-clear'
   const clearedConfig = await request('/admin/ai-config', {
     token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: '', clearApiKey: true, models: ['gpt-4o-mini'] }),
   })
   assert.equal(clearedConfig.status, 200)
   assert.equal(clearedConfig.body.configured, false)
+  assert.equal(clearedConfig.body.keyConfigured, false)
+  assert.equal(clearedConfig.body.source, 'database')
   assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, null)
+  db.prepare('UPDATE app_settings SET ai_base_url=NULL,ai_api_key_encrypted=NULL,ai_api_key_managed=0,ai_models=NULL WHERE id=1').run()
   process.env.AI_API_KEY = 'test-relay-key'
 
   let releaseDelayedRelay
@@ -721,6 +732,14 @@ test('video relay configuration and billing remain independent from user image k
       body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: videoKey, models: ['test-video-model'], points: 7 }),
     })
     assert.equal(forbidden.status, 403)
+
+    const credentialConfig = await request('/admin/video-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', apiKey: videoKey, models: ['test-video-model'], points: 7 }),
+    })
+    assert.equal(credentialConfig.status, 400)
+    assert.match(credentialConfig.body.error, /用户名或密码/)
+    assert.equal(JSON.stringify(credentialConfig.body).includes('user:password'), false)
 
     const saved = await request('/admin/video-config', {
       token: admin.token, method: 'PUT',

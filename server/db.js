@@ -58,8 +58,10 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 );
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1), ai_base_url TEXT, ai_api_key_encrypted TEXT,
+  ai_api_key_managed INTEGER NOT NULL DEFAULT 0,
   ai_models TEXT, ai_image_base_url TEXT, ai_image_api_key_encrypted TEXT, ai_image_models TEXT, ai_image_points INTEGER,
-  ai_video_base_url TEXT, ai_video_api_key_encrypted TEXT, ai_video_models TEXT, ai_video_points INTEGER,
+  ai_video_base_url TEXT, ai_video_api_key_encrypted TEXT, ai_video_api_key_managed INTEGER NOT NULL DEFAULT 0,
+  ai_video_models TEXT, ai_video_points INTEGER,
   updated_by TEXT REFERENCES users(id), updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS generations (
@@ -84,14 +86,32 @@ CREATE TRIGGER IF NOT EXISTS admin_audit_no_delete BEFORE DELETE ON admin_audit
 BEGIN SELECT RAISE(ABORT, 'admin audit records are immutable'); END;
 `)
 const settingsColumns = db.prepare('PRAGMA table_info(app_settings)').all()
+if (!settingsColumns.some((column) => column.name === 'ai_api_key_managed')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_api_key_managed INTEGER NOT NULL DEFAULT 0')
 if (!settingsColumns.some((column) => column.name === 'ai_image_base_url')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_base_url TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_image_api_key_encrypted')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_api_key_encrypted TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_image_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_models TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_image_points')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_image_points INTEGER')
 if (!settingsColumns.some((column) => column.name === 'ai_video_base_url')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_base_url TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_video_api_key_encrypted')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_api_key_encrypted TEXT')
+if (!settingsColumns.some((column) => column.name === 'ai_video_api_key_managed')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_api_key_managed INTEGER NOT NULL DEFAULT 0')
 if (!settingsColumns.some((column) => column.name === 'ai_video_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_models TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_video_points')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_points INTEGER')
+db.exec(`
+UPDATE app_settings SET ai_api_key_managed=1
+WHERE ai_api_key_managed=0 AND (
+  ai_api_key_encrypted IS NOT NULL OR EXISTS (
+    SELECT 1 FROM admin_audit
+    WHERE action='ai_config.update' AND instr(details,'"keyChanged":true') > 0
+  )
+);
+UPDATE app_settings SET ai_video_api_key_managed=1
+WHERE ai_video_api_key_managed=0 AND (
+  ai_video_api_key_encrypted IS NOT NULL OR EXISTS (
+    SELECT 1 FROM admin_audit
+    WHERE action='video_config.update' AND instr(details,'"keyChanged":true') > 0
+  )
+);
+`)
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {
   db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')

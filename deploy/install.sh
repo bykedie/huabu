@@ -9,10 +9,13 @@ backup_root=${MOYU_BACKUP_ROOT:-/srv/canvas-backups}
 domain=
 email=
 enable_tls=1
+domain_explicit=0
+preserve_domain_config=0
 public_port=3102
 public_bind=0.0.0.0
 port_explicit=0
 bind_explicit=0
+backup_explicit=0
 
 usage() {
   cat <<'EOF'
@@ -50,9 +53,13 @@ require_value() {
 
 validate_port() {
   local value=$1
-  [[ $value =~ ^[0-9]+$ ]] || die "--port 必须是 1-65535 的整数"
-  [[ ${#value} -le 5 ]] || die "--port 必须是 1-65535 的整数"
-  (( 10#$value >= 1 && 10#$value <= 65535 )) || die "--port 必须是 1-65535 的整数"
+  valid_port "$value" || die "--port 必须是 1-65535 的整数"
+}
+
+valid_port() {
+  local value=$1
+  [[ $value =~ ^[0-9]+$ && ${#value} -le 5 ]] || return 1
+  (( 10#$value >= 1 && 10#$value <= 65535 ))
 }
 
 validate_domain() {
@@ -83,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --domain)
       require_value "$1" "${2:-}"
       domain=$2
+      domain_explicit=1
       shift 2
       ;;
     --email)
@@ -112,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --backup-dir)
       require_value "$1" "${2:-}"
       backup_root=$2
+      backup_explicit=1
       shift 2
       ;;
     -h|--help)
@@ -125,6 +134,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 sudo 或 root 运行"
+if [[ -n $domain ]]; then
+  if [[ $bind_explicit -eq 0 ]]; then public_bind=127.0.0.1; fi
+  [[ $public_bind == 127.0.0.1 ]] || die "域名模式必须使用 --bind 127.0.0.1，避免绕过 Nginx/HTTPS 直连应用端口"
+fi
 [[ $public_bind == 0.0.0.0 || $public_bind == 127.0.0.1 ]] || die "--bind 只能是 0.0.0.0 或 127.0.0.1"
 validate_port "$public_port"
 if [[ -n $domain ]]; then
@@ -146,6 +159,19 @@ backup_root=$(realpath -m -- "$backup_root")
 case $backup_root in
   "$install_dir"|"$install_dir"/*) die "备份目录必须位于安装目录之外" ;;
 esac
+
+h_path=/usr/local/bin/h
+expected_manage_target=$(realpath -m -- "$install_dir/deploy/manage.sh")
+check_h_path() {
+  local raw_target resolved_target
+  [[ -e $h_path || -L $h_path ]] || return 0
+  [[ -L $h_path ]] || die "$h_path 已存在且不是本项目链接，拒绝覆盖"
+  raw_target=$(readlink -- "$h_path") || die "无法读取现有 $h_path"
+  if [[ $raw_target != /* ]]; then raw_target=$(dirname "$h_path")/$raw_target; fi
+  resolved_target=$(realpath -m -- "$raw_target")
+  [[ $resolved_target == "$expected_manage_target" ]] || die "$h_path 已存在且不是本项目链接，拒绝覆盖"
+}
+check_h_path
 
 [[ -r /etc/os-release ]] || die "无法识别操作系统"
 command -v systemctl >/dev/null 2>&1 || die "当前脚本要求使用 systemd 的服务器环境"
@@ -192,10 +218,37 @@ read_env_value() {
 }
 
 current_port=3102
+old_domain=
+old_tls=0
 if [[ -f $install_dir/.env ]]; then
   old_port=$(read_env_value "$install_dir/.env" PUBLIC_PORT)
-  if [[ $old_port =~ ^[0-9]+$ && $old_port -ge 1 && $old_port -le 65535 ]]; then
-    current_port=$old_port
+  if valid_port "$old_port"; then
+    current_port=$((10#$old_port))
+  fi
+  if [[ $backup_explicit -eq 0 ]]; then
+    old_backup_root=$(read_env_value "$install_dir/.env" MOYU_BACKUP_ROOT)
+    if [[ -n $old_backup_root ]]; then
+      [[ $old_backup_root == /* ]] || die "已有 MOYU_BACKUP_ROOT 必须是绝对路径"
+      backup_root=$(realpath -m -- "$old_backup_root")
+      case $backup_root in
+        "$install_dir"|"$install_dir"/*) die "备份目录必须位于安装目录之外" ;;
+      esac
+    fi
+  fi
+  old_domain=$(read_env_value "$install_dir/.env" MOYU_DOMAIN)
+  [[ -n $old_domain ]] || old_domain=$(read_env_value "$install_dir/.env" PUBLIC_DOMAIN)
+  old_tls=$(read_env_value "$install_dir/.env" MOYU_TLS)
+  [[ $old_tls == 1 ]] || old_tls=0
+  if [[ $domain_explicit -eq 0 && -n $old_domain ]]; then
+    validate_domain "$old_domain"
+    if [[ $bind_explicit -eq 1 && $public_bind != 127.0.0.1 ]]; then
+      die "已有域名部署必须使用 --bind 127.0.0.1；如需恢复公网 IP 模式，请使用 sudo h 关闭域名模式"
+    fi
+    domain=$old_domain
+    public_bind=127.0.0.1
+    enable_tls=$old_tls
+    preserve_domain_config=1
+    if ! command -v nginx >/dev/null 2>&1; then apt-get install -y nginx; fi
   fi
 fi
 
@@ -210,9 +263,119 @@ wait_for_health() {
   return 1
 }
 
+validate_database_files() {
+  local directory=$1 sidecar
+  [[ -f "$directory/app.db" && ! -L "$directory/app.db" && -s "$directory/app.db" ]] \
+    || { echo "备份副本缺少非空且非符号链接的普通 app.db。" >&2; return 65; }
+  for sidecar in app.db-wal app.db-shm; do
+    [[ ! -e "$directory/$sidecar" || (! -L "$directory/$sidecar" && -f "$directory/$sidecar") ]] \
+      || { echo "备份副本中的 $sidecar 必须是普通文件且不能是符号链接。" >&2; return 65; }
+  done
+}
+
+rollback_armed=0
+rollback_existing=0
+rollback_old_head=
+rollback_env_backup=
+rollback_env_existed=0
+rollback_app_was_present=0
+rollback_site_captured=0
+rollback_site=
+rollback_site_link=
+rollback_site_backup=
+rollback_site_existed=0
+rollback_link_existed=0
+rollback_link_target=
+public_fallback_ready=0
+
+restore_captured_nginx() {
+  local failed=0
+  [[ $rollback_site_captured -eq 1 ]] || return 0
+  if [[ $rollback_site_existed -eq 1 ]]; then
+    cp -a -- "$rollback_site_backup" "$rollback_site" || failed=1
+  else
+    rm -f -- "$rollback_site" || failed=1
+  fi
+  rm -f -- "$rollback_site_link" || failed=1
+  if [[ $rollback_link_existed -eq 1 ]]; then ln -s -- "$rollback_link_target" "$rollback_site_link" || failed=1; fi
+  return "$failed"
+}
+
+rollback_install() {
+  local status=$? current_head rollback_ok=0 public_fallback_active=0 keep_recovery_files=0
+  trap - EXIT INT TERM
+  if [[ $status -ne 0 && $rollback_armed -eq 1 ]]; then
+    set +e
+    echo "部署未完成，正在恢复先前可用状态……" >&2
+    restore_captured_nginx || rollback_ok=1
+    if [[ $rollback_existing -eq 1 ]]; then
+      if [[ $rollback_env_existed -eq 1 && -n $rollback_env_backup ]]; then
+        cp -a -- "$rollback_env_backup" "$install_dir/.env" || rollback_ok=1
+      else
+        rm -f -- "$install_dir/.env" || rollback_ok=1
+      fi
+      current_head=$(git -C "$install_dir" rev-parse HEAD 2>/dev/null || true)
+      if [[ -n $rollback_old_head && $current_head != "$rollback_old_head" ]]; then
+        if ! git -C "$install_dir" update-ref "refs/heads/$branch" "$rollback_old_head" "$current_head" \
+          || ! git -C "$install_dir" read-tree --reset -u "$rollback_old_head"; then
+          rollback_ok=1
+        fi
+      fi
+      [[ -z $(git -C "$install_dir" status --porcelain 2>/dev/null) ]] || rollback_ok=1
+      if [[ $rollback_app_was_present -eq 1 ]]; then
+        if ! (cd "$install_dir" && docker compose up -d --build) || ! wait_for_health "$current_port"; then rollback_ok=1; fi
+      fi
+    elif [[ $public_fallback_ready -eq 1 && -f $install_dir/.env ]]; then
+      cd "$install_dir" || true
+      set_env_value PUBLIC_BIND 0.0.0.0 || rollback_ok=1
+      set_env_value MOYU_DOMAIN '' || rollback_ok=1
+      set_env_value PUBLIC_DOMAIN '' || rollback_ok=1
+      set_env_value MOYU_TLS 0 || rollback_ok=1
+      if ! docker compose up -d --build || ! wait_for_health "$public_port"; then
+        rollback_ok=1
+      else
+        public_fallback_active=1
+      fi
+      if [[ $rollback_ok -eq 0 ]] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        ufw allow "${public_port}/tcp" comment 'Moyu Canvas public port' >/dev/null || true
+      fi
+    fi
+    if [[ $rollback_site_captured -eq 1 ]] && command -v nginx >/dev/null 2>&1; then
+      if ! nginx -t || ! systemctl reload nginx; then rollback_ok=1; fi
+    fi
+    if [[ $rollback_ok -eq 0 ]]; then
+      if [[ $public_fallback_active -eq 1 ]]; then
+        echo "域名或 HTTPS 配置失败，应用已回退到 http://<公网IPv4>:${public_port}/。" >&2
+        echo "警告：该回退地址使用未加密 HTTP，在配置 HTTPS 前不要传输登录密码或 API 密钥。" >&2
+      else
+        echo "先前应用配置已恢复。" >&2
+      fi
+    else
+      keep_recovery_files=1
+      echo "自动恢复未能确认健康，请使用已校验备份和服务器日志人工恢复。" >&2
+      [[ -z $rollback_env_backup ]] || echo "受限权限的环境快照保留在：$rollback_env_backup" >&2
+      [[ -z $rollback_site_backup ]] || echo "受限权限的 Nginx 站点快照保留在：$rollback_site_backup" >&2
+    fi
+  fi
+  if [[ $keep_recovery_files -eq 0 ]]; then
+    [[ -z $rollback_env_backup ]] || rm -f -- "$rollback_env_backup"
+    [[ -z $rollback_site_backup ]] || rm -f -- "$rollback_site_backup"
+  fi
+  exit "$status"
+}
+trap rollback_install EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 backup_deployment() {
   local backup_dir=$backup_root/canvas-$(date +%Y%m%d-%H%M%S)-$$
+  local backup_valid=0
   mkdir -p -- "$backup_root"
+  backup_root=$(cd -- "$backup_root" && pwd -P)
+  case $backup_root in
+    "$install_dir"|"$install_dir"/*) echo "备份目录解析后位于安装目录内。" >&2; return 1 ;;
+  esac
+  backup_dir=$backup_root/canvas-$(date +%Y%m%d-%H%M%S)-$$
   mkdir -- "$backup_dir"
   if ! docker compose stop app; then
     rm -rf -- "$backup_dir"
@@ -224,29 +387,51 @@ backup_deployment() {
     rm -rf -- "$backup_dir"
     return 1
   fi
+  if ! validate_database_files "$backup_dir"; then
+    docker compose start app >/dev/null 2>&1 || true
+    wait_for_health "$current_port" || true
+    rm -rf -- "$backup_dir"
+    return 1
+  fi
   if ! docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app node server/check-db.js /backup/app.db; then
     docker compose start app >/dev/null 2>&1 || true
     wait_for_health "$current_port" || true
     rm -rf -- "$backup_dir"
     return 1
   fi
+  backup_valid=1
   docker compose start app >/dev/null
-  wait_for_health "$current_port" || { rm -rf -- "$backup_dir"; return 1; }
+  if ! wait_for_health "$current_port"; then
+    [[ $backup_valid -eq 0 ]] && rm -rf -- "$backup_dir"
+    echo "应用恢复失败，但已校验的备份保留在：$backup_dir" >&2
+    return 1
+  fi
   echo "更新前备份完成：$backup_dir"
 }
 
+git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "部署分支格式无效"
 if [[ -d $install_dir/.git ]]; then
+  rollback_existing=1
   existing_remote=$(git -C "$install_dir" remote get-url origin)
   [[ $existing_remote == "$repo_url" ]] || die "现有仓库 origin 与目标仓库不一致"
   current_branch=$(git -C "$install_dir" branch --show-current)
   [[ $current_branch == "$branch" ]] || die "现有部署分支与目标分支不一致"
   [[ -z $(git -C "$install_dir" status --porcelain) ]] || die "现有部署仓库存在未提交修改，请先人工处理"
+  rollback_old_head=$(git -C "$install_dir" rev-parse HEAD)
+  if [[ -f $install_dir/.env ]]; then
+    rollback_env_backup=$(mktemp)
+    cp -a -- "$install_dir/.env" "$rollback_env_backup"
+    chmod 600 "$rollback_env_backup"
+    rollback_env_existed=1
+  fi
+  if [[ -n $(cd "$install_dir" && docker compose ps -a -q app 2>/dev/null) ]]; then rollback_app_was_present=1; fi
   git -C "$install_dir" fetch --prune origin "$branch"
   git -C "$install_dir" merge-base --is-ancestor HEAD FETCH_HEAD || die "远程更新不是快进提交，已拒绝覆盖"
   if [[ $(git -C "$install_dir" rev-parse HEAD) != $(git -C "$install_dir" rev-parse FETCH_HEAD) ]]; then
-    if [[ -n $(cd "$install_dir" && docker compose ps -a -q app 2>/dev/null) ]]; then
+    if [[ $rollback_app_was_present -eq 1 ]]; then
       (cd "$install_dir" && backup_deployment) || die "更新前备份失败，已停止更新"
     fi
+    rollback_armed=1
     git -C "$install_dir" merge --ff-only FETCH_HEAD
   fi
 else
@@ -285,44 +470,54 @@ if [[ ! -f .env ]]; then
   created_env=1
 fi
 chmod 600 .env
+if [[ $rollback_existing -eq 1 ]]; then rollback_armed=1; fi
 
 if [[ $port_explicit -eq 0 ]]; then
   old_port=$(read_env_value .env PUBLIC_PORT)
-  if [[ $old_port =~ ^[0-9]+$ && $old_port -ge 1 && $old_port -le 65535 ]]; then
-    public_port=$old_port
+  if valid_port "$old_port"; then
+    public_port=$((10#$old_port))
   fi
 fi
-if [[ $bind_explicit -eq 0 ]]; then
+if [[ $bind_explicit -eq 0 && -z $domain ]]; then
   old_bind=$(read_env_value .env PUBLIC_BIND)
   if [[ $old_bind == 0.0.0.0 || $old_bind == 127.0.0.1 ]]; then
     public_bind=$old_bind
   fi
 fi
+if [[ -n $domain ]]; then public_bind=127.0.0.1; fi
 validate_port "$public_port"
 if [[ -n $domain && ($public_port -eq 80 || $public_port -eq 443) ]]; then
   die "域名模式的应用端口不能使用 Nginx 的 80 或 443，请改用其他 --port"
 fi
 set_env_value PUBLIC_BIND "$public_bind"
 set_env_value PUBLIC_PORT "$public_port"
+set_env_value MOYU_BACKUP_ROOT "$backup_root"
+if [[ -n $domain ]]; then
+  set_env_value MOYU_DOMAIN "$domain"
+  set_env_value PUBLIC_DOMAIN ''
+  if [[ $enable_tls -eq 1 ]]; then set_env_value MOYU_TLS 1; else set_env_value MOYU_TLS 0; fi
+else
+  set_env_value MOYU_DOMAIN ''
+  set_env_value PUBLIC_DOMAIN ''
+  set_env_value MOYU_TLS 0
+fi
 
 docker compose up -d --build
 wait_for_health "$public_port" || die "应用未能在两分钟内通过宿主端口 $public_port 健康检查；请运行 docker compose logs app"
+public_fallback_ready=1
+if [[ -n $domain ]]; then rollback_armed=1; fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-  ufw allow "${public_port}/tcp" comment 'Moyu Canvas public port' >/dev/null
+  if [[ $public_bind == 0.0.0.0 ]]; then ufw allow "${public_port}/tcp" comment 'Moyu Canvas public port' >/dev/null; fi
   if [[ -n $domain ]]; then
     ufw allow 80/tcp comment 'Moyu Canvas HTTP' >/dev/null
     ufw allow 443/tcp comment 'Moyu Canvas HTTPS' >/dev/null
   fi
 fi
 
-manage_target=$(realpath -m -- "$install_dir/deploy/manage.sh")
-h_path=/usr/local/bin/h
-if [[ -e $h_path || -L $h_path ]]; then
-  [[ -L $h_path ]] || die "$h_path 已存在且不是本项目链接，拒绝覆盖"
-  [[ $(readlink -f -- "$h_path" 2>/dev/null || true) == "$manage_target" ]] || die "$h_path 已存在且不是本项目链接，拒绝覆盖"
-else
-  ln -s -- "$manage_target" "$h_path"
+check_h_path
+if [[ ! -e $h_path && ! -L $h_path ]]; then
+  ln -s -- "$expected_manage_target" "$h_path"
 fi
 
 if [[ -n $domain ]]; then
@@ -330,54 +525,49 @@ if [[ -n $domain ]]; then
   [[ -f $template ]] || die "缺少 Nginx 模板：$template"
   grep -q '__DOMAIN__' "$template" || die "Nginx 模板缺少 __DOMAIN__ 占位符"
   grep -q '__PUBLIC_PORT__' "$template" || die "Nginx 模板缺少 __PUBLIC_PORT__ 占位符"
-  site=/etc/nginx/sites-available/moyu-canvas
-  site_link=/etc/nginx/sites-enabled/moyu-canvas
-  site_backup=
-  site_existed=0
-  link_existed=0
-  link_target=
-  if [[ -f $site ]]; then
-    site_existed=1
-    site_backup=$(mktemp)
-    cp -a -- "$site" "$site_backup"
+  rollback_site=/etc/nginx/sites-available/moyu-canvas
+  rollback_site_link=/etc/nginx/sites-enabled/moyu-canvas
+  if [[ -f $rollback_site ]]; then
+    rollback_site_existed=1
+    rollback_site_backup=$(mktemp)
+    cp -a -- "$rollback_site" "$rollback_site_backup"
+    chmod 600 "$rollback_site_backup"
   fi
-  if [[ -L $site_link ]]; then
-    link_existed=1
-    link_target=$(readlink -- "$site_link")
-  elif [[ -e $site_link ]]; then
-    [[ -z $site_backup ]] || rm -f -- "$site_backup"
-    die "Nginx 启用路径已存在且不是符号链接：$site_link"
+  if [[ -L $rollback_site_link ]]; then
+    rollback_link_existed=1
+    rollback_link_target=$(readlink -- "$rollback_site_link")
+  elif [[ -e $rollback_site_link ]]; then
+    die "Nginx 启用路径已存在且不是符号链接：$rollback_site_link"
   fi
-  restore_nginx_site() {
-    if [[ $site_existed -eq 1 ]]; then cp -a -- "$site_backup" "$site"; else rm -f -- "$site"; fi
-    rm -f -- "$site_link"
-    if [[ $link_existed -eq 1 ]]; then ln -s -- "$link_target" "$site_link"; fi
-  }
+  rollback_site_captured=1
   nginx_tmp=$(mktemp)
-  sed -e "s|__DOMAIN__|$domain|g" -e "s|__PUBLIC_PORT__|$public_port|g" "$template" > "$nginx_tmp"
+  if [[ $preserve_domain_config -eq 1 && $rollback_site_existed -eq 1 ]]; then
+    sed -E "s|^[[:space:]]*proxy_pass[[:space:]]+http://127[.]0[.]0[.]1:[0-9]+;|        proxy_pass http://127.0.0.1:${public_port};|" \
+      "$rollback_site" > "$nginx_tmp"
+  elif [[ $preserve_domain_config -eq 1 && $old_tls -eq 1 ]]; then
+    rm -f -- "$nginx_tmp"
+    die "现有 HTTPS 部署缺少 Nginx 站点文件；请修复站点后重试，或显式提供 --domain 与 --email"
+  else
+    sed -e "s|__DOMAIN__|$domain|g" -e "s|__PUBLIC_PORT__|$public_port|g" "$template" > "$nginx_tmp"
+  fi
+  grep -q "proxy_pass http://127.0.0.1:${public_port};" "$nginx_tmp" || { rm -f -- "$nginx_tmp"; die "Nginx 代理端口更新失败"; }
   chmod 644 "$nginx_tmp"
-  mv -f -- "$nginx_tmp" "$site"
-  rm -f -- "$site_link"
-  ln -s -- "$site" "$site_link"
-  if ! nginx -t; then
-    restore_nginx_site
-    [[ -z $site_backup ]] || rm -f -- "$site_backup"
-    die "Nginx 配置校验失败，原配置已恢复"
+  mv -f -- "$nginx_tmp" "$rollback_site"
+  rm -f -- "$rollback_site_link"
+  ln -s -- "$rollback_site" "$rollback_site_link"
+  nginx -t || die "Nginx 配置校验失败"
+  systemctl enable --now nginx || die "Nginx 启动失败"
+  systemctl reload nginx || die "Nginx 重载失败"
+  if [[ $domain_explicit -eq 1 && $enable_tls -eq 1 ]]; then
+    certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$domain" \
+      || die "HTTPS 证书申请失败；请检查域名解析和 80/443 端口"
   fi
-  systemctl enable --now nginx
-  systemctl reload nginx
-  if [[ $enable_tls -eq 1 ]]; then
-    if ! certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$domain"; then
-      restore_nginx_site
-      nginx -t && systemctl reload nginx || true
-      [[ -z $site_backup ]] || rm -f -- "$site_backup"
-      die "HTTPS 证书申请失败；已尽量恢复原 Nginx 配置，请检查域名解析和 80/443 端口"
-    fi
-  fi
-  [[ -z $site_backup ]] || rm -f -- "$site_backup"
-  set_env_value MOYU_DOMAIN "$domain"
-  if [[ $enable_tls -eq 1 ]]; then set_env_value MOYU_TLS 1; else set_env_value MOYU_TLS 0; fi
 fi
+
+rollback_armed=0
+trap - EXIT INT TERM
+[[ -z $rollback_env_backup ]] || rm -f -- "$rollback_env_backup"
+[[ -z $rollback_site_backup ]] || rm -f -- "$rollback_site_backup"
 
 is_ipv4() {
   local value=$1 part

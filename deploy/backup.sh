@@ -32,6 +32,16 @@ wait_for_health() {
   return 1
 }
 
+validate_database_files() {
+  local directory=$1 sidecar
+  [[ -f "$directory/app.db" && ! -L "$directory/app.db" && -s "$directory/app.db" ]] \
+    || { echo "备份副本缺少非空且非符号链接的普通 app.db。" >&2; return 65; }
+  for sidecar in app.db-wal app.db-shm; do
+    [[ ! -e "$directory/$sidecar" || (! -L "$directory/$sidecar" && -f "$directory/$sidecar") ]] \
+      || { echo "备份副本中的 $sidecar 必须是普通文件且不能是符号链接。" >&2; return 65; }
+  done
+}
+
 requested_root=${1:-/srv/canvas-backups}
 if [[ $requested_root != /* ]]; then
   echo "备份根目录必须是项目目录外的绝对路径。" >&2
@@ -52,9 +62,16 @@ if ! mkdir -p -- "$backup_root" 2>/dev/null; then
   exit 73
 fi
 backup_root=$(cd "$backup_root" && pwd -P)
+case "$backup_root" in
+  "$project_root"|"$project_root"/*)
+    echo "备份根目录解析后位于项目目录内。" >&2
+    exit 64
+    ;;
+esac
 backup_dir="$backup_root/canvas-$(date +%Y%m%d-%H%M%S)-$$"
 mkdir "$backup_dir"
 app_stopped=0
+backup_valid=0
 
 cleanup() {
   status=$?
@@ -67,8 +84,10 @@ cleanup() {
       status=1
     fi
   fi
-  if [[ $status -ne 0 ]]; then
+  if [[ $status -ne 0 && $backup_valid -eq 0 ]]; then
     rm -rf -- "$backup_dir"
+  elif [[ $status -ne 0 ]]; then
+    echo "应用恢复失败，但已校验的备份保留在：$backup_dir" >&2
   fi
   exit "$status"
 }
@@ -79,8 +98,10 @@ trap 'exit 143' TERM
 app_stopped=1
 docker compose stop app
 docker compose cp -a app:/app/data/. "$backup_dir/"
+validate_database_files "$backup_dir"
 docker compose run --rm --no-deps -v "$backup_dir:/backup:ro" app \
   node server/check-db.js /backup/app.db
+backup_valid=1
 docker compose start app
 wait_for_health
 app_stopped=0

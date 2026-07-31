@@ -13,6 +13,7 @@ const clearedChildEnvironment = new Set([
   'JWT_SECRET', 'ADMIN_SETUP_TOKEN',
   'AI_BASE_URL', 'AI_API_KEY', 'AI_IMAGE_BASE_URL', 'AI_IMAGE_API_KEY',
   'AI_VIDEO_BASE_URL', 'AI_VIDEO_API_KEY', 'AI_VIDEO_MEDIA_ORIGINS',
+  'PUBLIC_BIND', 'MOYU_DOMAIN', 'PUBLIC_DOMAIN',
 ])
 const childEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !clearedChildEnvironment.has(key.toUpperCase())),
@@ -95,6 +96,7 @@ test('production environment example exposes current video and media settings', 
 test('public-port deployment and h management preserve the production contract', () => {
   const installer = readFileSync(join(root, 'deploy', 'install.sh'), 'utf8')
   const manager = readFileSync(join(root, 'deploy', 'manage.sh'), 'utf8')
+  const managerConfig = readFileSync(join(root, 'server', 'manage-config.js'), 'utf8')
   const backup = readFileSync(join(root, 'deploy', 'backup.sh'), 'utf8')
   const restore = readFileSync(join(root, 'deploy', 'restore.sh'), 'utf8')
   const compose = readFileSync(join(root, 'docker-compose.yml'), 'utf8')
@@ -108,6 +110,7 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(installer, /--bind/)
   assert.match(installer, /0\.0\.0\.0.*127\.0\.0\.1/)
   assert.match(installer, /validate_port/)
+  assert.match(installer, /域名模式必须使用 --bind 127\.0\.0\.1/)
   assert.match(installer, /if \[\[ -n \$domain \]\]/)
   assert.match(installer, /apt_packages=\(ca-certificates curl git openssl\)/)
   assert.match(installer, /certbot --nginx --non-interactive --agree-tos --redirect/)
@@ -117,6 +120,16 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(installer, /merge-base --is-ancestor HEAD FETCH_HEAD/)
   assert.match(installer, /merge --ff-only FETCH_HEAD/)
   assert.match(installer, /backup_deployment/)
+  assert.match(installer, /rollback_install/)
+  assert.match(installer, /git -C "\$install_dir" update-ref/)
+  assert.match(installer, /preserve_domain_config/)
+  assert.match(installer, /rollback_site_captured -eq 1/)
+  assert.match(installer, /! nginx -t \|\| ! systemctl reload nginx; then rollback_ok=1/)
+  assert.match(installer, /public_fallback_active/)
+  assert.match(installer, /回退地址使用未加密 HTTP/)
+  assert.match(installer, /keep_recovery_files/)
+  assert.match(installer, /chmod 600 "\$rollback_env_backup"/)
+  assert.match(installer, /chmod 600 "\$rollback_site_backup"/)
   assert.match(installer, /http:\/\/127\.0\.0\.1:\$\{port\}/)
   assert.match(installer, /\/usr\/local\/bin\/h/)
   assert.match(installer, /拒绝覆盖|not this project|not this project's command/)
@@ -124,26 +137,118 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(compose, /\$\{PUBLIC_BIND:-0\.0\.0\.0\}:\$\{PUBLIC_PORT:-3102\}:3102/)
   assert.match(envExample, /^PUBLIC_BIND=0\.0\.0\.0$/m)
   assert.match(envExample, /^PUBLIC_PORT=3102$/m)
+  assert.match(envExample, /^MOYU_DOMAIN=$/m)
+  assert.match(envExample, /^MOYU_TLS=0$/m)
+  assert.match(envExample, /^MOYU_BACKUP_ROOT=\/srv\/canvas-backups$/m)
 
   for (const script of [backup, restore]) {
     assert.match(script, /PUBLIC_PORT/)
     assert.match(script, /127\.0\.0\.1:\$\{public_port\}/)
     assert.doesNotMatch(script, /127\.0\.0\.1:3102\/api\/health/)
   }
+  assert.match(backup, /backup_root=\$\(cd "\$backup_root" && pwd -P\)\r?\ncase "\$backup_root" in/)
 
   for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_domain', 'configure_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
   }
   assert.match(manager, /read -r -s/)
-  assert.match(manager, /AI_API_KEY/)
-  assert.match(manager, /AI_VIDEO_API_KEY/)
+  assert.match(manager, /server\/manage-config\.js relay/)
+  assert.match(manager, /blank keeps current, type CLEAR to clear/)
+  assert.match(manager, /backup_root_path/)
+  assert.match(manager, /git rev-parse FETCH_HEAD/)
+  assert.match(manager, /git update-ref/)
+  assert.match(manager, /git read-tree --reset -u/)
+  assert.match(manager, /--force-recreate app/)
   assert.doesNotMatch(manager, /printf\s+\"\$key\"/)
   assert.match(manager, /__DOMAIN__/)
   assert.match(manager, /__PUBLIC_PORT__/)
+  assert.match(managerConfig, /createCipheriv\('aes-256-gcm'/)
+  assert.match(managerConfig, /ai_api_key_encrypted/)
+  assert.match(managerConfig, /ai_video_api_key_encrypted/)
+  assert.doesNotMatch(managerConfig, /console\.log\(.*key/i)
+  assert.match(restore, /! -L \"\$backup_dir\/app\.db\"/)
   assert.match(readme, /curl -fsSL https:\/\/github\.com\/bykedie\/huabu\/raw\/refs\/heads\/codex\/infinite-canvas\/deploy\/install\.sh/)
   assert.match(readme, /公网 IP|公网IP/)
   assert.match(readme, /HTTP.*未加密|未加密.*HTTP/)
   assert.match(readme, /管理命令|h/)
+})
+
+test('terminal relay maintenance migrates, encrypts and clears keys without disclosure', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ink-maintenance-'))
+  const databasePath = join(directory, 'test.db')
+  const legacyKey = 'synthetic-legacy-environment-key'
+  const replacementKey = 'synthetic-terminal-replacement-key'
+  const env = {
+    ...childEnvironment,
+    NODE_ENV: 'production',
+    DB_PATH: databasePath,
+    JWT_SECRET: secret,
+    ADMIN_SETUP_TOKEN: setupToken,
+    AI_API_KEY: legacyKey,
+  }
+  const run = (action, key = '') => spawnSync(process.execPath, ['server/manage-config.js', 'relay', 'text'], {
+    cwd: root, encoding: 'utf8', env,
+    input: Buffer.from(`https://relay.example/v1\0model-a,model-b\0${action}\0${key}\0`),
+  })
+  try {
+    const initialized = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      "const { db } = await import('./server/db.js'); db.prepare('UPDATE app_settings SET ai_base_url=?,ai_models=?,ai_api_key_managed=0 WHERE id=1').run('https://legacy-relay.example/v1','[\"legacy-model\"]'); db.close()",
+    ], { cwd: root, encoding: 'utf8', env })
+    assert.equal(initialized.status, 0, initialized.stderr)
+
+    const migrated = run('keep')
+    assert.equal(migrated.status, 0, migrated.stderr)
+    let database = new DatabaseSync(databasePath)
+    let row = database.prepare('SELECT ai_base_url,ai_api_key_encrypted,ai_api_key_managed,ai_models FROM app_settings WHERE id=1').get()
+    assert.equal(row.ai_base_url, 'https://relay.example/v1')
+    assert.equal(row.ai_models, '["model-a","model-b"]')
+    assert.equal(typeof row.ai_api_key_encrypted, 'string')
+    assert.equal(row.ai_api_key_encrypted.includes(legacyKey), false)
+    assert.equal(Number(row.ai_api_key_managed), 1)
+    database.close()
+
+    const cleared = run('clear')
+    assert.equal(cleared.status, 0, cleared.stderr)
+    const keptClear = run('keep')
+    assert.equal(keptClear.status, 0, keptClear.stderr)
+    database = new DatabaseSync(databasePath)
+    row = database.prepare('SELECT ai_api_key_encrypted,ai_api_key_managed FROM app_settings WHERE id=1').get()
+    assert.equal(row.ai_api_key_encrypted, null)
+    assert.equal(Number(row.ai_api_key_managed), 1)
+    database.close()
+
+    const credentialUrl = spawnSync(process.execPath, ['server/manage-config.js', 'relay', 'text'], {
+      cwd: root, encoding: 'utf8', env,
+      input: Buffer.from('https://user:password@relay.example/v1\0model-a\0keep\0\0'),
+    })
+    assert.notEqual(credentialUrl.status, 0)
+    assert.match(credentialUrl.stderr, /credentials/)
+    assert.equal((credentialUrl.stdout + credentialUrl.stderr).includes('user:password'), false)
+
+    const replaced = run('set', replacementKey)
+    assert.equal(replaced.status, 0, replaced.stderr)
+    database = new DatabaseSync(databasePath)
+    row = database.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get()
+    assert.equal(typeof row.ai_api_key_encrypted, 'string')
+    assert.equal(row.ai_api_key_encrypted.includes(replacementKey), false)
+    database.close()
+
+    for (const result of [migrated, cleared, keptClear, replaced]) {
+      const output = result.stdout + result.stderr
+      assert.equal(output.includes(legacyKey), false)
+      assert.equal(output.includes(replacementKey), false)
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('proxy trust is enabled only for loopback domain mode', () => {
+  const check = "const app=(await import('./server/app.js')).default; process.exit(app.get('trust proxy')===1?0:1)"
+  const domainMode = runApp({ PUBLIC_BIND: '127.0.0.1', MOYU_DOMAIN: 'canvas.example.com' }, check)
+  assert.equal(domainMode.status, 0, domainMode.stderr)
+  const loopbackWithoutDomain = runApp({ PUBLIC_BIND: '127.0.0.1' }, check)
+  assert.notEqual(loopbackWithoutDomain.status, 0)
 })
 
 test('database startup migrates existing generations without losing rows', () => {
