@@ -37,12 +37,15 @@ When an idea has been accepted for implementation:
 | Establish clean localization baseline | complete | Worktree restored clean; deployment-focused suite passed 9/9 |
 | Localize the `h` management experience | complete | Main menu, help, status, prompts, warnings, errors, results and relay-maintenance output are Chinese; safety tokens remain unchanged |
 | Run complete local verification | complete | Build passed; full tests 23/23; focused deployment tests 9/9; four Node and four Bash syntax checks plus diff check passed |
-| Commit, push and deploy localization | in progress | Must fast-forward production through the validated backup/update path without deleting data or backups |
-| Start the first post-localization canvas audit round | pending | Prioritize reproducible user-facing, data-safety or workflow defects |
+| Commit, push and deploy localization | complete | `666339e` was pushed and production was fast-forwarded through the validated backup/update path; localized `h --help`, container health and `/api/health` passed |
+| Audit the first post-localization canvas round | complete | Static evidence confirmed the fixed-position context menu could leave the viewport at the right and bottom edges |
+| Keep canvas and node menus inside the viewport | complete | `4aae778` measures the rendered menu, clamps it to an 8px viewport margin, repositions on resize/content-size changes, and preserves the original click coordinates for node insertion |
+| Run automated and isolated browser acceptance | complete | Build and 23/23 tests passed; desktop, resized and `240x220` short-viewport geometry checks passed with no browser console warning/error; the isolated database, tab, viewport override and port `3114` process were removed |
+| Deliver the first canvas iteration | complete | The implementation and synchronized recovery documents are committed for normal push to `origin/codex/infinite-canvas` |
 
 ### Recovery Instructions
 
-Read `git status`, the current diff and `STATUS.md`. Finish the current row before starting another. Never delete `.env`, Docker volumes, databases or `/srv/canvas-backups`. Preserve the real browser draft. Continue iteration until the user explicitly says to pause.
+Read `git status`, the current diff and `STATUS.md`. The next action is a fresh evidence-driven canvas audit round; do not reopen the accepted context-menu fix without a verified regression. Never delete `.env`, Docker volumes, databases or `/srv/canvas-backups`. Preserve the real browser draft. Continue iteration until the user explicitly says to pause.
 
 ## Completed Goal: Production Backup Permission Compatibility
 

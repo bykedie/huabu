@@ -3,20 +3,20 @@
 ## Current
 
 - Active goal: fully localize the `h` operations panel, deploy and verify it, then continuously audit and improve the canvas in bounded rounds until the user explicitly pauses.
-- Current round: the `h` main menu, help, status, prompts, warnings, errors, results and downstream relay-maintenance output are localized. `CLEAR`, `RESTORE`, `SHOW`, menu numbering, command routing and safety behavior remain unchanged. Local verification passed: build, full tests 23/23, focused deployment tests 9/9, four Node syntax checks, four Bash syntax checks and `git diff --check`.
-- Worker policy for this goal: the user permits up to 10 concurrent subagents. All 10 existing Infinite Canvas collaboration seats are active on bounded read-only audit tasks with `gpt-5.6-sol` and `Ultra`; none owns or may modify an implementation file in the current audit round. The commander alone owns integration edits.
+- Current round: the first post-localization canvas audit found and fixed a reproducible right/bottom viewport collision in both canvas and node context menus. The rendered menu is measured and clamped to an 8px margin, remeasured on content-size changes, and repositioned on window resize; the original right-click coordinates remain unchanged for adding nodes at the clicked canvas position.
+- Worker policy for this goal: the user permits up to 10 concurrent subagents, but one worker at a time remains the default. One `gpt-5.6-sol`/`Ultra` collaboration seat was assigned only `src/App.tsx`; it encountered a system error after adding the hook import, so the commander completed and verified the bounded implementation. No collaboration seat is currently editing project files.
 - Confirmed root cause: `docker compose cp` created the expected flat backup layout, but `umask 077` made the host backup directory `0700 root:root`; the default `node` validation container could not traverse the bind-mounted `/backup` directory and misreported the existing database as missing.
 - Accepted fix: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions remain `0700`.
-- Production now runs clean commit `e261aeb`; the app is `running/healthy`, binds `0.0.0.0:3102`, and returns a healthy response on the host endpoint.
+- Production was last verified on clean commit `666339e`; the localized `h` panel, container health and host `/api/health` passed. The context-menu fix is delivered to GitHub separately and has not been claimed as deployed in this round.
 - The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
 - Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
 - Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
 - Text and video server contracts and billing remain independent from user image keys. The operations drawer contains separate text and video relay administration; the old shared image configuration remains absent.
 - Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
-- The isolated acceptance tab was closed, its temporary viewport was reset, processes `22464` (`3103`) and `23452` (`3113`) were stopped only after command-line and listener verification, and `.codex-acceptance` was removed. Only the real `3102/5182` listeners remain.
+- The current isolated acceptance used port `3114` and a database under `.codex-acceptance`; the tab was closed, the temporary viewport was reset, PID `17096` was command-line verified and stopped, port `3114` was confirmed closed, and the temporary directory was removed. The real `3102/5182` draft was not opened or modified.
 - Collaboration workers use `gpt-5.6-sol` with `Ultra` reasoning. Activate one worker at a time by default; the user may explicitly approve higher concurrency for a particular task, up to the runtime limit. Only the current commander thread is pinned; child/collaboration threads remain unpinned.
-- The latest accepted production fix was committed and pushed on `codex/infinite-canvas` as `e261aeb` (`fix: validate private deployment backups`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
-- Browser acceptance, document synchronization, isolated-environment cleanup, and the fresh final gate rerun are complete.
+- The context-menu implementation is committed as `4aae778` (`fix: keep canvas menus within viewport`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
+- Browser acceptance, isolated-environment cleanup and the fresh automated gates are complete; the next round must begin from new evidence rather than reopening this accepted fix.
 
 ## Completed
 
@@ -38,16 +38,17 @@
 - Enforced `127.0.0.1` binding for existing domain deployments, ignored forwarded headers in public mode and trusted one loopback Nginx hop in domain mode.
 - Rejected backup/restore database symlinks and rechecked canonical backup roots after creation; validated backups survive service-recovery failure.
 - Fixed private deployment backup validation without relaxing permissions: one-shot database maintenance runs as root, restored files return to the application owner, and both update-time and manual production backups now pass.
+- Kept both canvas and node context menus inside the usable viewport, including live window resizing and short viewports that require internal menu scrolling, without changing the canvas insertion anchor.
 
 ## Next
 
-1. Review and commit the localized management surface and its tests, then push normally.
-2. Fast-forward production through the validated backup/update path and verify Git state, localized `h --help`, container health and `/api/health` without deleting data or backups.
-3. Begin the first evidence-driven canvas audit round and continue iterating until the user pauses.
+1. Begin the next evidence-driven canvas audit round and choose one reproducible, bounded defect.
+2. Preserve single-file ownership where possible, then run focused checks, full gates and isolated browser acceptance for user-facing changes.
+3. Continue recording each accepted round in `GOALS.md` and this file until the user explicitly pauses.
 
 ## Blockers
 
-- No subagent scheduling blocker remains; 10 existing collaboration seats are running bounded read-only audits and have been instructed to return concise evidence before the next implementation round.
+- No implementation, test, browser-acceptance or delivery blocker remains for the context-menu round.
 - Public-IP reachability may still depend on the Alibaba Cloud security group, which was not inspectable from the instance because no RAM role or Alibaba CLI was available.
 - The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
 
@@ -74,3 +75,7 @@
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
 - GitHub delivery: commit `7c48c59` pushed normally to `origin/codex/infinite-canvas` (push response advanced `467ce07..7c48c59`).
 - Current goal gates: npm.cmd run build passed; npm.cmd test passed 23/23; node --test tests/production-config.test.mjs passed 9/9; bash -n deploy/install.sh deploy/manage.sh deploy/backup.sh deploy/restore.sh passed; four Node syntax checks passed; git diff --check passed with existing LF-to-CRLF warnings.
+- Context-menu round gates on 2026-08-01: `npm.cmd run build` passed; `npm.cmd test` passed 23/23; four Node syntax checks and `git diff --check` passed.
+- Context-menu desktop acceptance: at `1280x720`, a right-click at `1274,714` produced a `176x264` menu at `x=1096,y=448`, leaving exactly 8px at the right and bottom; resizing the open menu to `900x500` moved it to `x=716,y=228`, again leaving 8px.
+- Context-menu node acceptance: at `900x500`, the two-item node menu measured `176x79` at `x=716,y=413`, leaving 8px at the right and bottom.
+- Context-menu short-viewport acceptance: at `240x220`, the seven-item menu stayed inside `x=56..232` and `y=8..212`; `scrollHeight=262`, `clientHeight=202`, and page `scrollWidth=clientWidth=240`. Browser warning/error logs were empty.
