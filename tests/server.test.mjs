@@ -13,13 +13,15 @@ process.env.MAX_CANVASES_PER_USER = '3'
 process.env.MAX_CANVAS_BYTES = '2048'
 process.env.MAX_USER_STORAGE_BYTES = '3072'
 process.env.REGISTRATION_RATE_LIMIT = '100'
+process.env.AI_TIMEOUT_MS = '1000'
 process.env.AI_IMAGE_MAX_RESPONSE_BYTES = '2048'
 process.env.AI_IMAGE_MODELS = 'GPT-image-2'
 process.env.AI_VIDEO_MAX_RESPONSE_BYTES = '2048'
 process.env.MAX_USER_MEDIA_BYTES = '2048'
 process.env.NODE_ENV = 'test'
 delete process.env.AI_BASE_URL
-delete process.env.AI_API_KEY
+process.env.AI_API_KEY = 'forbidden-text-environment-key'
+process.env.AI_VIDEO_API_KEY = 'forbidden-video-environment-key'
 delete process.env.AI_VIDEO_MEDIA_ORIGINS
 delete process.env.PUBLIC_BIND
 process.env.AI_IMAGE_BASE_URL = 'https://image-relay.example.test/v1'
@@ -27,6 +29,20 @@ process.env.AI_IMAGE_API_KEY = 'forbidden-image-environment-key'
 
 const { default: app, estimatePromptTokens } = await import('../server/app.js')
 const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
+
+function setRelaySettings(kind, baseUrl, models, points = 7) {
+  if (kind === 'text') {
+    db.prepare('UPDATE app_settings SET ai_base_url=?,ai_models=? WHERE id=1').run(baseUrl, JSON.stringify(models))
+    return
+  }
+  if (kind === 'image') {
+    db.prepare('UPDATE app_settings SET ai_image_base_url=?,ai_image_models=? WHERE id=1').run(baseUrl, JSON.stringify(models))
+    return
+  }
+  db.prepare('UPDATE app_settings SET ai_video_base_url=?,ai_video_models=?,ai_video_points=? WHERE id=1')
+    .run(baseUrl, JSON.stringify(models), points)
+}
+
 const server = app.listen(0, '127.0.0.1')
 await new Promise((resolve) => server.once('listening', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api`
@@ -47,6 +63,14 @@ async function register(name, email) {
   })
   assert.equal(result.status, 201)
   return result.body
+}
+
+async function saveRelayKey(token, kind, apiKey) {
+  const result = await request(`/me/${kind}-key`, {
+    token, method: 'PUT', body: JSON.stringify({ apiKey }),
+  })
+  assert.deepEqual(result, { status: 200, body: { configured: true } })
+  return result
 }
 
 test('AI prompt estimation includes per-message protocol overhead', () => {
@@ -208,9 +232,11 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(wallet.body.balance, beforeAI)
   assert.equal(wallet.body.ledger.length, ledgerBeforeUnconfiguredAI)
 
+  const memberTextKey = 'test-member-text-relay-key'
+  const memberImageKey = 'test-member-image-key'
   const relay = (await import('node:http')).createServer((req, res) => {
     assert.equal(req.url, '/v1/chat/completions')
-    assert.equal(req.headers.authorization, 'Bearer test-relay-key')
+    assert.equal(req.headers.authorization, `Bearer ${memberTextKey}`)
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({
       choices: [{ message: { content: '这是一条模拟中转站回复' } }],
@@ -221,41 +247,47 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   await new Promise((resolve) => relay.once('listening', resolve))
   const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
   const forbiddenConfig = await request('/admin/ai-config', {
-    token: member.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: 'not-allowed', models: ['gpt-4o-mini'] }),
+    token: member.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['gpt-4o-mini'] }),
   })
   assert.equal(forbiddenConfig.status, 403)
   const invalidConfig = await request('/admin/ai-config', {
-    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'file:///tmp/relay', apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'file:///tmp/relay', models: ['gpt-4o-mini'] }),
   })
   assert.equal(invalidConfig.status, 400)
   const credentialConfig = await request('/admin/ai-config', {
-    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', models: ['gpt-4o-mini'] }),
   })
   assert.equal(credentialConfig.status, 400)
   assert.match(credentialConfig.body.error, /用户名或密码/)
   assert.equal(JSON.stringify(credentialConfig.body).includes('user:password'), false)
+  const sharedKeyRejected = await request('/admin/ai-config', {
+    token: admin.token, method: 'PUT',
+    body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['gpt-4o-mini'], apiKey: 'forbidden-shared-text-key' }),
+  })
+  assert.equal(sharedKeyRejected.status, 400)
   const savedConfig = await request('/admin/ai-config', {
-    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: `${relayBaseUrl}/`, apiKey: 'test-relay-key', models: ['gpt-4o-mini'] }),
+    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: `${relayBaseUrl}/`, models: ['gpt-4o-mini'] }),
   })
   assert.equal(savedConfig.status, 200)
-  assert.deepEqual(savedConfig.body, { configured: true, keyConfigured: true, baseUrl: relayBaseUrl, models: ['gpt-4o-mini'], source: 'database' })
-  assert.equal(JSON.stringify(savedConfig.body).includes('test-relay-key'), false)
-  const storedConfig = db.prepare('SELECT ai_base_url,ai_api_key_encrypted FROM app_settings WHERE id=1').get()
+  assert.deepEqual(savedConfig.body, { baseUrl: relayBaseUrl, models: ['gpt-4o-mini'], source: 'database' })
+  assert.equal(JSON.stringify(savedConfig.body).includes(memberTextKey), false)
+  const legacyTextKey = 'forbidden-legacy-shared-text-key'
+  await saveRelayKey(admin.token, 'text', legacyTextKey)
+  const legacyTextCiphertext = db.prepare('SELECT text_api_key_encrypted FROM users WHERE id=?').get(admin.user.id).text_api_key_encrypted
+  db.prepare('UPDATE app_settings SET ai_api_key_encrypted=? WHERE id=1').run(legacyTextCiphertext)
+  const storedConfig = db.prepare('SELECT ai_base_url,ai_models FROM app_settings WHERE id=1').get()
   assert.equal(storedConfig.ai_base_url, relayBaseUrl)
-  assert.equal(storedConfig.ai_api_key_encrypted.includes('test-relay-key'), false)
   const preservedConfig = await request('/admin/ai-config', {
     token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['gpt-4o-mini'] }),
   })
   assert.equal(preservedConfig.status, 200)
-  assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, storedConfig.ai_api_key_encrypted)
-  const configAudit = db.prepare("SELECT details FROM admin_audit WHERE action='ai_config.update' ORDER BY rowid DESC LIMIT 1").get()
-  assert.equal(configAudit.details.includes('test-relay-key'), false)
-  const textUserImageKey = 'test-text-user-image-key'
-  assert.equal((await request('/me/image-key', {
-    token: member.token, method: 'PUT', body: JSON.stringify({ apiKey: textUserImageKey }),
-  })).status, 200)
+  assert.equal(db.prepare('SELECT ai_models FROM app_settings WHERE id=1').get().ai_models, storedConfig.ai_models)
+  const configAudit = db.prepare("SELECT details FROM admin_audit WHERE action='text_config.update' ORDER BY rowid DESC LIMIT 1").get()
+  assert.equal(configAudit.details.includes(memberTextKey), false)
+  await saveRelayKey(member.token, 'text', memberTextKey)
+  await saveRelayKey(member.token, 'image', memberImageKey)
   const textUserImageCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted
-  assert.equal(textUserImageCiphertext.includes(textUserImageKey), false)
+  assert.equal(textUserImageCiphertext.includes(memberImageKey), false)
   const successPayload = {
     requestKey: 'test-request-success-0001',
     messages: [{ role: 'user', content: '请生成一个测试结果' }],
@@ -303,18 +335,6 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const recoveryEntries = db.prepare('SELECT amount FROM ledger WHERE reference=? ORDER BY rowid').all(interruptedId)
   assert.deepEqual(recoveryEntries.map((entry) => Number(entry.amount)), [-7, 7])
 
-  process.env.AI_API_KEY = 'environment-key-must-not-override-clear'
-  const clearedConfig = await request('/admin/ai-config', {
-    token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: '', clearApiKey: true, models: ['gpt-4o-mini'] }),
-  })
-  assert.equal(clearedConfig.status, 200)
-  assert.equal(clearedConfig.body.configured, false)
-  assert.equal(clearedConfig.body.keyConfigured, false)
-  assert.equal(clearedConfig.body.source, 'database')
-  assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, null)
-  db.prepare('UPDATE app_settings SET ai_base_url=NULL,ai_api_key_encrypted=NULL,ai_api_key_managed=0,ai_models=NULL WHERE id=1').run()
-  process.env.AI_API_KEY = 'test-relay-key'
-
   let releaseDelayedRelay
   const delayedRelayReady = new Promise((resolve) => { releaseDelayedRelay = resolve })
   const delayedRelay = (await import('node:http')).createServer(async (_req, res) => {
@@ -324,7 +344,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   delayedRelay.listen(0, '127.0.0.1')
   await new Promise((resolve) => delayedRelay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${delayedRelay.address().port}/v1`
+  setRelaySettings('text', `http://127.0.0.1:${delayedRelay.address().port}/v1`, ['gpt-4o-mini'])
   const overlapKey = 'recovery-overlap-request-0001'
   const overlapCall = request('/ai/chat', {
     token: member.token,
@@ -355,7 +375,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   malformedRelay.listen(0, '127.0.0.1')
   await new Promise((resolve) => malformedRelay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${malformedRelay.address().port}/v1`
+  setRelaySettings('text', `http://127.0.0.1:${malformedRelay.address().port}/v1`, ['gpt-4o-mini'])
   const beforeMalformed = (await request('/me', { token: member.token })).body.user.balance
   const malformed = await request('/ai/chat', {
     token: member.token,
@@ -372,7 +392,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   invalidJsonRelay.listen(0, '127.0.0.1')
   await new Promise((resolve) => invalidJsonRelay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${invalidJsonRelay.address().port}/v1`
+  setRelaySettings('text', `http://127.0.0.1:${invalidJsonRelay.address().port}/v1`, ['gpt-4o-mini'])
   const beforeInvalidJson = (await request('/me', { token: member.token })).body.user.balance
   const invalidJson = await request('/ai/chat', {
     token: member.token,
@@ -383,7 +403,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(invalidJson.body.error, '中转站返回了无效 JSON')
   assert.equal((await request('/me', { token: member.token })).body.user.balance, beforeInvalidJson)
   await new Promise((resolve, reject) => invalidJsonRelay.close((error) => error ? reject(error) : resolve()))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
+  setRelaySettings('text', relayBaseUrl, ['gpt-4o-mini'])
   const retried = await request('/ai/chat', {
     token: member.token,
     method: 'POST',
@@ -393,6 +413,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal(retried.body.cached, false)
   assert.equal(retried.body.content, '这是一条模拟中转站回复')
   assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted, textUserImageCiphertext)
+  assert.equal(db.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get().ai_api_key_encrypted, legacyTextCiphertext)
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 
@@ -430,9 +451,11 @@ test('asset library preserves ownership and shares the account storage quota', a
 
 test('AI billing applies local minimums when relay reports zero usage', async () => {
   const member = await register('Billing Minimum User', 'billing-minimum@example.com')
+  const textKey = 'billing-minimum-user-text-key'
   const content = 'x'.repeat(1200)
   let relayCalls = 0
-  const relay = (await import('node:http')).createServer((_req, res) => {
+  const relay = (await import('node:http')).createServer((req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${textKey}`)
     relayCalls += 1
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({
@@ -442,8 +465,8 @@ test('AI billing applies local minimums when relay reports zero usage', async ()
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
-  process.env.AI_API_KEY = 'test-relay-key'
+  setRelaySettings('text', `http://127.0.0.1:${relay.address().port}/v1`, ['gpt-4o-mini'])
+  await saveRelayKey(member.token, 'text', textKey)
 
   try {
     const before = (await request('/me', { token: member.token })).body.user.balance
@@ -466,8 +489,6 @@ test('AI billing applies local minimums when relay reports zero usage', async ()
     assert.equal((await request('/me', { token: member.token })).body.user.balance, afterFirst)
   } finally {
     await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
-    delete process.env.AI_BASE_URL
-    delete process.env.AI_API_KEY
   }
 })
 
@@ -579,15 +600,17 @@ test('admin passwords are encrypted for root status without leaking through APIs
 
 test('AI relay response size is bounded and reserved points are refunded', async () => {
   const member = await register('响应限制用户', 'response-limit@example.com')
-  const relay = (await import('node:http')).createServer((_req, res) => {
+  const textKey = 'response-limit-user-text-key'
+  const relay = (await import('node:http')).createServer((req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${textKey}`)
     res.setHeader('content-type', 'application/json')
     res.setHeader('content-length', String(2 * 1024 * 1024 + 1))
     res.end()
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
-  process.env.AI_API_KEY = 'test-relay-key'
+  setRelaySettings('text', `http://127.0.0.1:${relay.address().port}/v1`, ['gpt-4o-mini'])
+  await saveRelayKey(member.token, 'text', textKey)
   const before = member.user.balance
   const result = await request('/ai/chat', {
     token: member.token,
@@ -602,7 +625,9 @@ test('AI relay response size is bounded and reserved points are refunded', async
 
 test('AI relay chunked response size is bounded and reserved points are refunded', async () => {
   const member = await register('分块响应用户', 'chunked-response-limit@example.com')
-  const relay = (await import('node:http')).createServer((_req, res) => {
+  const textKey = 'chunked-response-user-text-key'
+  const relay = (await import('node:http')).createServer((req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${textKey}`)
     res.setHeader('content-type', 'application/json')
     const chunk = Buffer.alloc(256 * 1024, 65)
     for (let index = 0; index < 9; index += 1) res.write(chunk)
@@ -610,8 +635,8 @@ test('AI relay chunked response size is bounded and reserved points are refunded
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  process.env.AI_BASE_URL = `http://127.0.0.1:${relay.address().port}/v1`
-  process.env.AI_API_KEY = 'test-relay-key'
+  setRelaySettings('text', `http://127.0.0.1:${relay.address().port}/v1`, ['gpt-4o-mini'])
+  await saveRelayKey(member.token, 'text', textKey)
   const before = member.user.balance
   const result = await request('/ai/chat', {
     token: member.token,
@@ -624,14 +649,300 @@ test('AI relay chunked response size is bounded and reserved points are refunded
   await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
 })
 
+test('three user relay keys and text model discovery remain isolated and secret-free', async () => {
+  const admin = await register('Relay Contract Admin', 'relay-contract-admin@example.com')
+  const noKeyAdmin = await register('Relay No Key Admin', 'relay-no-key-admin@example.com')
+  const owner = await register('Relay Key Owner', 'relay-key-owner@example.com')
+  const other = await register('Relay Key Other', 'relay-key-other@example.com')
+  const legacy = await register('Relay Legacy Owner', 'relay-legacy-owner@example.com')
+  db.prepare("UPDATE users SET role='admin' WHERE id IN (?,?)").run(admin.user.id, noKeyAdmin.user.id)
+
+  const keys = {
+    adminText: 'synthetic-admin-text-key',
+    legacyText: 'synthetic-legacy-shared-text-key',
+    legacyVideo: 'synthetic-legacy-shared-video-key',
+    ownerText: 'synthetic-owner-text-key',
+    ownerImage: 'synthetic-owner-image-key',
+    ownerVideo: 'synthetic-owner-video-key',
+    replacementText: 'synthetic-owner-text-key-v2',
+    replacementImage: 'synthetic-owner-image-key-v2',
+    replacementVideo: 'synthetic-owner-video-key-v2',
+    otherText: 'synthetic-other-text-key',
+  }
+  const sensitive = Object.values(keys)
+  const relayCalls = []
+  const http = await import('node:http')
+  const relay = http.createServer(async (req, res) => {
+    const authorization = req.headers.authorization || ''
+    relayCalls.push({ method: req.method, url: req.url, authorization })
+    if (req.url === '/bad-json/models') {
+      res.setHeader('content-type', 'application/json')
+      res.end('{invalid')
+      return
+    }
+    if (req.url === '/oversized/models') {
+      res.setHeader('content-type', 'application/json')
+      res.setHeader('content-length', String(256 * 1024 + 1))
+      res.end()
+      return
+    }
+    if (req.url === '/failure/models') {
+      res.statusCode = 503
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ error: 'synthetic upstream failure' }))
+      return
+    }
+    if (req.url === '/timeout/models') return
+    if (req.method === 'GET' && req.url === '/v1/models') {
+      assert.equal(authorization, `Bearer ${keys.adminText}`)
+      const generated = Array.from({ length: 205 }, (_, index) => ({ id: `model-${String(index).padStart(3, '0')}` }))
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ data: [
+        { id: ' text-open ' }, { id: 'text-second' }, { id: 'text-open' },
+        { id: '' }, { id: 'x'.repeat(101) }, { id: keys.adminText }, ...generated,
+      ] }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+      assert.ok([keys.ownerText, keys.replacementText, keys.otherText].some((key) => authorization === `Bearer ${key}`))
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      assert.ok([keys.ownerImage, keys.replacementImage].some((key) => authorization === `Bearer ${key}`))
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ data: [{ url: 'https://images.example.test/synthetic.png' }] }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/v1/videos') {
+      assert.ok([keys.ownerVideo, keys.replacementVideo].some((key) => authorization === `Bearer ${key}`))
+      for await (const _chunk of req) { /* drain multipart request */ }
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ id: 'synthetic-video-task', status: 'queued' }))
+      return
+    }
+    res.statusCode = 404
+    res.end()
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
+  const observable = []
+  const capturedErrors = []
+  const originalConsoleError = console.error
+  console.error = (...values) => { capturedErrors.push(values.map(String).join(' ')) }
+
+  try {
+    await saveRelayKey(admin.token, 'text', keys.adminText)
+    await saveRelayKey(legacy.token, 'text', keys.legacyText)
+    await saveRelayKey(legacy.token, 'video', keys.legacyVideo)
+    const legacyCiphertexts = db.prepare('SELECT text_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(legacy.user.id)
+    db.prepare('UPDATE app_settings SET ai_api_key_encrypted=?,ai_video_api_key_encrypted=? WHERE id=1')
+      .run(legacyCiphertexts.text_api_key_encrypted, legacyCiphertexts.video_api_key_encrypted)
+
+    const strictBodies = {
+      text: { baseUrl: relayBaseUrl, models: ['text-open'] },
+      image: { baseUrl: relayBaseUrl, models: ['image-open'] },
+      video: { baseUrl: relayBaseUrl, models: ['video-open'], points: 5 },
+    }
+    for (const [kind, body] of Object.entries(strictBodies)) {
+      for (const forbidden of [{ apiKey: `synthetic-admin-${kind}-shared-key` }, { clearApiKey: true }]) {
+        const rejected = await request(`/admin/${kind}-config`, {
+          token: admin.token, method: 'PUT', body: JSON.stringify({ ...body, ...forbidden }),
+        })
+        assert.equal(rejected.status, 400)
+        observable.push(rejected.body)
+      }
+    }
+    assert.equal((await request('/admin/text-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, models: Array.from({ length: 51 }, (_, index) => `model-${index}`) }),
+    })).status, 400)
+    assert.equal((await request('/admin/text-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['x'.repeat(101)] }),
+    })).status, 400)
+
+    const savedTextConfig = await request('/admin/text-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['text-open', 'text-second', 'text-open'] }),
+    })
+    const savedImageConfig = await request('/admin/image-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['image-open'] }),
+    })
+    const savedVideoConfig = await request('/admin/video-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['video-open'], points: 5 }),
+    })
+    assert.deepEqual(savedTextConfig, { status: 200, body: { baseUrl: relayBaseUrl, models: ['text-open', 'text-second'], source: 'database' } })
+    assert.deepEqual(savedImageConfig, { status: 200, body: { baseUrl: relayBaseUrl, models: ['image-open'], source: 'database' } })
+    assert.deepEqual(savedVideoConfig, { status: 200, body: { baseUrl: relayBaseUrl, models: ['video-open'], source: 'database', points: 5 } })
+    observable.push(savedTextConfig.body, savedImageConfig.body, savedVideoConfig.body)
+    assert.deepEqual({ ...db.prepare('SELECT ai_api_key_encrypted,ai_video_api_key_encrypted FROM app_settings WHERE id=1').get() }, {
+      ai_api_key_encrypted: legacyCiphertexts.text_api_key_encrypted,
+      ai_video_api_key_encrypted: legacyCiphertexts.video_api_key_encrypted,
+    })
+
+    const initialMe = await request('/me', { token: owner.token })
+    const initialConfig = await request('/config', { token: owner.token })
+    assert.deepEqual({
+      text: initialMe.body.user.textApiKeyConfigured,
+      image: initialMe.body.user.imageApiKeyConfigured,
+      video: initialMe.body.user.videoApiKeyConfigured,
+    }, { text: false, image: false, video: false })
+    assert.deepEqual(Object.keys(initialMe.body.user).sort(), [
+      'balance', 'email', 'id', 'imageApiKeyConfigured', 'name', 'role', 'textApiKeyConfigured', 'videoApiKeyConfigured',
+    ])
+    assert.deepEqual({
+      text: initialConfig.body.textConfigured,
+      image: initialConfig.body.imageConfigured,
+      video: initialConfig.body.videoConfigured,
+    }, { text: false, image: false, video: false })
+    assert.deepEqual(Object.keys(initialConfig.body).sort(), [
+      'aiModel', 'centsPerPoint', 'imageConfigured', 'imageModels', 'textConfigured', 'textModels',
+      'topupInstructions', 'videoConfigured', 'videoModels', 'videoPoints',
+    ])
+    for (const body of [initialMe.body, initialConfig.body]) {
+      assert.doesNotMatch(JSON.stringify(body), /api_key|encrypted|endpoint|baseUrl/i)
+      observable.push(body)
+    }
+
+    for (const [kind, model] of [['text', 'text-open'], ['image', 'image-open'], ['video', 'video-open']]) {
+      const keyTest = await request(`/me/${kind}-key/test`, {
+        token: owner.token, method: 'POST', body: JSON.stringify({ model }),
+      })
+      assert.equal(keyTest.status, 400)
+      observable.push(keyTest.body)
+    }
+    const noKeyCalls = [
+      request('/ai/chat', { token: owner.token, method: 'POST', body: JSON.stringify({ requestKey: 'relay-no-key-text', model: 'text-open', messages: [{ role: 'user', content: 'no key' }], maxTokens: 16 }) }),
+      request('/ai/image', { token: owner.token, method: 'POST', body: JSON.stringify({ requestKey: 'relay-no-key-image', model: 'image-open', prompt: 'no key', size: '1024x1024' }) }),
+      request('/ai/video', { token: owner.token, method: 'POST', body: JSON.stringify({ requestKey: 'relay-no-key-video', model: 'video-open', prompt: 'no key', size: '1280x720', seconds: 1 }) }),
+    ]
+    for (const result of await Promise.all(noKeyCalls)) {
+      assert.equal(result.status, 400)
+      observable.push(result.body)
+    }
+
+    for (const [kind, apiKey] of [['text', keys.ownerText], ['image', keys.ownerImage], ['video', keys.ownerVideo]]) {
+      observable.push((await saveRelayKey(owner.token, kind, apiKey)).body)
+    }
+    const firstCiphertexts = { ...db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(owner.user.id) }
+    assert.equal(Object.values(firstCiphertexts).every((value) => typeof value === 'string' && value.split('.').length === 3), true)
+    for (const [ciphertext, plaintext] of Object.values(firstCiphertexts).map((value, index) => [value, [keys.ownerText, keys.ownerImage, keys.ownerVideo][index]])) {
+      assert.equal(ciphertext.includes(plaintext), false)
+    }
+    assert.deepEqual({ ...db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(other.user.id) }, {
+      text_api_key_encrypted: null, image_api_key_encrypted: null, video_api_key_encrypted: null,
+    })
+
+    for (const [kind, model] of [['text', 'text-open'], ['image', 'image-open'], ['video', 'video-open']]) {
+      const tested = await request(`/me/${kind}-key/test`, {
+        token: owner.token, method: 'POST', body: JSON.stringify({ model }),
+      })
+      assert.deepEqual(tested, { status: 200, body: { ok: true, status: 200, model } })
+      observable.push(tested.body)
+    }
+    for (const [kind, apiKey] of [['text', keys.replacementText], ['image', keys.replacementImage], ['video', keys.replacementVideo]]) {
+      observable.push((await saveRelayKey(owner.token, kind, apiKey)).body)
+    }
+    const replacementCiphertexts = { ...db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(owner.user.id) }
+    for (const column of Object.keys(firstCiphertexts)) assert.notEqual(replacementCiphertexts[column], firstCiphertexts[column])
+    for (const [kind, model] of [['text', 'text-open'], ['image', 'image-open'], ['video', 'video-open']]) {
+      const tested = await request(`/me/${kind}-key/test`, { token: owner.token, method: 'POST', body: JSON.stringify({ model }) })
+      assert.equal(tested.status, 200)
+      observable.push(tested.body)
+    }
+    await saveRelayKey(other.token, 'text', keys.otherText)
+    assert.deepEqual({ ...db.prepare('SELECT image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(other.user.id) }, {
+      image_api_key_encrypted: null, video_api_key_encrypted: null,
+    })
+    assert.deepEqual({ ...db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(owner.user.id) }, replacementCiphertexts)
+
+    const discovered = await request('/admin/text-config/models', { token: admin.token, method: 'POST', body: JSON.stringify({}) })
+    assert.equal(discovered.status, 200)
+    assert.equal(discovered.body.models.length, 200)
+    assert.deepEqual(discovered.body.models.slice(0, 3), ['text-open', 'text-second', 'model-000'])
+    assert.equal(discovered.body.models.filter((model) => model === 'text-open').length, 1)
+    assert.equal(discovered.body.models.some((model) => model.length > 100 || model.includes(keys.adminText)), false)
+    observable.push(discovered.body)
+
+    const discoveryCases = [
+      [noKeyAdmin.token, '/admin/text-config/models', {}, 400],
+      [other.token, '/admin/text-config/models', {}, 403],
+      [admin.token, '/admin/text-config/models', { baseUrl: 'http://user:password@127.0.0.1/v1' }, 400],
+      [admin.token, '/admin/text-config/models', { baseUrl: `http://127.0.0.1:${relay.address().port}/bad-json` }, 502],
+      [admin.token, '/admin/text-config/models', { baseUrl: `http://127.0.0.1:${relay.address().port}/oversized` }, 502],
+      [admin.token, '/admin/text-config/models', { baseUrl: `http://127.0.0.1:${relay.address().port}/failure` }, 502],
+      [admin.token, '/admin/text-config/models', { baseUrl: `http://127.0.0.1:${relay.address().port}/timeout` }, 504],
+    ]
+    for (const [token, path, body, status] of discoveryCases) {
+      const result = await request(path, { token, method: 'POST', body: JSON.stringify(body) })
+      assert.equal(result.status, status)
+      observable.push(result.body)
+    }
+
+    const closedModel = await request('/ai/chat', {
+      token: owner.token, method: 'POST',
+      body: JSON.stringify({ requestKey: 'relay-closed-text-model', model: 'not-open', messages: [{ role: 'user', content: 'blocked model' }], maxTokens: 16 }),
+    })
+    assert.deepEqual(closedModel, { status: 400, body: { error: '该模型未开放' } })
+    observable.push(closedModel.body)
+
+    const ownerMe = await request('/me', { token: owner.token })
+    const ownerConfig = await request('/config', { token: owner.token })
+    assert.deepEqual({
+      text: ownerMe.body.user.textApiKeyConfigured, image: ownerMe.body.user.imageApiKeyConfigured, video: ownerMe.body.user.videoApiKeyConfigured,
+    }, { text: true, image: true, video: true })
+    assert.deepEqual(ownerConfig.body.textModels, ['text-open', 'text-second'])
+    assert.deepEqual(ownerConfig.body.imageModels, ['image-open'])
+    assert.deepEqual(ownerConfig.body.videoModels, ['video-open'])
+    assert.deepEqual({ text: ownerConfig.body.textConfigured, image: ownerConfig.body.imageConfigured, video: ownerConfig.body.videoConfigured }, { text: true, image: true, video: true })
+    assert.doesNotMatch(JSON.stringify(ownerConfig.body), /endpoint|baseUrl|apiKey|api_key|encrypted/i)
+    observable.push(ownerMe.body, ownerConfig.body)
+
+    const overview = await request('/admin/overview', { token: admin.token })
+    assert.equal(overview.status, 200)
+    assert.deepEqual(overview.body.text, { baseUrl: relayBaseUrl, models: ['text-open', 'text-second'], source: 'database' })
+    assert.deepEqual(overview.body.image, { baseUrl: relayBaseUrl, models: ['image-open'], source: 'database' })
+    assert.deepEqual(overview.body.video, { baseUrl: relayBaseUrl, models: ['video-open'], source: 'database', points: 5 })
+    assert.doesNotMatch(JSON.stringify(overview.body), /apiKey|api_key|keyConfigured|encrypted/i)
+    observable.push(overview.body)
+
+    for (const kind of ['text', 'image', 'video']) {
+      const cleared = await request(`/me/${kind}-key`, { token: owner.token, method: 'DELETE' })
+      assert.deepEqual(cleared, { status: 200, body: { configured: false } })
+      observable.push(cleared.body)
+    }
+    assert.deepEqual({ ...db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(owner.user.id) }, {
+      text_api_key_encrypted: null, image_api_key_encrypted: null, video_api_key_encrypted: null,
+    })
+    const clearedMe = await request('/me', { token: owner.token })
+    assert.deepEqual({
+      text: clearedMe.body.user.textApiKeyConfigured, image: clearedMe.body.user.imageApiKeyConfigured, video: clearedMe.body.user.videoApiKeyConfigured,
+    }, { text: false, image: false, video: false })
+    assert.equal((await request('/me', { token: other.token })).body.user.textApiKeyConfigured, true)
+    observable.push(clearedMe.body)
+
+    const auditDetails = db.prepare("SELECT details FROM admin_audit WHERE action IN ('text_config.update','image_config.update','video_config.update')").all().map((row) => row.details)
+    const observableText = JSON.stringify(observable) + auditDetails.join('') + capturedErrors.join('')
+    for (const value of [...sensitive, ...Object.values(firstCiphertexts), ...Object.values(replacementCiphertexts)]) {
+      assert.equal(observableText.includes(value), false)
+    }
+    assert.equal(relayCalls.some((call) => [
+      keys.legacyText, keys.legacyVideo, process.env.AI_API_KEY, process.env.AI_VIDEO_API_KEY,
+    ].some((key) => call.authorization === `Bearer ${key}`)), false)
+  } finally {
+    console.error = originalConsoleError
+    await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+  }
+})
+
 test('video relay configuration and billing remain independent from user image keys', async () => {
   const admin = await register('视频配置管理员', 'video-relay-admin@example.com')
   const member = await register('视频生成用户', 'video-relay-member@example.com')
   db.prepare("UPDATE users SET role='admin' WHERE id=?").run(admin.user.id)
   const memberImageKey = 'test-video-user-image-key'
-  assert.equal((await request('/me/image-key', {
-    token: member.token, method: 'PUT', body: JSON.stringify({ apiKey: memberImageKey }),
-  })).status, 200)
+  await saveRelayKey(member.token, 'image', memberImageKey)
   const memberImageCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted
   assert.equal(memberImageCiphertext.includes(memberImageKey), false)
 
@@ -642,6 +953,11 @@ test('video relay configuration and billing remain independent from user image k
   let externalMediaAuthorizationPresent = false
   let unsafeTargetFetches = 0
   const videoKey = 'test-video-relay-key'
+  const legacyVideoKey = 'forbidden-legacy-shared-video-key'
+  await saveRelayKey(member.token, 'video', videoKey)
+  await saveRelayKey(admin.token, 'video', legacyVideoKey)
+  const legacyVideoCiphertext = db.prepare('SELECT video_api_key_encrypted FROM users WHERE id=?').get(admin.user.id).video_api_key_encrypted
+  db.prepare('UPDATE app_settings SET ai_video_api_key_encrypted=? WHERE id=1').run(legacyVideoCiphertext)
   const externalMedia = (await import('node:http')).createServer((req, res) => {
     externalMediaCalls += 1
     externalMediaAuthorizationPresent ||= Boolean(req.headers.authorization)
@@ -757,37 +1073,44 @@ test('video relay configuration and billing remain independent from user image k
   try {
     const forbidden = await request('/admin/video-config', {
       token: member.token, method: 'PUT',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: videoKey, models: ['test-video-model'], points: 7 }),
+      body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['test-video-model'], points: 7 }),
     })
     assert.equal(forbidden.status, 403)
 
     const credentialConfig = await request('/admin/video-config', {
       token: admin.token, method: 'PUT',
-      body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', apiKey: videoKey, models: ['test-video-model'], points: 7 }),
+      body: JSON.stringify({ baseUrl: 'http://user:password@127.0.0.1/v1', models: ['test-video-model'], points: 7 }),
     })
     assert.equal(credentialConfig.status, 400)
     assert.match(credentialConfig.body.error, /用户名或密码/)
     assert.equal(JSON.stringify(credentialConfig.body).includes('user:password'), false)
+    const sharedKeyRejected = await request('/admin/video-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['test-video-model'], points: 7, apiKey: 'forbidden-shared-video-key' }),
+    })
+    assert.equal(sharedKeyRejected.status, 400)
 
     const saved = await request('/admin/video-config', {
       token: admin.token, method: 'PUT',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, apiKey: videoKey, models: ['test-video-model'], points: 7 }),
+      body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['test-video-model'], points: 7 }),
     })
     assert.deepEqual(saved, {
       status: 200,
-      body: { configured: true, keyConfigured: true, baseUrl: relayBaseUrl, models: ['test-video-model'], source: 'database', points: 7 },
+      body: { baseUrl: relayBaseUrl, models: ['test-video-model'], source: 'database', points: 7 },
     })
     assert.equal(JSON.stringify(saved.body).includes(videoKey), false)
-    const stored = db.prepare('SELECT ai_video_api_key_encrypted FROM app_settings WHERE id=1').get().ai_video_api_key_encrypted
-    assert.equal(stored.includes(videoKey), false)
+    assert.equal(db.prepare('SELECT ai_video_api_key_encrypted FROM app_settings WHERE id=1').get().ai_video_api_key_encrypted, legacyVideoCiphertext)
     const audit = db.prepare("SELECT details FROM admin_audit WHERE action='video_config.update' ORDER BY rowid DESC LIMIT 1").get()
     assert.equal(audit.details.includes(videoKey), false)
+    assert.equal(audit.details.includes(legacyVideoKey), false)
 
     const config = await request('/config', { token: member.token })
     assert.deepEqual(config.body.videoModels, ['test-video-model'])
     assert.equal(config.body.videoPoints, 7)
-    assert.equal(config.body.imageEndpoint, 'https://image-relay.example.test/v1/')
     assert.equal(config.body.imageConfigured, true)
+    assert.equal(config.body.videoConfigured, true)
+    assert.equal('imageEndpoint' in config.body, false)
+    assert.equal(JSON.stringify(config.body).includes(relayBaseUrl), false)
 
     const walletBefore = await request('/wallet', { token: member.token })
     const payload = {
@@ -942,11 +1265,205 @@ test('video relay configuration and billing remain independent from user image k
     assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(unsafePollCreated.body.id).count, 1)
     assert.equal(unsafeTargetFetches, 0)
     assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(member.user.id).image_api_key_encrypted, memberImageCiphertext)
+    assert.equal(db.prepare('SELECT ai_video_api_key_encrypted FROM app_settings WHERE id=1').get().ai_video_api_key_encrypted, legacyVideoCiphertext)
   } finally {
     globalThis.fetch = fetchBeforeVideoSsrf
     delete process.env.AI_VIDEO_MEDIA_ORIGINS
     await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
     await new Promise((resolve, reject) => externalMedia.close((error) => error ? reject(error) : resolve()))
+  }
+})
+
+test('video upstream errors cannot reflect the current user key into observable data', async () => {
+  const member = await register('Video Reflection User', 'video-reflection@example.com')
+  const videoKey = 'synthetic-video-reflection-key+/=?&'
+  const model = 'reflection-video-model'
+  const points = 9
+  let createCalls = 0
+  const relay = (await import('node:http')).createServer(async (req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${videoKey}`)
+    res.setHeader('content-type', 'application/json')
+    if (req.method === 'POST' && req.url === '/v1/videos') {
+      createCalls += 1
+      for await (const _chunk of req) { /* drain multipart request */ }
+      if (createCalls === 1) {
+        res.statusCode = 500
+        res.end(JSON.stringify({ error: { message: `create failed: ${videoKey}` } }))
+        return
+      }
+      if (createCalls === 2) {
+        res.end(JSON.stringify({ id: 'reflection-poll-task', status: 'queued' }))
+        return
+      }
+      if (createCalls === 3) {
+        res.end(JSON.stringify({ id: 'reflection-download-task', status: 'queued' }))
+        return
+      }
+    }
+    if (req.method === 'GET' && req.url === '/v1/videos/reflection-poll-task') {
+      res.end(JSON.stringify({ id: 'reflection-poll-task', status: 'failed', error: { message: `poll failed: ${encodeURIComponent(videoKey)}` } }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/v1/videos/reflection-download-task') {
+      res.end(JSON.stringify({ id: 'reflection-download-task', status: 'completed' }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/v1/videos/reflection-download-task/content') {
+      res.statusCode = 502
+      res.end(JSON.stringify({ error: { message: `download failed: ${videoKey}` } }))
+      return
+    }
+    res.statusCode = 404
+    res.end(JSON.stringify({ error: 'not found' }))
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  setRelaySettings('video', `http://127.0.0.1:${relay.address().port}/v1`, [model], points)
+  await saveRelayKey(member.token, 'video', videoKey)
+  const requestOptions = { token: member.token, headers: { 'x-forwarded-for': '198.51.100.240' } }
+  const responses = []
+  const capturedErrors = []
+  const originalConsoleError = console.error
+  console.error = (...values) => { capturedErrors.push(values.map(String).join(' ')) }
+
+  try {
+    const startingBalance = (await request('/me', requestOptions)).body.user.balance
+    const payload = { model, prompt: 'synthetic reflection test', size: '1280x720', seconds: 1 }
+
+    const createFailure = await request('/ai/video', {
+      ...requestOptions, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-reflection-create' }),
+    })
+    assert.equal(createFailure.status, 502)
+    responses.push(createFailure.body)
+    assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance)
+    const createGeneration = db.prepare('SELECT id,status,reserved FROM generations WHERE request_key=?').get('video-reflection-create')
+    assert.deepEqual({ status: createGeneration.status, reserved: Number(createGeneration.reserved) }, { status: 'failed', reserved: points })
+    assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=? ORDER BY rowid').all(createGeneration.id).map((row) => ({ ...row, amount: Number(row.amount) })), [
+      { kind: 'ai_video_reserve', amount: -points },
+      { kind: 'ai_video_refund', amount: points },
+    ])
+
+    const pollCreated = await request('/ai/video', {
+      ...requestOptions, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-reflection-poll' }),
+    })
+    assert.equal(pollCreated.status, 202)
+    responses.push(pollCreated.body)
+    assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance - points)
+    const pollFailure = await request(`/ai/video/${pollCreated.body.id}`, requestOptions)
+    assert.equal(pollFailure.status, 502)
+    responses.push(pollFailure.body)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(pollCreated.body.id).status, 'failed')
+    assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance)
+    assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=? ORDER BY rowid').all(pollCreated.body.id).map((row) => ({ ...row, amount: Number(row.amount) })), [
+      { kind: 'ai_video_reserve', amount: -points },
+      { kind: 'ai_video_refund', amount: points },
+    ])
+    const pollReplay = await request(`/ai/video/${pollCreated.body.id}`, requestOptions)
+    assert.equal(pollReplay.status, 409)
+    responses.push(pollReplay.body)
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM ledger WHERE reference=?').get(pollCreated.body.id).count, 2)
+
+    const downloadCreated = await request('/ai/video', {
+      ...requestOptions, method: 'POST',
+      body: JSON.stringify({ ...payload, requestKey: 'video-reflection-download' }),
+    })
+    assert.equal(downloadCreated.status, 202)
+    responses.push(downloadCreated.body)
+    assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance - points)
+    const downloadFailure = await request(`/ai/video/${downloadCreated.body.id}`, requestOptions)
+    assert.equal(downloadFailure.status, 502)
+    responses.push(downloadFailure.body)
+    assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(downloadCreated.body.id).status, 'pending')
+    assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance - points)
+    assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=? ORDER BY rowid').all(downloadCreated.body.id).map((row) => ({ ...row, amount: Number(row.amount) })), [
+      { kind: 'ai_video_reserve', amount: -points },
+    ])
+
+    const databaseObservable = JSON.stringify({
+      generations: db.prepare('SELECT request_key,model,reserved,charged,status,response FROM generations WHERE user_id=? AND request_key LIKE ? ORDER BY request_key').all(member.user.id, 'video-reflection-%'),
+      ledger: db.prepare('SELECT kind,amount,balance_after,reference,note FROM ledger WHERE user_id=? AND reference IN (?,?,?) ORDER BY rowid').all(member.user.id, createGeneration.id, pollCreated.body.id, downloadCreated.body.id),
+      audit: db.prepare('SELECT action,target_id,details FROM admin_audit ORDER BY rowid').all(),
+    })
+    for (const observable of [JSON.stringify(responses), capturedErrors.join('\n'), databaseObservable]) {
+      for (const secret of [videoKey, encodeURIComponent(videoKey)]) assert.equal(observable.includes(secret), false)
+    }
+  } finally {
+    console.error = originalConsoleError
+    await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
+  }
+})
+
+test('text success payloads cannot reflect the current user key into observable data', async () => {
+  const member = await register('Text Reflection User', 'text-reflection@example.com')
+  const textKey = 'synthetic-text-reflection-key+/=?&'
+  const encodedTextKey = encodeURIComponent(textKey)
+  const model = 'reflection-text-model'
+  let relayCalls = 0
+  const relay = (await import('node:http')).createServer(async (req, res) => {
+    assert.equal(req.method, 'POST')
+    assert.equal(req.url, '/v1/chat/completions')
+    assert.equal(req.headers.authorization, `Bearer ${textKey}`)
+    for await (const _chunk of req) { /* drain JSON request */ }
+    relayCalls += 1
+    res.setHeader('content-type', 'application/json')
+    if (relayCalls === 1) {
+      res.end(JSON.stringify({
+        choices: [{ message: { content: `content reflected ${textKey}` } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      return
+    }
+    res.end(JSON.stringify({
+      choices: [{ message: { content: 'safe content' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, diagnostics: { detail: `usage reflected ${encodedTextKey}` } },
+    }))
+  })
+  relay.listen(0, '127.0.0.1')
+  await new Promise((resolve) => relay.once('listening', resolve))
+  setRelaySettings('text', `http://127.0.0.1:${relay.address().port}/v1`, [model])
+  await saveRelayKey(member.token, 'text', textKey)
+  const requestOptions = { token: member.token, headers: { 'x-forwarded-for': '198.51.100.241' } }
+  const responses = []
+  const capturedErrors = []
+  const originalConsoleError = console.error
+  console.error = (...values) => { capturedErrors.push(values.map(String).join(' ')) }
+
+  try {
+    const startingBalance = (await request('/me', requestOptions)).body.user.balance
+    assert.equal((await request('/me', requestOptions)).body.user.textApiKeyConfigured, true)
+    for (const requestKey of ['text-reflection-content', 'text-reflection-usage']) {
+      const result = await request('/ai/chat', {
+        ...requestOptions, method: 'POST',
+        body: JSON.stringify({ requestKey, model, messages: [{ role: 'user', content: 'synthetic reflection test' }], maxTokens: 128 }),
+      })
+      assert.equal(result.status, 502)
+      responses.push(result.body)
+      assert.equal((await request('/me', requestOptions)).body.user.balance, startingBalance)
+      const generation = db.prepare('SELECT id,reserved,charged,status,response FROM generations WHERE request_key=?').get(requestKey)
+      assert.equal(generation.status, 'failed')
+      assert.equal(generation.response, null)
+      assert.ok(Number(generation.reserved) > 0)
+      assert.deepEqual(db.prepare('SELECT kind,amount FROM ledger WHERE reference=? ORDER BY rowid').all(generation.id).map((row) => ({ ...row, amount: Number(row.amount) })), [
+        { kind: 'ai_reserve', amount: -Number(generation.reserved) },
+        { kind: 'ai_refund', amount: Number(generation.reserved) },
+      ])
+    }
+
+    assert.equal(relayCalls, 2)
+    const databaseObservable = JSON.stringify({
+      user: db.prepare('SELECT text_api_key_encrypted FROM users WHERE id=?').get(member.user.id),
+      generations: db.prepare('SELECT request_key,model,reserved,charged,status,response FROM generations WHERE user_id=? AND request_key LIKE ? ORDER BY request_key').all(member.user.id, 'text-reflection-%'),
+      ledger: db.prepare("SELECT kind,amount,balance_after,reference,note FROM ledger WHERE user_id=? AND reference IN (SELECT id FROM generations WHERE user_id=? AND request_key LIKE ?) ORDER BY rowid").all(member.user.id, member.user.id, 'text-reflection-%'),
+      audit: db.prepare('SELECT action,target_id,details FROM admin_audit ORDER BY rowid').all(),
+    })
+    for (const observable of [JSON.stringify(responses), capturedErrors.join('\n'), databaseObservable]) {
+      for (const secret of [textKey, encodedTextKey]) assert.equal(observable.includes(secret), false)
+    }
+  } finally {
+    console.error = originalConsoleError
+    await new Promise((resolve, reject) => relay.close((error) => error ? reject(error) : resolve()))
   }
 })
 
@@ -1000,7 +1517,7 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     })).status, 200)
     const legacySharedCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(legacyShared.user.id).image_api_key_encrypted
     db.prepare('UPDATE app_settings SET ai_image_base_url=?,ai_image_api_key_encrypted=?,ai_image_models=?,ai_image_points=? WHERE id=1')
-      .run('https://forbidden-legacy-image.example/v1', legacySharedCiphertext, JSON.stringify(['forbidden-legacy-image-model']), 999)
+      .run('https://image-relay.example.test/v1', legacySharedCiphertext, JSON.stringify(['GPT-image-2']), 999)
     const owner = await register('用户密钥甲', 'user-image-key-a@example.com')
     const other = await register('用户密钥乙', 'user-image-key-b@example.com')
     const ownerKey = 'test-user-a-image-key'
@@ -1021,9 +1538,7 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const savedOwner = await request('/me/image-key', {
       token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: ownerKey }),
     })
-    assert.deepEqual(savedOwner, {
-      status: 200, body: { configured: true, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
-    })
+    assert.deepEqual(savedOwner, { status: 200, body: { configured: true } })
     const ownerCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
     assert.equal(ownerCiphertext.split('.').length, 3)
     assert.equal(ownerCiphertext.includes(ownerKey), false)
@@ -1041,16 +1556,17 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const replacedOwner = await request('/me/image-key', {
       token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: replacementKey }),
     })
-    assert.deepEqual(replacedOwner, {
-      status: 200, body: { configured: true, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
-    })
+    assert.deepEqual(replacedOwner, { status: 200, body: { configured: true } })
     const replacementCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
     assert.notEqual(replacementCiphertext, ownerCiphertext)
     assert.equal(replacementCiphertext.includes(ownerKey), false)
     assert.equal(replacementCiphertext.includes(replacementKey), false)
 
     assert.equal((await request('/me', { token: other.token })).body.user.imageApiKeyConfigured, false)
-    assert.equal((await request('/config', { token: other.token })).body.imageConfigured, false)
+    const otherConfigBefore = await request('/config', { token: other.token })
+    assert.equal(otherConfigBefore.body.imageConfigured, false)
+    assert.equal('imageEndpoint' in otherConfigBefore.body, false)
+    assert.equal(JSON.stringify(otherConfigBefore.body).includes('image-relay.example.test'), false)
     assert.equal((await request('/me/image-key', {
       token: other.token, method: 'PUT', body: JSON.stringify({ apiKey: otherKey }),
     })).status, 200)
@@ -1125,9 +1641,7 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     })
 
     const cleared = await request('/me/image-key', { token: owner.token, method: 'DELETE' })
-    assert.deepEqual(cleared, {
-      status: 200, body: { configured: false, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
-    })
+    assert.deepEqual(cleared, { status: 200, body: { configured: false } })
     assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted, null)
     assert.equal((await request('/me', { token: owner.token })).body.user.imageApiKeyConfigured, false)
     const callsBeforeClearedReplay = calls.length
@@ -1155,9 +1669,9 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' })
     assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024', imageName: 'reference-1.png' })
     assert.deepEqual({ ...db.prepare('SELECT ai_image_base_url,ai_image_api_key_encrypted,ai_image_models,ai_image_points FROM app_settings WHERE id=1').get() }, {
-      ai_image_base_url: 'https://forbidden-legacy-image.example/v1',
+      ai_image_base_url: 'https://image-relay.example.test/v1',
       ai_image_api_key_encrypted: legacySharedCiphertext,
-      ai_image_models: JSON.stringify(['forbidden-legacy-image-model']),
+      ai_image_models: JSON.stringify(['GPT-image-2']),
       ai_image_points: 999,
     })
     assert.equal(calls.some((call) => call.authorization === `Bearer ${legacySharedKey}`), false)

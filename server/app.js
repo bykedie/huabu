@@ -43,6 +43,7 @@ export const videoPendingRecoveryMs = numberSetting('AI_VIDEO_PENDING_RECOVERY_M
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
 const aiImageMaxResponseBytes = numberSetting('AI_IMAGE_MAX_RESPONSE_BYTES', 12 * 1024 * 1024, { min: 1024, max: 50 * 1024 * 1024, integer: true })
 const aiVideoMaxResponseBytes = numberSetting('AI_VIDEO_MAX_RESPONSE_BYTES', 64 * 1024 * 1024, { min: 1024, max: 256 * 1024 * 1024, integer: true })
+const modelDiscoveryMaxResponseBytes = Math.min(aiMaxResponseBytes, 256 * 1024)
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
 const maxCanvasesPerUser = numberSetting('MAX_CANVASES_PER_USER', 100, { min: 1, max: 10000, integer: true })
 const maxAssetsPerUser = numberSetting('MAX_ASSETS_PER_USER', 200, { min: 1, max: 10000, integer: true })
@@ -51,10 +52,10 @@ const maxCanvasBytes = numberSetting('MAX_CANVAS_BYTES', 2 * 1024 * 1024, { min:
 const maxUserStorageBytes = numberSetting('MAX_USER_STORAGE_BYTES', 20 * 1024 * 1024, { min: maxCanvasBytes, max: 1024 * 1024 * 1024, integer: true })
 const registrationRateLimit = numberSetting('REGISTRATION_RATE_LIMIT', 5, { min: 1, max: 1000, integer: true })
 const topupInstructions = (process.env.TOPUP_INSTRUCTIONS || '').trim().slice(0, 1000)
-const envModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
-if (!envModels.length) throw new Error('AI_MODELS 至少需要一个模型')
-const imageModels = (process.env.AI_IMAGE_MODELS || 'GPT-image-2').split(',').map((item) => item.trim()).filter(Boolean)
-if (!imageModels.length) throw new Error('AI_IMAGE_MODELS 至少需要一个模型')
+const envTextModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item) => item.trim()).filter(Boolean)
+if (!envTextModels.length || envTextModels.length > 50 || envTextModels.some((model) => model.length > 100)) throw new Error('AI_MODELS 配置无效')
+const envImageModels = (process.env.AI_IMAGE_MODELS || 'GPT-image-2').split(',').map((item) => item.trim()).filter(Boolean)
+if (!envImageModels.length || envImageModels.length > 50 || envImageModels.some((model) => model.length > 100)) throw new Error('AI_IMAGE_MODELS 配置无效')
 recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs)
 // Trust only the local reverse proxy. Public clients cannot opt into forwarded
 // headers, while domain and dual-access modes still retain the real client IP.
@@ -97,8 +98,7 @@ const normalizeRelayBaseUrl = (value, label, status = 500) => {
   if (url.search || url.hash) throw fail(status, label + '地址不能包含查询参数或片段')
   return url.toString().replace(/\/+$/, '')
 }
-const imageRelayBaseUrl = normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站')
-const imageRelayEndpoint = imageRelayBaseUrl + '/'
+normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站')
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
 const adminLoginKey = createHash('sha256').update(`admin-login:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
@@ -119,25 +119,55 @@ const encryptAdminPassword = (value) => {
   const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
   return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64')).join('.')
 }
+const relayKinds = {
+  text: {
+    label: '文字中转站', baseColumn: 'ai_base_url', modelsColumn: 'ai_models', keyColumn: 'text_api_key_encrypted',
+    environmentBaseUrl: () => process.env.AI_BASE_URL || '', environmentModels: () => envTextModels,
+  },
+  image: {
+    label: '图片中转站', baseColumn: 'ai_image_base_url', modelsColumn: 'ai_image_models', keyColumn: 'image_api_key_encrypted',
+    environmentBaseUrl: () => process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', environmentModels: () => envImageModels,
+  },
+  video: {
+    label: '视频中转站', baseColumn: 'ai_video_base_url', modelsColumn: 'ai_video_models', keyColumn: 'video_api_key_encrypted',
+    environmentBaseUrl: () => process.env.AI_VIDEO_BASE_URL || '',
+    environmentModels: () => {
+      const models = (process.env.AI_VIDEO_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean)
+      if (models.length > 50 || models.some((model) => model.length > 100)) throw fail(500, 'AI_VIDEO_MODELS 配置无效')
+      return models
+    },
+  },
+}
+const relayKind = (kind) => {
+  const definition = relayKinds[kind]
+  if (!definition) throw new Error('Unsupported relay kind')
+  return definition
+}
+const normalizeModels = (values) => [...new Set(values.map((value) => String(value).trim()).filter(Boolean))]
+const parseStoredModels = (value, label) => {
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed) || parsed.some((model) => typeof model !== 'string')) throw new Error('invalid models')
+    const models = normalizeModels(parsed)
+    if (!models.length || models.length > 50 || models.some((model) => model.length > 100)) throw new Error('invalid models')
+    return models
+  } catch { throw fail(500, `已保存的${label}模型配置无效，请管理员重新设置`) }
+}
 const relaySettings = (kind = 'text') => {
-  const row = db.prepare('SELECT * FROM app_settings WHERE id=1').get()
-  const video = kind === 'video'
-  const encrypted = video ? row?.ai_video_api_key_encrypted : row?.ai_api_key_encrypted
-  const keyManaged = Number(video ? row?.ai_video_api_key_managed : row?.ai_api_key_managed) === 1
-  const storedBaseUrl = video ? row?.ai_video_base_url : row?.ai_base_url
-  const storedModels = video ? row?.ai_video_models : row?.ai_models
-  const databaseConfigured = keyManaged || [storedBaseUrl, encrypted, storedModels].some((value) => value !== null && value !== undefined)
-  let storedKey = ''
-  if (encrypted) { try { storedKey = decryptSetting(encrypted) } catch { throw fail(500, '已保存的中转站密钥无法解密，请管理员重新设置') } }
-  const rawBaseUrl = databaseConfigured
-    ? (storedBaseUrl || '')
-    : (video ? process.env.AI_VIDEO_BASE_URL : process.env.AI_BASE_URL) || ''
-  const baseUrl = normalizeRelayBaseUrl(rawBaseUrl, video ? '视频中转站' : '中转站')
-  const envKey = ((video ? process.env.AI_VIDEO_API_KEY : process.env.AI_API_KEY) || '').trim()
+  const definition = relayKind(kind)
+  const row = db.prepare(`SELECT ${definition.baseColumn} base_url,${definition.modelsColumn} models FROM app_settings WHERE id=1`).get()
+  const storedBaseUrl = row?.base_url
+  const storedModels = row?.models
+  const databaseConfigured = storedBaseUrl !== null && storedBaseUrl !== undefined
+    || storedModels !== null && storedModels !== undefined
+  const baseUrl = normalizeRelayBaseUrl(
+    databaseConfigured ? (storedBaseUrl || '') : definition.environmentBaseUrl(),
+    definition.label,
+  )
   const models = databaseConfigured
-    ? (storedModels ? JSON.parse(storedModels) : [])
-    : (video ? (process.env.AI_VIDEO_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean) : envModels)
-  return { baseUrl, apiKey: keyManaged ? storedKey : (storedKey || envKey || ''), models, source: databaseConfigured ? 'database' : 'environment' }
+    ? (storedModels ? parseStoredModels(storedModels, definition.label) : [])
+    : normalizeModels(definition.environmentModels())
+  return { baseUrl, models, source: databaseConfigured ? 'database' : 'environment' }
 }
 const videoPointCost = () => {
   const value = Number(db.prepare('SELECT ai_video_points FROM app_settings WHERE id=1').get()?.ai_video_points)
@@ -150,13 +180,16 @@ const publicUser = (row) => ({
   name: row.name,
   role: row.role,
   balance: Number(row.balance),
+  textApiKeyConfigured: Boolean(row.text_api_key_encrypted),
   imageApiKeyConfigured: Boolean(row.image_api_key_encrypted),
+  videoApiKeyConfigured: Boolean(row.video_api_key_encrypted),
 })
-const userImageApiKey = (userId) => {
-  const encrypted = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(userId)?.image_api_key_encrypted
+const userRelayApiKey = (userId, kind) => {
+  const definition = relayKind(kind)
+  const encrypted = db.prepare(`SELECT ${definition.keyColumn} value FROM users WHERE id=?`).get(userId)?.value
   if (!encrypted) return ''
   try { return decryptSetting(encrypted) }
-  catch { throw fail(500, '已保存的生图 API 密钥无法解密，请重新设置') }
+  catch { throw fail(500, `已保存的${definition.label} API 密钥无法解密，请重新设置`) }
 }
 const sign = (user) => jwt.sign(
   { sub: user.id, role: user.role, sv: Number(user.session_version) || 0 },
@@ -224,6 +257,160 @@ const imageUpstreamFailure = (status) => {
   if (status === 404) return fail(502, '中转站未开放所选生图模型或接口')
   return fail(502, `生图中转站返回 ${status}`)
 }
+const relayRequestError = (error, timeoutMessage, connectionMessage, controller) => {
+  if (error?.status) return error
+  const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError' || controller.signal.aborted
+  return fail(timedOut ? 504 : 502, timedOut ? timeoutMessage : connectionMessage)
+}
+const relaySecretVariants = (secret) => {
+  if (typeof secret !== 'string' || !secret) return []
+  const variants = new Set([secret])
+  try {
+    const encoded = encodeURIComponent(secret)
+    variants.add(encoded)
+    variants.add(encoded.replace(/%20/g, '+'))
+  } catch {}
+  return [...variants].filter(Boolean).map((value) => value.replace(/%[0-9a-f]{2}/gi, (sequence) => sequence.toUpperCase()))
+}
+const containsRelaySecret = (value, secret) => {
+  const variants = relaySecretVariants(secret)
+  if (!variants.length) return false
+  const seen = new WeakSet()
+  const comparableStrings = (candidate) => {
+    const values = new Set()
+    let current = candidate
+    for (let depth = 0; depth < 3; depth += 1) {
+      values.add(current.replace(/%[0-9a-f]{2}/gi, (sequence) => sequence.toUpperCase()))
+      const decoded = current.replace(/(?:%[0-9a-f]{2})+/gi, (sequence) => {
+        try { return decodeURIComponent(sequence) } catch { return sequence }
+      })
+      if (decoded === current) break
+      current = decoded
+    }
+    return values
+  }
+  const pending = [value]
+  while (pending.length) {
+    const candidate = pending.pop()
+    if (typeof candidate === 'string') {
+      if ([...comparableStrings(candidate)].some((comparable) => variants.some((variant) => comparable.includes(variant)))) return true
+      continue
+    }
+    if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) continue
+    seen.add(candidate)
+    for (const [key, nested] of Object.entries(candidate)) pending.push(key, nested)
+  }
+  return false
+}
+const assertRelayValueSafe = (value, apiKey, label, status = 502) => {
+  if (containsRelaySecret(value, apiKey)) throw fail(status, `${label}包含敏感认证信息`)
+}
+const userVisibleRelayModels = (userId, kind, models) => {
+  const apiKey = userRelayApiKey(userId, kind)
+  return apiKey ? models.filter((model) => !containsRelaySecret(model, apiKey)) : models
+}
+async function testTextRelay(baseUrl, apiKey, model) {
+  assertRelayValueSafe(model, apiKey, '文字模型名称', 400)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 30000))
+  try {
+    const upstream = await fetch(baseUrl + '/chat/completions', {
+      method: 'POST', redirect: 'manual', signal: controller.signal,
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 8 }),
+    })
+    const text = await readUpstreamText(upstream)
+    let payload
+    try { payload = JSON.parse(text) } catch { payload = null }
+    if (!upstream.ok) throw fail(502, `文字中转站测试失败（${upstream.status}）`)
+    const content = payload?.choices?.[0]?.message?.content
+    if (typeof content !== 'string') throw fail(502, '文字中转站响应格式不符合 Chat Completions')
+    return { ok: true, status: upstream.status, model }
+  } catch (error) {
+    throw relayRequestError(error, '文字中转站测试超时', '无法连接文字中转站', controller)
+  } finally { clearTimeout(timer) }
+}
+async function testImageRelay(baseUrl, apiKey, model) {
+  assertRelayValueSafe(model, apiKey, '生图模型名称', 400)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 60000))
+  try {
+    const url = await validateImageRelayUrl(baseUrl + '/images/generations')
+    const upstream = await fetch(url, {
+      method: 'POST', redirect: 'manual', signal: controller.signal,
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt: 'A small solid white square on a black background.', size: '1024x1024', n: 1 }),
+    })
+    const text = await readUpstreamText(upstream, upstream.ok ? aiImageMaxResponseBytes : aiMaxResponseBytes)
+    let payload
+    try { payload = JSON.parse(text) } catch { payload = null }
+    if (!upstream.ok) throw imageUpstreamFailure(upstream.status)
+    const image = payload?.data?.[0]
+    const imageUrl = image?.url || image?.image_url || payload?.url || payload?.result?.url || ''
+    const base64 = image?.b64_json || image?.base64 || payload?.result?.b64_json || ''
+    if ((!imageUrl && !base64) || [imageUrl, base64].some((value) => typeof value !== 'string' || containsRelaySecret(value, apiKey))) {
+      throw fail(502, '生图中转站未返回图片')
+    }
+    return { ok: true, status: upstream.status, model }
+  } catch (error) {
+    throw relayRequestError(error, '生图中转测试超时', '无法连接生图中转站', controller)
+  } finally { clearTimeout(timer) }
+}
+async function testVideoRelay(baseUrl, apiKey, model) {
+  assertRelayValueSafe(model, apiKey, '视频模型名称', 400)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.min(videoTimeout, 60000))
+  try {
+    const url = allowedRelayUrl(baseUrl + '/videos', '视频中转站')
+    const form = new FormData()
+    form.set('model', model)
+    form.set('prompt', 'A static white square on a plain background.')
+    form.set('seconds', '1')
+    form.set('size', '1280x720')
+    form.set('resolution_name', '720p')
+    form.set('preset', 'normal')
+    const upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + apiKey }, body: form })
+    const text = await readUpstreamText(upstream)
+    let payload
+    try { payload = JSON.parse(text) } catch { payload = null }
+    if (!upstream.ok) throw fail(502, `视频中转站测试失败（${upstream.status}）`)
+    let task
+    try { task = unwrapVideoPayload(payload, apiKey) }
+    catch { throw fail(502, '视频中转站测试返回了失败状态') }
+    if (!videoTaskId(task, apiKey) && !videoResultUrl(task, apiKey)) throw fail(502, '视频中转站没有返回任务 ID 或视频地址')
+    return { ok: true, status: upstream.status, model }
+  } catch (error) {
+    throw relayRequestError(error, '视频中转测试超时', '无法连接视频中转站', controller)
+  } finally { clearTimeout(timer) }
+}
+async function discoverTextModels(baseUrl, apiKey) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 30000))
+  try {
+    const upstream = await fetch(baseUrl + '/models', {
+      method: 'GET', redirect: 'manual', signal: controller.signal,
+      headers: { authorization: `Bearer ${apiKey}` },
+    })
+    const text = await readUpstreamText(upstream, modelDiscoveryMaxResponseBytes)
+    if (!upstream.ok) throw fail(502, `文字模型发现失败（${upstream.status}）`)
+    let payload
+    try { payload = JSON.parse(text) } catch { throw fail(502, '文字模型接口返回了无效 JSON') }
+    if (!Array.isArray(payload?.data)) throw fail(502, '文字模型接口响应格式不兼容')
+    const models = []
+    const seen = new Set()
+    for (const item of payload.data) {
+      const id = typeof item?.id === 'string' ? item.id.trim() : ''
+      if (!id || id.length > 100 || /[\u0000-\u001f\u007f]/.test(id) || containsRelaySecret(id, apiKey) || seen.has(id)) continue
+      seen.add(id)
+      models.push(id)
+      if (models.length >= 200) break
+    }
+    if (!models.length) throw fail(502, '文字模型接口没有返回可用模型')
+    return models
+  } catch (error) {
+    throw relayRequestError(error, '文字模型发现超时', '无法连接文字中转站', controller)
+  } finally { clearTimeout(timer) }
+}
 
 async function readUpstreamBuffer(response, maxBytes = aiVideoMaxResponseBytes) {
   const declaredLength = Number(response.headers.get('content-length'))
@@ -258,27 +445,33 @@ const secureTextEqual = (actual, expected) => {
   const right = Buffer.from(expected)
   return left.length === right.length && timingSafeEqual(left, right)
 }
-const upstreamErrorDetail = (payload, status) => {
+const upstreamErrorDetail = (payload, status, apiKey = '') => {
   const value = payload?.error?.message || payload?.error || payload?.message || payload?.msg
-  return typeof value === 'string' && value ? value.slice(0, 240) : 'HTTP ' + status
+  if (typeof value !== 'string' || !value) return 'HTTP ' + status
+  return containsRelaySecret(value, apiKey) ? '上游错误包含敏感认证信息' : value.slice(0, 240)
 }
-const unwrapVideoPayload = (payload) => {
+const unwrapVideoPayload = (payload, apiKey = '') => {
   if (!payload || typeof payload !== 'object') throw fail(502, '视频中转站没有返回任务')
   if ('code' in payload && payload.code !== undefined) {
-    if (payload.code !== 0 && payload.code !== '0') throw fail(502, upstreamErrorDetail(payload, 502))
+    if (payload.code !== 0 && payload.code !== '0') throw fail(502, upstreamErrorDetail(payload, 502, apiKey))
     if (!payload.data || typeof payload.data !== 'object') throw fail(502, '视频中转站没有返回任务')
     return payload.data
   }
   return payload
 }
-const videoTaskId = (payload) => [payload.id, payload.task_id, payload.taskId].find((value) => typeof value === 'string' && value)
-const videoResultUrl = (payload) => [
+const safeVideoField = (values, apiKey, label) => {
+  const candidates = values.filter((value) => typeof value === 'string' && value)
+  if (candidates.some((value) => containsRelaySecret(value, apiKey))) throw fail(502, `视频中转站返回的${label}包含敏感认证信息`)
+  return candidates[0]
+}
+const videoTaskId = (payload, apiKey = '') => safeVideoField([payload.id, payload.task_id, payload.taskId], apiKey, '任务 ID')
+const videoResultUrl = (payload, apiKey = '') => safeVideoField([
   payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url,
   payload.result?.video_url, payload.result?.url, payload.output?.video_url, payload.output?.url,
   payload.data?.[0]?.video_url, payload.data?.[0]?.url,
-].find((value) => typeof value === 'string' && value)
+], apiKey, '视频地址')
 const videoTaskStatus = (payload) => String(payload.status || payload.state || '').toLowerCase()
-const videoTaskError = (payload) => upstreamErrorDetail(payload, 502)
+const videoTaskError = (payload, apiKey = '') => upstreamErrorDetail(payload, 502, apiKey)
 const allowedRelayUrl = (value, label) => {
   let url
   try { url = new URL(value) } catch { throw fail(502, label + '地址无效') }
@@ -322,8 +515,9 @@ const videoMediaOrigins = () => {
   }
   return origins
 }
-const validateVideoDownloadUrl = async (value, allowedOrigins) => {
+const validateVideoDownloadUrl = async (value, allowedOrigins, apiKey) => {
   const url = allowedRelayUrl(value, '视频')
+  if (containsRelaySecret(url.toString(), apiKey)) throw fail(502, '视频地址包含敏感认证信息')
   if (url.username || url.password || !allowedOrigins.has(url.origin)) throw fail(502, '视频地址来源未获允许')
   const hostname = url.hostname.replace(/^\[|\]$/g, '')
   let addresses
@@ -377,7 +571,7 @@ async function fetchVideoBytes(value, relay) {
     let url = new URL(value)
     let response
     for (let redirects = 0; ; redirects += 1) {
-      url = await validateVideoDownloadUrl(url, allowedOrigins)
+      url = await validateVideoDownloadUrl(url, allowedOrigins, relay.apiKey)
       controller.signal.throwIfAborted()
       response = await fetch(url, {
         signal: controller.signal,
@@ -402,7 +596,7 @@ async function fetchVideoBytes(value, relay) {
       })
       let payload
       try { payload = JSON.parse(text) } catch { payload = null }
-      throw fail(502, '视频下载失败：' + upstreamErrorDetail(payload, response.status))
+      throw fail(502, '视频下载失败：' + upstreamErrorDetail(payload, response.status, relay.apiKey))
     }
     const mimeType = (response.headers.get('content-type') || 'video/mp4').split(';')[0].trim().toLowerCase()
     if (!mimeType.startsWith('video/') && mimeType !== 'application/octet-stream') {
@@ -458,12 +652,15 @@ function normalizedVideoUpload(buffer, mimeType) {
   if ((normalized === 'video/webm' && !webm) || (normalized !== 'video/webm' && !mp4Like)) throw fail(400, '视频文件格式与内容不匹配')
   return { bytes: buffer, mimeType: normalized }
 }
-function failVideoGeneration(row, kind = 'ai_video_refund') {
+function failVideoGeneration(row, kind = 'ai_video_refund', clearResponse = false) {
   transaction(() => {
     const current = db.prepare('SELECT status FROM generations WHERE id=?').get(row.id)
     if (current?.status !== 'pending') return
     changeBalance(row.user_id, Number(row.reserved), kind, row.id, '视频生成失败退回')
-    db.prepare("UPDATE generations SET status='failed' WHERE id=? AND status='pending'").run(row.id)
+    db.prepare(clearResponse
+      ? "UPDATE generations SET status='failed',response=NULL WHERE id=? AND status='pending'"
+      : "UPDATE generations SET status='failed' WHERE id=? AND status='pending'")
+      .run(row.id)
   })
 }
 
@@ -498,16 +695,21 @@ app.get('/api/health', (_req, res) => {
   }
 })
 app.get('/api/config', auth, (req, res) => {
-  const textRelay = relaySettings()
+  const textRelay = relaySettings('text')
+  const imageRelay = relaySettings('image')
   const videoRelay = relaySettings('video')
-  const imageApiKeyConfigured = Boolean(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(req.auth.sub)?.image_api_key_encrypted)
+  const user = db.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE id=?').get(req.auth.sub)
+  const textModels = userVisibleRelayModels(req.auth.sub, 'text', textRelay.models)
+  const imageModels = userVisibleRelayModels(req.auth.sub, 'image', imageRelay.models)
+  const videoModels = userVisibleRelayModels(req.auth.sub, 'video', videoRelay.models)
   res.json({
-    aiModel: textRelay.models[0],
-    textModels: textRelay.models,
+    aiModel: textModels[0] || null,
+    textModels,
     imageModels,
-    imageEndpoint: imageRelayEndpoint,
-    imageConfigured: imageApiKeyConfigured,
-    videoModels: videoRelay.models,
+    videoModels,
+    textConfigured: Boolean(user?.text_api_key_encrypted),
+    imageConfigured: Boolean(user?.image_api_key_encrypted),
+    videoConfigured: Boolean(user?.video_api_key_encrypted),
     videoPoints: videoPointCost(),
     centsPerPoint,
     topupInstructions,
@@ -593,57 +795,61 @@ app.post('/api/auth/password', auth, async (req, res, next) => {
 app.get('/api/me', auth, (req, res, next) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.auth.sub)
   if (!user) return next(fail(401, '用户不存在'))
-  res.json({ user: publicUser(user) })
+  res.json({
+    user: publicUser(user),
+    textModels: userVisibleRelayModels(req.auth.sub, 'text', relaySettings('text').models),
+    imageModels: userVisibleRelayModels(req.auth.sub, 'image', relaySettings('image').models),
+    videoModels: userVisibleRelayModels(req.auth.sub, 'video', relaySettings('video').models),
+  })
 })
-app.put('/api/me/image-key', auth, (req, res, next) => {
+const userKeyRoutes = {
+  text: ['/api/me/text-key'],
+  image: ['/api/me/image-key'],
+  video: ['/api/me/video-key'],
+}
+const userKeyResponse = (userId, kind) => {
+  const definition = relayKind(kind)
+  const configured = Boolean(db.prepare(`SELECT ${definition.keyColumn} value FROM users WHERE id=?`).get(userId)?.value)
+  return { configured }
+}
+const saveUserRelayKey = (kind) => (req, res, next) => {
   try {
-    const { apiKey } = parse(z.object({ apiKey: z.string().trim().min(1).max(4000) }), req.body)
-    db.prepare('UPDATE users SET image_api_key_encrypted=? WHERE id=?').run(encryptSetting(apiKey), req.auth.sub)
-    res.json({ configured: true, endpoint: imageRelayEndpoint, models: imageModels })
+    const { apiKey } = parse(z.object({ apiKey: z.string().trim().min(1).max(4000) }).strict(), req.body)
+    const definition = relayKind(kind)
+    db.prepare(`UPDATE users SET ${definition.keyColumn}=? WHERE id=?`).run(encryptSetting(apiKey), req.auth.sub)
+    res.json(userKeyResponse(req.auth.sub, kind))
   } catch (error) { next(error) }
-})
-app.delete('/api/me/image-key', auth, (req, res) => {
-  db.prepare('UPDATE users SET image_api_key_encrypted=NULL WHERE id=?').run(req.auth.sub)
-  res.json({ configured: false, endpoint: imageRelayEndpoint, models: imageModels })
-})
-app.post('/api/me/image-key/test', auth, async (req, res, next) => {
+}
+const clearUserRelayKey = (kind) => (req, res, next) => {
+  try {
+    const definition = relayKind(kind)
+    db.prepare(`UPDATE users SET ${definition.keyColumn}=NULL WHERE id=?`).run(req.auth.sub)
+    res.json(userKeyResponse(req.auth.sub, kind))
+  } catch (error) { next(error) }
+}
+const testUserRelayKey = (kind) => async (req, res, next) => {
   try {
     const body = parse(z.object({
       apiKey: z.string().trim().min(1).max(4000).optional(),
       model: z.string().trim().min(1).max(100).optional(),
-    }), req.body)
-    const apiKey = body.apiKey || userImageApiKey(req.auth.sub)
-    if (!apiKey) throw fail(400, '请先填写或保存生图 API 密钥')
-    const model = body.model || imageModels[0]
-    if (!imageModels.includes(model)) throw fail(400, '该生图模型未开放')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 60000))
-    let upstream
-    try {
-      const url = await validateImageRelayUrl(imageRelayBaseUrl + '/images/generations')
-      upstream = await fetch(url, {
-        method: 'POST',
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, prompt: 'A small solid white square on a black background.', size: '1024x1024', n: 1 }),
-      })
-    } catch (error) {
-      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '生图中转测试超时' : '无法连接生图中转站')
-    } finally { clearTimeout(timer) }
-    const text = await readUpstreamText(upstream, upstream.ok ? aiImageMaxResponseBytes : aiMaxResponseBytes)
-    let payload
-    try { payload = JSON.parse(text) } catch { payload = null }
-    if (!upstream.ok) throw imageUpstreamFailure(upstream.status)
-    const image = payload?.data?.[0]
-    const imageUrl = image?.url || image?.image_url || payload?.url || payload?.result?.url || ''
-    const base64 = image?.b64_json || image?.base64 || payload?.result?.b64_json || ''
-    if ((!imageUrl && !base64) || [imageUrl, base64].some((value) => typeof value !== 'string' || value.includes(apiKey))) {
-      throw fail(502, '生图中转站未返回图片')
-    }
-    res.json({ ok: true, status: upstream.status, model })
+    }).strict(), req.body)
+    const relay = relaySettings(kind)
+    if (!relay.baseUrl) throw fail(503, `管理员尚未配置${relayKind(kind).label}`)
+    const apiKey = body.apiKey || userRelayApiKey(req.auth.sub, kind)
+    if (!apiKey) throw fail(400, `请先填写或保存${relayKind(kind).label} API 密钥`)
+    const model = body.model || relay.models[0]
+    if (!model || !relay.models.includes(model)) throw fail(400, `该${relayKind(kind).label}模型未开放`)
+    if (kind === 'text') return res.json(await testTextRelay(relay.baseUrl, apiKey, model))
+    if (kind === 'image') return res.json(await testImageRelay(relay.baseUrl, apiKey, model))
+    res.json(await testVideoRelay(relay.baseUrl, apiKey, model))
   } catch (error) { next(error) }
-})
+}
+for (const kind of Object.keys(userKeyRoutes)) {
+  const paths = userKeyRoutes[kind]
+  app.put(paths, auth, saveUserRelayKey(kind))
+  app.delete(paths, auth, clearUserRelayKey(kind))
+  app.post(paths.map((path) => path + '/test'), auth, testUserRelayKey(kind))
+}
 app.get('/api/canvases', auth, (req, res) => {
   const rows = db.prepare('SELECT id,name,version,created_at,updated_at FROM canvases WHERE user_id = ? ORDER BY updated_at DESC').all(req.auth.sub)
   res.json({ canvases: rows })
@@ -824,20 +1030,25 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
       })).min(1).max(50),
       maxTokens: z.number().int().min(16).max(8192).default(1024),
     }), req.body)
-    const relay = relaySettings()
+    const relay = relaySettings('text')
     const model = body.model || relay.models[0]
     if (!relay.models.includes(model)) throw fail(400, '该模型未开放')
     const requestHash = createHash('sha256')
       .update(JSON.stringify({ model, messages: body.messages, maxTokens: body.maxTokens }))
       .digest('hex')
+    const key = userRelayApiKey(req.auth.sub, 'text')
+    assertRelayValueSafe(model, key, '文字模型名称', 400)
     const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
     if (cached?.request_hash && cached.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
-    if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
+    if (cached?.status === 'succeeded') {
+      if (containsRelaySecret(cached.response, key)) throw fail(502, '已保存的文字生成结果包含敏感认证信息')
+      return res.json({ ...JSON.parse(cached.response), cached: true })
+    }
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
     const base = relay.baseUrl
-    const key = relay.apiKey
-    if (!base || !key) throw fail(503, '管理员尚未配置 AI 中转站')
+    if (!base) throw fail(503, '管理员尚未配置文字中转站')
+    if (!key) throw fail(400, '请先在账户设置中保存文字 API 密钥')
     let url
     try { url = new URL(`${base}/chat/completions`) }
     catch { throw fail(500, '中转站地址无效') }
@@ -877,6 +1088,9 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
     const usage = data.usage || {}
     const content = data.choices?.[0]?.message?.content
     if (typeof content !== 'string') throw fail(502, '中转站返回格式不兼容')
+    if (containsRelaySecret(content, key) || containsRelaySecret(usage, key)) {
+      throw fail(502, '中转站响应包含敏感认证信息')
+    }
     const usageTokens = (value, fallback, minimum) => (
       typeof value === 'number' && Number.isFinite(value) && value >= 0
         ? Math.max(value, minimum)
@@ -932,18 +1146,24 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
       const extension = match[1].includes('png') ? 'png' : match[1].includes('webp') ? 'webp' : 'jpg'
       return { bytes, type: match[1].toLowerCase(), extension }
     })
-    const apiKey = userImageApiKey(req.auth.sub)
+    const relay = relaySettings('image')
+    const apiKey = userRelayApiKey(req.auth.sub, 'image')
     if (!apiKey) throw fail(400, '请先在账户设置中保存生图 API 密钥')
-    const model = body.model || imageModels[0]
-    if (!imageModels.includes(model)) throw fail(400, '该生图模型未开放')
+    if (!relay.baseUrl) throw fail(503, '管理员尚未配置图片中转站')
+    const model = body.model || relay.models[0]
+    if (!relay.models.includes(model)) throw fail(400, '该生图模型未开放')
+    assertRelayValueSafe(model, apiKey, '生图模型名称', 400)
     const requestHash = createHash('sha256').update(JSON.stringify({ ...body, model })).digest('hex')
     const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
     if (cached?.request_hash && cached.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
-    if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
+    if (cached?.status === 'succeeded') {
+      if (containsRelaySecret(cached.response, apiKey)) throw fail(502, '已保存的生图结果包含敏感认证信息')
+      return res.json({ ...JSON.parse(cached.response), cached: true })
+    }
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
     const imageRoute = referenceImages.length ? '/images/edits' : '/images/generations'
-    const url = await validateImageRelayUrl(imageRelayBaseUrl + imageRoute)
+    const url = await validateImageRelayUrl(relay.baseUrl + imageRoute)
     generation = { id: randomUUID() }
     try {
       db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,kind,model,reserved,charged,status) VALUES (?,?,?,?,?,?,?,?,?)')
@@ -956,6 +1176,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), aiTimeout)
     let upstream
+    let text
     try {
       if (referenceImages.length) {
         const form = new FormData()
@@ -970,10 +1191,10 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
       } else {
         upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt: body.prompt, size: body.size, n: 1 }) })
       }
+      text = await readUpstreamText(upstream, upstream.ok ? aiImageMaxResponseBytes : aiMaxResponseBytes)
     } catch (error) {
-      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '生图中转站响应超时' : '无法连接生图中转站')
+      throw relayRequestError(error, '生图中转站响应超时', '无法连接生图中转站', controller)
     } finally { clearTimeout(timer) }
-    const text = await readUpstreamText(upstream, upstream.ok ? aiImageMaxResponseBytes : aiMaxResponseBytes)
     let payload
     try { payload = JSON.parse(text) } catch { payload = null }
     if (!upstream.ok) {
@@ -983,7 +1204,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     const rawImageUrl = image?.url || image?.image_url || payload?.url || payload?.result?.url || ''
     const base64 = image?.b64_json || image?.base64 || payload?.result?.b64_json || ''
     const imageUrl = rawImageUrl || (base64 ? `data:image/png;base64,${base64}` : '')
-    if (!imageUrl || [rawImageUrl, base64].some((value) => typeof value !== 'string' || value.includes(apiKey))) {
+    if (!imageUrl || [rawImageUrl, base64].some((value) => typeof value !== 'string' || containsRelaySecret(value, apiKey))) {
       throw fail(502, '生图中转站未返回图片')
     }
     const response = { imageUrl, model, charged: 0, cached: false }
@@ -1023,24 +1244,44 @@ app.post('/api/ai/video', auth, async (req, res, next) => {
       const extension = match[1].includes('png') ? 'png' : match[1].includes('webp') ? 'webp' : 'jpg'
       return { bytes, type: match[1].toLowerCase(), extension }
     })
-    const relay = relaySettings('video')
+    const relay = { ...relaySettings('video'), apiKey: userRelayApiKey(req.auth.sub, 'video') }
     const model = body.model || relay.models[0]
     if (!relay.models.includes(model)) throw fail(400, '该视频模型未开放')
-    if (!relay.baseUrl || !relay.apiKey) throw fail(503, '管理员尚未配置视频中转站')
+    if (!relay.baseUrl) throw fail(503, '管理员尚未配置视频中转站')
+    if (!relay.apiKey) throw fail(400, '请先在账户设置中保存视频 API 密钥')
+    assertRelayValueSafe(model, relay.apiKey, '视频模型名称', 400)
     const requestHash = createHash('sha256').update(JSON.stringify({ ...body, model })).digest('hex')
     const cached = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
     if (cached?.request_hash && cached.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
-    if (cached?.status === 'succeeded') return res.json({ ...JSON.parse(cached.response), cached: true })
+    if (cached?.status === 'succeeded') {
+      if (containsRelaySecret(cached.response, relay.apiKey)) throw fail(502, '已保存的视频结果包含敏感认证信息')
+      return res.json({ ...JSON.parse(cached.response), cached: true })
+    }
     if (cached?.status === 'pending') return res.status(202).json({ id: cached.id, status: 'pending', model: cached.model, charged: Number(cached.reserved), cached: true })
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
     const url = allowedRelayUrl(relay.baseUrl + '/videos', '视频中转站')
     const cost = videoPointCost()
     generation = { id: randomUUID(), userId: req.auth.sub, reserved: cost }
-    transaction(() => {
-      changeBalance(req.auth.sub, -cost, 'ai_video_reserve', generation.id, '视频生成预占：' + model)
-      db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,kind,model,reserved,status) VALUES (?,?,?,?,?,?,?,?)')
-        .run(generation.id, req.auth.sub, body.requestKey, requestHash, 'video', model, cost, 'pending')
-    })
+    try {
+      transaction(() => {
+        changeBalance(req.auth.sub, -cost, 'ai_video_reserve', generation.id, '视频生成预占：' + model)
+        db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,kind,model,reserved,status) VALUES (?,?,?,?,?,?,?,?)')
+          .run(generation.id, req.auth.sub, body.requestKey, requestHash, 'video', model, cost, 'pending')
+      })
+    } catch (error) {
+      generation = undefined
+      if (!String(error).includes('UNIQUE')) throw error
+      const raced = db.prepare('SELECT * FROM generations WHERE user_id=? AND request_key=?').get(req.auth.sub, body.requestKey)
+      if (!raced || raced.request_hash !== requestHash) throw fail(409, '该请求标识已用于不同内容')
+      if (raced.status === 'succeeded') {
+        if (containsRelaySecret(raced.response, relay.apiKey)) throw fail(502, '已保存的视频结果包含敏感认证信息')
+        return res.json({ ...JSON.parse(raced.response), cached: true })
+      }
+      if (raced.status === 'pending') {
+        return res.status(202).json({ id: raced.id, status: 'pending', model: raced.model, charged: Number(raced.reserved), cached: true })
+      }
+      throw fail(409, '该请求已失败，请使用新的请求标识重试')
+    }
     const form = new FormData()
     form.set('model', model)
     form.set('prompt', body.prompt)
@@ -1052,23 +1293,24 @@ app.post('/api/ai/video', auth, async (req, res, next) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.min(videoTimeout, 120000))
     let upstream
+    let payloadText
     try {
-      upstream = await fetch(url, { method: 'POST', signal: controller.signal, headers: { authorization: 'Bearer ' + relay.apiKey }, body: form })
+      upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + relay.apiKey }, body: form })
+      payloadText = await readUpstreamText(upstream)
     } catch (error) {
-      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '视频任务创建超时' : '无法连接视频中转站')
+      throw relayRequestError(error, '视频任务创建超时', '无法连接视频中转站', controller)
     } finally { clearTimeout(timer) }
-    const payloadText = await readUpstreamText(upstream)
     let payload
     try { payload = JSON.parse(payloadText) } catch { payload = null }
-    if (!upstream.ok) throw fail(502, '视频中转站返回 ' + upstream.status + '：' + upstreamErrorDetail(payload, upstream.status))
-    const task = unwrapVideoPayload(payload)
-    const resultUrl = videoResultUrl(task)
+    if (!upstream.ok) throw fail(502, '视频中转站返回 ' + upstream.status + '：' + upstreamErrorDetail(payload, upstream.status, relay.apiKey))
+    const task = unwrapVideoPayload(payload, relay.apiKey)
+    const resultUrl = videoResultUrl(task, relay.apiKey)
     if (resultUrl) {
       const response = storeVideoMedia(req.auth.sub, generation.id, await fetchVideoBytes(resultUrl, relay))
       generation = undefined
       return res.json(response)
     }
-    const taskId = videoTaskId(task)
+    const taskId = videoTaskId(task, relay.apiKey)
     if (!taskId) throw fail(502, '视频中转站没有返回任务 ID 或视频地址')
     const initial = { taskId, startedAt: Date.now(), model }
     db.prepare("UPDATE generations SET response=? WHERE id=? AND user_id=? AND status='pending'").run(JSON.stringify(initial), generation.id, req.auth.sub)
@@ -1088,7 +1330,11 @@ app.get('/api/ai/video/:id', auth, async (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM generations WHERE id=? AND user_id=? AND kind=?').get(req.params.id, req.auth.sub, 'video')
     if (!row) throw fail(404, '视频任务不存在')
-    if (row.status === 'succeeded') return res.json({ ...JSON.parse(row.response), cached: true })
+    if (row.status === 'succeeded') {
+      const apiKey = userRelayApiKey(req.auth.sub, 'video')
+      if (containsRelaySecret(row.response, apiKey)) throw fail(502, '已保存的视频结果包含敏感认证信息')
+      return res.json({ ...JSON.parse(row.response), cached: true })
+    }
     if (row.status === 'failed') throw fail(409, '视频任务已失败，积分已退回')
     let state
     try { state = JSON.parse(row.response || '{}') } catch { state = {} }
@@ -1097,26 +1343,35 @@ app.get('/api/ai/video/:id', auth, async (req, res, next) => {
       failVideoGeneration(row)
       throw fail(504, '视频生成超时，积分已退回')
     }
-    const relay = relaySettings('video')
-    if (!relay.baseUrl || !relay.apiKey) throw fail(503, '视频中转配置已被清除，任务暂时无法查询')
+    const relay = { ...relaySettings('video'), apiKey: userRelayApiKey(req.auth.sub, 'video') }
+    if (!relay.baseUrl) throw fail(503, '视频中转配置已被清除，任务暂时无法查询')
+    if (!relay.apiKey) throw fail(400, '请先在账户设置中保存视频 API 密钥')
+    assertRelayValueSafe(row.model, relay.apiKey, '视频模型名称')
+    if (containsRelaySecret(state.taskId, relay.apiKey)) {
+      failVideoGeneration(row, 'ai_video_refund', true)
+      throw fail(502, '视频任务 ID 包含敏感认证信息，积分已退回')
+    }
     const url = allowedRelayUrl(relay.baseUrl + '/videos/' + encodeURIComponent(state.taskId), '视频中转站')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.min(30000, videoTimeout))
     let upstream
-    try { upstream = await fetch(url, { signal: controller.signal, headers: { authorization: 'Bearer ' + relay.apiKey } }) }
-    catch (error) { throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '视频任务查询超时' : '无法查询视频任务') }
+    let payloadText
+    try {
+      upstream = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + relay.apiKey } })
+      payloadText = await readUpstreamText(upstream)
+    }
+    catch (error) { throw relayRequestError(error, '视频任务查询超时', '无法查询视频任务', controller) }
     finally { clearTimeout(timer) }
-    const payloadText = await readUpstreamText(upstream)
     let payload
     try { payload = JSON.parse(payloadText) } catch { payload = null }
-    if (!upstream.ok) throw fail(502, '视频任务查询失败：' + upstreamErrorDetail(payload, upstream.status))
-    const task = unwrapVideoPayload(payload)
+    if (!upstream.ok) throw fail(502, '视频任务查询失败：' + upstreamErrorDetail(payload, upstream.status, relay.apiKey))
+    const task = unwrapVideoPayload(payload, relay.apiKey)
     const status = videoTaskStatus(task)
     if (['failed', 'cancelled', 'canceled', 'expired'].includes(status)) {
       failVideoGeneration(row)
-      throw fail(502, '视频生成失败，积分已退回：' + videoTaskError(task))
+      throw fail(502, '视频生成失败，积分已退回：' + videoTaskError(task, relay.apiKey))
     }
-    let resultUrl = videoResultUrl(task)
+    let resultUrl = videoResultUrl(task, relay.apiKey)
     if (!resultUrl && ['completed', 'succeeded', 'success'].includes(status)) {
       resultUrl = relay.baseUrl + '/videos/' + encodeURIComponent(state.taskId) + '/content'
     }
@@ -1133,8 +1388,9 @@ app.get('/api/ai/video/:id', auth, async (req, res, next) => {
   } catch (error) { next(error) }
 })
 
-app.get('/api/admin/overview', auth, admin, (_req, res) => {
-  const relay = relaySettings()
+app.get('/api/admin/overview', auth, admin, (req, res) => {
+  const textRelay = relaySettings('text')
+  const imageRelay = relaySettings('image')
   const videoRelay = relaySettings('video')
   const stats = {
     users: Number(db.prepare('SELECT COUNT(*) n FROM users').get().n),
@@ -1152,143 +1408,96 @@ app.get('/api/admin/overview', auth, admin, (_req, res) => {
     stats,
     orders,
     audit,
-    ai: {
-      configured: Boolean(relay.baseUrl && relay.apiKey),
-      keyConfigured: Boolean(relay.apiKey),
-      baseUrl: relay.baseUrl,
-      models: relay.models,
-      source: relay.source,
-      inputRate,
-      outputRate,
-    },
-    video: { configured: Boolean(videoRelay.baseUrl && videoRelay.apiKey), keyConfigured: Boolean(videoRelay.apiKey), baseUrl: videoRelay.baseUrl, models: videoRelay.models, source: videoRelay.source, points: videoPointCost() },
+    text: { baseUrl: textRelay.baseUrl, models: userVisibleRelayModels(req.auth.sub, 'text', textRelay.models), source: textRelay.source },
+    image: { baseUrl: imageRelay.baseUrl, models: userVisibleRelayModels(req.auth.sub, 'image', imageRelay.models), source: imageRelay.source },
+    video: { baseUrl: videoRelay.baseUrl, models: userVisibleRelayModels(req.auth.sub, 'video', videoRelay.models), source: videoRelay.source, points: videoPointCost() },
   })
 })
-app.put('/api/admin/ai-config', auth, admin, (req, res, next) => {
+const adminRelayResponse = (kind, userId) => {
+  const relay = relaySettings(kind)
+  return {
+    baseUrl: relay.baseUrl,
+    models: userVisibleRelayModels(userId, kind, relay.models),
+    source: relay.source,
+    ...(kind === 'video' ? { points: videoPointCost() } : {}),
+  }
+}
+const adminConfigRoutes = {
+  text: ['/api/admin/text-config', '/api/admin/ai-config'],
+  image: ['/api/admin/image-config'],
+  video: ['/api/admin/video-config'],
+}
+const updateAdminRelayConfig = (kind) => async (req, res, next) => {
   try {
     const body = parse(z.object({
-      baseUrl: z.string().trim().max(2000),
-      apiKey: z.string().trim().max(4000).optional(),
-      clearApiKey: z.boolean().default(false),
+      baseUrl: z.string().trim().min(1).max(2000),
       models: z.array(z.string().trim().min(1).max(100)).min(1).max(50),
-    }), req.body)
-    if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
-    const normalizedBase = normalizeRelayBaseUrl(body.baseUrl, '中转站', 400)
-    const models = [...new Set(body.models)]
-    const before = relaySettings()
-    const current = db.prepare('SELECT ai_api_key_encrypted,ai_api_key_managed FROM app_settings WHERE id=1').get()
-    let encryptedKey = current?.ai_api_key_encrypted || null
-    if (body.apiKey) encryptedKey = encryptSetting(body.apiKey)
-    else if (body.clearApiKey) encryptedKey = null
-    else if (!Number(current?.ai_api_key_managed) && !encryptedKey && process.env.AI_API_KEY?.trim()) encryptedKey = encryptSetting(process.env.AI_API_KEY.trim())
+      ...(kind === 'video' ? { points: z.number().int().min(1).max(1000000) } : {}),
+    }).strict(), req.body)
+    const definition = relayKind(kind)
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, definition.label, 400)
+    if (kind === 'image') await validateImageRelayUrl(baseUrl)
+    const models = normalizeModels(body.models)
+    const apiKey = userRelayApiKey(req.auth.sub, kind)
+    for (const model of models) assertRelayValueSafe(model, apiKey, `${definition.label}模型名称`, 400)
+    const before = relaySettings(kind)
     transaction(() => {
-      db.prepare(`UPDATE app_settings SET ai_base_url=?,
-        ai_api_key_encrypted=?,ai_api_key_managed=1,
-        ai_models=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-        .run(normalizedBase || null, encryptedKey, JSON.stringify(models), req.auth.sub)
-      auditAdmin(req.auth.sub, 'ai_config.update', null, {
-        baseUrlChanged: before.baseUrl !== normalizedBase,
-        keyChanged: Boolean(body.apiKey || body.clearApiKey),
+      if (kind === 'video') {
+        db.prepare('UPDATE app_settings SET ai_video_base_url=?,ai_video_models=?,ai_video_points=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=1')
+          .run(baseUrl, JSON.stringify(models), body.points, req.auth.sub)
+      } else {
+        db.prepare(`UPDATE app_settings SET ${definition.baseColumn}=?,${definition.modelsColumn}=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+          .run(baseUrl, JSON.stringify(models), req.auth.sub)
+      }
+      auditAdmin(req.auth.sub, `${kind}_config.update`, null, {
+        baseUrlChanged: before.baseUrl !== baseUrl,
         modelsChanged: JSON.stringify(before.models) !== JSON.stringify(models),
+        ...(kind === 'video' ? { points: body.points } : {}),
       })
     })
-    const relay = relaySettings()
-    res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source })
+    res.json(adminRelayResponse(kind, req.auth.sub))
   } catch (error) { next(error) }
-})
-app.put('/api/admin/video-config', auth, admin, (req, res, next) => {
+}
+const testAdminRelay = (kind) => async (req, res, next) => {
   try {
     const body = parse(z.object({
-      baseUrl: z.string().trim().max(2000), apiKey: z.string().trim().max(4000).optional(),
-      clearApiKey: z.boolean().default(false), models: z.array(z.string().trim().min(1).max(100)).min(1).max(50),
-      points: z.number().int().min(1).max(1000000),
-    }), req.body)
-    if (body.apiKey && body.clearApiKey) throw fail(400, '不能同时填写密钥和清除密钥')
-    const base = normalizeRelayBaseUrl(body.baseUrl, '视频中转站', 400)
-    const before = relaySettings('video')
-    const current = db.prepare('SELECT ai_video_api_key_encrypted,ai_video_api_key_managed FROM app_settings WHERE id=1').get()
-    let encrypted = current?.ai_video_api_key_encrypted || null
-    if (body.apiKey) encrypted = encryptSetting(body.apiKey)
-    else if (body.clearApiKey) encrypted = null
-    else if (!Number(current?.ai_video_api_key_managed) && !encrypted && process.env.AI_VIDEO_API_KEY?.trim()) encrypted = encryptSetting(process.env.AI_VIDEO_API_KEY.trim())
-    const models = [...new Set(body.models)]
-    transaction(() => {
-      db.prepare('UPDATE app_settings SET ai_video_base_url=?, ai_video_api_key_encrypted=?, ai_video_api_key_managed=1, ai_video_models=?, ai_video_points=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=1')
-        .run(base || null, encrypted, JSON.stringify(models), body.points, req.auth.sub)
-      auditAdmin(req.auth.sub, 'video_config.update', null, { baseUrlChanged: before.baseUrl !== base, keyChanged: Boolean(body.apiKey || body.clearApiKey), modelsChanged: JSON.stringify(before.models) !== JSON.stringify(models), points: body.points })
-    })
-    const relay = relaySettings('video')
-    res.json({ configured: Boolean(relay.baseUrl && relay.apiKey), keyConfigured: Boolean(relay.apiKey), baseUrl: relay.baseUrl, models: relay.models, source: relay.source, points: videoPointCost() })
+      baseUrl: z.string().trim().min(1).max(2000).optional(),
+      model: z.string().trim().min(1).max(100).optional(),
+    }).strict(), req.body || {})
+    const relay = relaySettings(kind)
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, relayKind(kind).label, 400)
+    if (!baseUrl) throw fail(400, `${relayKind(kind).label}地址无效`)
+    const model = body.model || relay.models[0]
+    if (!model) throw fail(400, `请填写${relayKind(kind).label}模型`)
+    const apiKey = userRelayApiKey(req.auth.sub, kind)
+    if (!apiKey) throw fail(400, `请先在账户设置中保存${relayKind(kind).label} API 密钥`)
+    if (kind === 'text') return res.json(await testTextRelay(baseUrl, apiKey, model))
+    if (kind === 'image') return res.json(await testImageRelay(baseUrl, apiKey, model))
+    res.json(await testVideoRelay(baseUrl, apiKey, model))
   } catch (error) { next(error) }
-})
-app.post('/api/admin/ai-config/test', auth, admin, async (req, res, next) => {
+}
+for (const kind of Object.keys(adminConfigRoutes)) {
+  const routes = adminConfigRoutes[kind]
+  app.put(routes, auth, admin, updateAdminRelayConfig(kind))
+  app.post(routes.map((route) => route + '/test'), auth, admin, testAdminRelay(kind))
+}
+const textModelDiscoveryRoutes = [
+  '/api/admin/text-config/models',
+  '/api/admin/ai-config/models',
+]
+const handleTextModelDiscovery = async (req, res, next) => {
   try {
-    const body = parse(z.object({
-      baseUrl: z.string().trim().max(2000),
-      apiKey: z.string().trim().max(4000).optional(),
-      model: z.string().trim().min(1).max(100),
-    }), req.body)
-    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, '中转站', 400)
-    if (!baseUrl) throw fail(400, '中转站地址无效')
-    const saved = relaySettings()
-    const key = body.apiKey || saved.apiKey
-    if (!key) throw fail(400, '请先填写或保存 API 密钥')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 30000))
-    let upstream
-    try {
-      upstream = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 8 }),
-      })
-    } catch (error) {
-      throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '中转站测试超时' : '无法连接中转站')
-    } finally { clearTimeout(timer) }
-    const text = await readUpstreamText(upstream)
-    let payload
-    try { payload = JSON.parse(text) } catch { payload = null }
-    if (!upstream.ok) {
-      const detail = typeof payload?.error?.message === 'string' ? payload.error.message.slice(0, 240) : `HTTP ${upstream.status}`
-      throw fail(502, `中转站返回错误：${detail}`)
-    }
-    const content = payload?.choices?.[0]?.message?.content
-    if (typeof content !== 'string') throw fail(502, '中转站响应格式不符合 Chat Completions')
-    res.json({ ok: true, status: upstream.status, model: body.model, reply: content.slice(0, 240) })
+    const body = parse(z.object({ baseUrl: z.string().trim().min(1).max(2000).optional() }).strict(), req.body || {})
+    const relay = relaySettings('text')
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, '文字中转站', 400)
+    if (!baseUrl) throw fail(400, '文字中转站地址无效')
+    const apiKey = userRelayApiKey(req.auth.sub, 'text')
+    if (!apiKey) throw fail(400, '请先在账户设置中保存文字中转站 API 密钥')
+    res.json({ models: await discoverTextModels(baseUrl, apiKey) })
   } catch (error) { next(error) }
-})
-app.post('/api/admin/video-config/test', auth, admin, async (req, res, next) => {
-  try {
-    const body = parse(z.object({ baseUrl: z.string().trim().max(2000), apiKey: z.string().trim().max(4000).optional(), model: z.string().trim().min(1).max(100) }), req.body)
-    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, '视频中转站', 400)
-    if (!baseUrl) throw fail(400, '视频中转站地址无效')
-    allowedRelayUrl(baseUrl, '视频中转站')
-    const saved = relaySettings('video')
-    const key = body.apiKey || saved.apiKey
-    if (!key) throw fail(400, '请先填写或保存视频 API 密钥')
-    const form = new FormData()
-    form.set('model', body.model)
-    form.set('prompt', 'A static white square on a plain background.')
-    form.set('seconds', '1')
-    form.set('size', '1280x720')
-    form.set('resolution_name', '720p')
-    form.set('preset', 'normal')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), Math.min(videoTimeout, 60000))
-    let upstream
-    try { upstream = await fetch(baseUrl + '/videos', { method: 'POST', signal: controller.signal, headers: { authorization: 'Bearer ' + key }, body: form }) }
-    catch (error) { throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '视频中转测试超时' : '无法连接视频中转站') }
-    finally { clearTimeout(timer) }
-    const text = await readUpstreamText(upstream)
-    let payload
-    try { payload = JSON.parse(text) } catch { payload = null }
-    if (!upstream.ok) throw fail(502, '视频中转站返回 ' + upstream.status + '：' + upstreamErrorDetail(payload, upstream.status))
-    const task = unwrapVideoPayload(payload)
-    if (!videoTaskId(task) && !videoResultUrl(task)) throw fail(502, '视频中转站没有返回任务 ID 或视频地址')
-    res.json({ ok: true, status: upstream.status, model: body.model, taskId: videoTaskId(task) || null })
-  } catch (error) { next(error) }
-})
+}
+app.get(textModelDiscoveryRoutes, auth, admin, handleTextModelDiscovery)
+app.post(textModelDiscoveryRoutes, auth, admin, handleTextModelDiscovery)
 app.post('/api/admin/codes', auth, admin, (req, res, next) => {
   try {
     const body = parse(z.object({

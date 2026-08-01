@@ -22,8 +22,8 @@ usage() {
   status       显示服务状态和公网访问地址
   -h, --help   显示此帮助
 
-交互式面板分别提供文字、图片和视频中转配置入口。图片中转基础地址由服务器配置，
-API 密钥由每位用户在账户安全中自行保存。
+交互式面板分别提供文字、图片和视频中转配置入口，只维护基础地址和开放模型。
+三类 API 密钥均由每位用户在网站“账户安全”中自行保存。
 EOF
 }
 
@@ -315,61 +315,21 @@ configure_access_mode() {
 }
 
 configure_relay() {
-  need_install; local relay_kind=$1 relay_label base key models key_action
+  need_install; local relay_kind=$1 relay_label relay_notice relay_prompt base models
   case $relay_kind in
-    text) relay_label=文字 ;;
-    video) relay_label=视频 ;;
+    text) relay_label=文字; relay_notice='文字 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='文字中转基础地址（生产环境必须使用 HTTPS）：' ;;
+    image) relay_label=图片; relay_notice='图片 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='图片中转基础地址（生产环境必须使用 HTTPS）：' ;;
+    video) relay_label=视频; relay_notice='视频 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='视频中转基础地址（生产环境必须使用 HTTPS）：' ;;
     *) die '未知的中转类型' ;;
   esac
-  read -r -p "${relay_label}中转站基础地址（生产环境必须使用 HTTPS）：" base
+  printf '%s\n' "$relay_notice"
+  read -r -p "$relay_prompt" base
   read -r -p '开放模型（多个模型用英文逗号分隔）：' models
-  read -r -s -p 'API 密钥（隐藏输入；留空保留当前值，输入 CLEAR 清除）：' key; printf '\n'
-  if [[ $key == CLEAR ]]; then key_action=clear; key=''; elif [[ -z $key ]]; then key_action=keep; else key_action=set; fi
-  [[ $base != *$'\n'* && $base != *$'\r'* && $models != *$'\n'* && $models != *$'\r'* && $key != *$'\n'* && $key != *$'\r'* ]] || die '中转配置不能包含换行符'
-  printf '%s\0%s\0%s\0%s\0' "$base" "$models" "$key_action" "$key" | compose run --rm -T --no-deps app node server/manage-config.js relay "$relay_kind"
-  if [[ $relay_kind == text ]]; then set_env_value AI_API_KEY ''; else set_env_value AI_VIDEO_API_KEY ''; fi
-  unset key
-  compose up -d --force-recreate app
-  wait_for_health "$(public_port)" || die '中转配置已保存，但重建后的应用未恢复健康'
-  printf '中转配置已保存，API 密钥未显示。\n'
-}
-
-configure_image_relay() {
-  need_install
-  local base models current_base current_models model normalized='' env_backup port
-  local -a image_models
-  current_models=$(env_value AI_IMAGE_MODELS GPT-image-2)
-  current_base=$(env_value AI_IMAGE_BASE_URL https://www.bkbk.baby/v1)
-  printf '图片 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存图片密钥。\n'
-  read -r -p "图片中转基础地址（HTTPS；当前：$current_base）：" base
-  base=${base:-$current_base}
-  [[ $base =~ ^https://[^[:space:]/?#]+(/[^[:space:]?#]*)?$ && $base != *'@'* ]] || die '图片中转地址必须是 HTTPS，且不能包含凭据、查询或片段'
-  base=${base%/}
-  read -r -p "开放图片模型（多个模型用英文逗号分隔；当前：$current_models）：" models
-  models=${models:-$current_models}
-  [[ $models != *$'\n'* && $models != *$'\r'* ]] || die '图片模型配置不能包含换行符'
-  [[ $models != ,* && $models != *, && $models != *,,* ]] || die '图片模型列表不能包含空项'
-  IFS=, read -r -a image_models <<< "$models"
-  (( ${#image_models[@]} >= 1 && ${#image_models[@]} <= 50 )) || die '图片模型列表必须包含 1-50 个模型'
-  for model in "${image_models[@]}"; do
-    model=${model#"${model%%[![:space:]]*}"}; model=${model%"${model##*[![:space:]]}"}
-    [[ -n $model && ${#model} -le 100 ]] || die '每个图片模型必须包含 1-100 个字符'
-    [[ -z $normalized ]] && normalized=$model || normalized+=",$model"
-  done
-  models=$normalized
-  env_backup=$(mktemp); cp -a -- "$ENV_FILE" "$env_backup"; port=$(public_port)
-  set_env_value AI_IMAGE_BASE_URL "$base"; set_env_value AI_IMAGE_MODELS "$models"
-  if ! compose up -d --force-recreate app || ! wait_for_health "$port"; then
-    cp -a -- "$env_backup" "$ENV_FILE"
-    if compose up -d --force-recreate app && wait_for_health "$port"; then
-      remove_temp_files "$env_backup"
-      die '服务拒绝图片模型配置，已恢复原环境配置和服务'
-    fi
-    remove_temp_files "$env_backup"
-    die '服务拒绝图片模型配置；原环境配置已恢复，但服务未恢复健康，请立即检查日志'
-  fi
-  remove_temp_files "$env_backup"
-  printf '图片中转地址和开放模型已保存；用户自有密钥契约未更改。\n'
+  [[ $base != *$'\n'* && $base != *$'\r'* && $models != *$'\n'* && $models != *$'\r'* ]] || die '中转配置不能包含换行符'
+  printf '%s\0%s\0' "$base" "$models" | compose run --rm -T --no-deps app node server/manage-config.js relay "$relay_kind"
+  compose up -d app
+  wait_for_health "$(public_port)" || die '中转配置已保存，但应用未恢复健康'
+  printf '%s中转地址和开放模型已保存；用户自有密钥未更改。\n' "$relay_label"
 }
 
 configure_commercial() {
@@ -426,7 +386,7 @@ menu() {
   while true; do
     printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 管理访问方式\n7 修改应用端口\n8 配置文字中转\n9 配置图片中转\n10 配置视频中转\n11 配置商业参数与配额\n12 立即备份\n13 查看备份列表\n14 恢复备份\n15 查看日志\n16 运行诊断\n17 管理员初始化令牌\n0 退出\n'
     local choice; read -r -p '请选择：' choice || exit 0
-    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_access_mode ;; 7) configure_port ;; 8) configure_relay text ;; 9) configure_image_relay ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
+    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_access_mode ;; 7) configure_port ;; 8) configure_relay text ;; 9) configure_relay image ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
   done
 }
 

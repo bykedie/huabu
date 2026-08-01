@@ -10,14 +10,50 @@ When an idea has been accepted for implementation:
 
 1. Create an active goal before editing.
 2. Record observable success criteria and bounded steps here.
-3. The main thread acts as commander and delegates independent implementation to the three collaboration threads.
+3. The main thread acts as commander and delegates bounded implementation to one worker at a time unless the user explicitly approves concurrency for that round.
 4. Each worker reports completed work, next action, blockers, and verification evidence.
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
-## Active Goal: Four Access Modes and Server Image Relay
+## Active Goal: Production Interaction, Relay, and Agent Repair
 
-- Status: GitHub delivery complete; production update and acceptance pending
+- Status: local implementation and acceptance complete; delivery in progress
+- Started: 2026-08-01 18:48 +08:00
+- Commander thread: current main thread
+- Objective: repair the production HTTP interaction blackout and canvas shell, correct the Agent panel, replace the legacy shared-key relay contract with three per-user keys, add text/image/video administration and upstream text-model discovery, expose the selected text models to Agent chat and text-generation nodes, then verify, deliver, and update production without losing data or secrets.
+
+### Success Criteria
+
+- Public HTTP does not depend on `crypto.randomUUID`; creating canvases and using every Dock/sidebar action produces no uncaught exception, black page, or frozen shell.
+- The real "我的画布" list renders, and the hamburger/sidebar can be opened and closed repeatedly on desktop and mobile.
+- The Agent panel header, model selector, messages, and composer are fully visible and usable without overlap.
+- Operations contains text, image, and video relay configuration. Administrators configure relay addresses and open models, not shared API keys.
+- Text operations can fetch the upstream model list using the authenticated administrator's own saved text key, then choose which models are open.
+- Account Security contains exactly three transient password inputs for the user's text, image, and video keys; it does not display relay endpoints or return key material.
+- Agent chat and canvas text-generation nodes let the user select an administrator-opened text model and send that model to the server.
+- Existing text/video point accounting and image zero-site-point behavior remain intact; all three user keys are encrypted, isolated, migration-safe, and absent from logs, documents, localStorage, API responses, screenshots, and audit details.
+- Build, full tests, focused production/deployment tests, syntax checks, diff check, desktop/mobile browser acceptance, and a real non-secure HTTP acceptance pass before GitHub and production delivery.
+
+### Current Round
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Reproduce and map the production failures | complete | User screenshots show `crypto.randomUUID is not a function`, a broken Agent layout, missing image administration, malformed model text, and an unclosable sidebar |
+| Repair UUID, Dock, canvas list, sidebar, and hamburger behavior | complete | UUID helper covers missing page-level `crypto`; desktop/mobile Dock, menu, sidebar, clear/undo, navigation, upload and appearance paths passed commander acceptance |
+| Implement three-user-key storage and relay/model APIs | complete | Additive user text/image/video ciphertext columns, per-user runtime selection, address/model-only administrator APIs, model discovery, billing and reflection guards verified |
+| Implement Operations, Account Security, Agent, and text-node UI | complete | Three key controls with zero endpoint fields, three Operations tabs, Agent and text-node model selection passed desktop/mobile browser acceptance |
+| Run automated and browser acceptance | complete | Reflection 2/2; server 19/19; production 12/12; full 32/32; UUID 1/1; build/syntax/post-build/diff passed; `1440x1000`, `390x844`, and genuine HTTP acceptance complete |
+| Synchronize durable recovery documents | complete | Nine owned documents now record the three-user-key contract, superseded history, current/origin/production SHA split, final automated/browser evidence, concurrency exception, cleanup, and pending delivery; scoped obsolete-contract/secret scans and diff check passed |
+| Commit and push GitHub delivery | pending | Current HEAD and origin remain `991b4f00b66c4612912b5530856528c262b1f5e2`; candidate is unstaged, uncommitted, and unpushed |
+| Update and accept production | pending | Production remains at `3f7b52d`; update only through the validated backup/fast-forward workflow and MobaXterm |
+
+### Recovery Instructions
+
+Start from `git status`, `git diff`, this goal, `STATUS.md`, and all current coordination status files. The explicit concurrent-worker exception was used only for the now-complete local implementation phase; new work returns to the one-worker default unless the user grants a new exception. Do not reopen historical fixed-image/shared-text/shared-video contracts. Preserve `.env`, the database, Docker volumes, all user canvases, all relay secrets, and `/srv/canvas-backups`. Local acceptance is not GitHub or production delivery.
+
+## Historical Goal: Four Access Modes and Server Image Relay
+
+- Status: historical GitHub delivery complete; remaining production delivery is carried by the active goal above
 - Started: 2026-08-01
 - Commander thread: current main thread
 - Objective: default a fresh deployment to detected public IP plus port, let `h` select public/domain/both/private, make the image relay address server-configurable while retaining user-owned keys, and deliver the verified result through GitHub without losing deployment state.
@@ -41,7 +77,7 @@ When an idea has been accepted for implementation:
 | Run local gates | complete | build passed; full tests 24/24; deployment tests 10/10; Shell/Node syntax and diff checks passed |
 | Synchronize recovery documents | complete | README, AGENTS, SPEC, PLAN, memory, handoff, decisions, goals and main status updated |
 | Commit and push delivery | complete | `5fa5804` pushed normally to `origin/codex/infinite-canvas`; local and remote full SHA match |
-| Update and accept production | in progress | `3f7b52d` deployed with healthy container and `public` mode active; public rendering is now visually confirmed, while the CSP/root-credential follow-up is locally verified and awaits final deployment |
+| Update and accept production | superseded / carried forward | `3f7b52d` is still the current production SHA; all later CSP/root-credential/interaction/three-key delivery is tracked by the active goal above |
 
 ### Recovery Instructions
 
@@ -135,7 +171,7 @@ This goal has no incomplete backup or update step. Future maintenance should use
 ## Completed Goal: User-Owned Image Relay Key
 
 - Status: complete
-- Historical note: this section records the accepted 2026-07-31 contract. The active 2026-08-01 goal supersedes its fixed-endpoint clauses with server-managed `AI_IMAGE_BASE_URL`; the user-owned-key and zero-site-charge clauses remain authoritative.
+- Historical note: this section records the accepted 2026-07-31 image-only contract. The active 2026-08-01 goal supersedes its fixed-endpoint, endpoint-display, and image-only scope with three per-user keys and three administrator address/model controls; the user-owned image key and zero-site-charge clauses remain authoritative.
 - Started: 2026-07-31
 - Completed: 2026-07-31 17:58 +08:00
 - Commander thread: current main acceptance thread
@@ -154,6 +190,8 @@ This goal has no incomplete backup or update step. Future maintenance should use
 - No real relay key appears in source, docs, tests, logs, screenshots, or thread messages.
 
 ### Cross-Thread API Contract
+
+> Historical API contract only. Current account responses expose no endpoint, and the active contract covers text, image, and video user keys.
 
 - `GET /api/me`: user includes `imageApiKeyConfigured: boolean`.
 - `PUT /api/me/image-key`: body `{ apiKey }`; saves encrypted key and returns configured status, fixed endpoint, and models.

@@ -1,0 +1,22 @@
+# Commander Acceptance Status
+
+## 2026-08-01 20:32 +08:00
+
+- Status: in progress.
+- Completed: reviewed the landed frontend, backend, deployment, and test diffs; closed the upstream-key reflection regression; build passed; full suite passed 32/32; focused server passed 19/19; production configuration passed 12/12; UUID passed 1/1; four Node syntax checks, four Shell syntax checks, and global diff check passed.
+- Next: start an isolated temporary database and loopback relay, then perform commander-owned desktop, mobile, and genuine non-secure HTTP browser acceptance.
+- Blockers: none. GitHub push and production deployment remain intentionally pending until browser acceptance and durable-document synchronization finish.
+- Verification: no real `.env`, production database, relay key, administrator password, backup, or external upstream was read. Browser fixtures use synthetic values only.
+
+## 2026-08-01 21:18 +08:00
+
+- Status: complete.
+- Environment: commander acceptance used the isolated genuine non-secure origin `http://192.168.5.35:3113/`, a temporary database, and a loopback-only synthetic relay on `127.0.0.1:3120`. It did not access the real `3102/5182` draft, production, a real relay, or any real credential.
+- Desktop acceptance (`1440x1000`): with the page-level `crypto` object unavailable, refresh restored the saved canvas and nodes without a blank screen. The hamburger command menu and "我的画布" sidebar remained distinct; the sidebar closed through its button, backdrop, and `Escape`. Every Dock action was exercised: text, note, image, video, generation configuration, creation framework, upload, appearance, move/select, delete selected, undo, redo, and clear. Clear reduced the canvas to zero nodes and undo restored eight nodes. Navigation and the appearance popover remained usable, Agent geometry was unobstructed, and the page had no horizontal overflow.
+- Relay and model acceptance: Account Security contained exactly three password inputs for the user's text, image, and video relay keys and zero endpoint fields. Synthetic keys saved and tested successfully and each transient input cleared after its request. Operations contained text, image, and video tabs with address/model controls and no shared-key input. All three administrator save/test flows succeeded with the administrator's own user keys. Text discovery returned two deduplicated models; the second model could be opened, selected by a text-generation node, and selected by Agent chat, and both requests completed with the selected model.
+- Mobile acceptance (`390x844`): the Dock could be touch-scrolled to its final control; sidebar close behavior, Account Security's three-key/zero-endpoint contract, all three Operations tabs, Agent content/composer geometry (`x=8..382`), and the appearance/navigation spacing all passed. The appearance popover retained an 8px gap above navigation, both account and operations drawers were 390px wide, and page `scrollWidth` equaled `clientWidth` at 390px.
+- Console/network/asset evidence: browser warning/error logs were empty; no page error, failed request, HTTP error, or external request was observed. A final health/resource scan returned `200 {"ok":true}` for `/api/health`, HTTP 200 for `/`, `/assets/index-DDen9KmM.js`, and `/assets/index-ZMfIRUE0.css`, with zero external script or stylesheet references.
+- Security and artifact evidence: only synthetic credentials were used; inputs were cleared after requests; no key, password, ciphertext, Authorization header, or recoverable secret fragment was placed in screenshots or this record. One mobile Agent screenshot was captured without secrets, respecting the user's one-image-at-a-time preference.
+- Cleanup: the temporary viewport override was reset and the isolated in-app Browser tab was closed. Only the identified fixture processes (`3113` application and `3120` loopback relay) were stopped; both ports now have zero listeners. `.codex-browser-mock.mjs` and the temporary acceptance database/log directory were removed. No command targeted the real `3102/5182` services.
+- Delivery boundary: the current implementation remains unstaged, uncommitted, unpushed, and undeployed. Durable-document synchronization, final automated rerun, GitHub delivery, and the MobaXterm-only production update remain subsequent commander-owned gates.
+- Blockers: none for local browser acceptance. The separate `api.bkbk.baby` DNS/Beaver 80/443 conflict remains outside this acceptance and must not be changed without a reversible backup and explicit approval.

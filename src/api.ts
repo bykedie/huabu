@@ -4,7 +4,9 @@ export type User = {
   name: string
   role: 'admin' | 'user'
   balance: number
+  textApiKeyConfigured: boolean
   imageApiKeyConfigured: boolean
+  videoApiKeyConfigured: boolean
 }
 export class ApiError extends Error {
   constructor(message: string, public status: number) {

@@ -2,26 +2,41 @@
 
 ## Current
 
-- Active goal: deliver four server access modes with automatic public-IP display and a server-configurable image relay, then update and accept production without losing data, secrets or backups.
+- Active goal: local interaction, three-user-key implementation, acceptance and durable-document synchronization are complete; GitHub delivery and production update remain.
+- Branch: `codex/infinite-canvas`. Local HEAD and `origin/codex/infinite-canvas` are both `991b4f00b66c4612912b5530856528c262b1f5e2`. The current candidate is dirty, unstaged, uncommitted, and unpushed.
+- Production remains at the last separately verified SHA `3f7b52d`; none of the current interaction, three-key, model-discovery, Agent, deployment-contract, or reflection-guard changes are in production yet.
+- Current relay contract: the authenticated user's encrypted text, image, or video key authenticates that relay kind. Administrators manage three independent addresses and open-model lists, not shared runtime keys. Account Security exposes exactly three key controls and no endpoint.
+- Administrator relay tests use that administrator's saved corresponding user key; text upstream discovery uses the administrator's saved user text key. Text/video retain site-point billing and image remains zero site points.
+- Legacy shared-key columns remain inert additive-schema compatibility fields. Compose, `h`, administrator APIs and runtime paths do not use them as credentials.
+- Upstream-controlled errors, content, usage, models, images, task fields and cached results are guarded against raw or encoded current-key reflection into responses, logs, audits, generations or ledgers.
+- The explicit concurrent-worker exception for this goal ended with local acceptance. Future work returns to the one-worker default unless the user grants a new exception.
+- Prior four-access-mode and deployment work remains part of the accepted baseline and must not be regressed.
 - Confirmed public failure: `api.bkbk.baby` is a CNAME to `bkbk.baby`, which currently resolves to `64.83.20.132`; the actual ECS used for this deployment is `116.62.191.104`.
 - The correct ECS is not ready for this hostname yet: forcing HTTP to `116.62.191.104` returns `403 Forbidden` from `Server: Beaver`, while forced HTTPS resets. DNS correction alone will therefore not complete the repair; the ECS Nginx/HTTPS virtual host and certificate must also be corrected.
 - The accepted local implementation now adds `MOYU_ACCESS_MODE=public|domain|both|private`. Fresh deployment defaults to public IP plus port, detects and displays public IPv4, while `h` item 6 manages all four modes and item 7 changes the application port.
 - Mode mapping is explicit: public/both bind `0.0.0.0`; domain/private bind `127.0.0.1`; only domain/both enable this project's Nginx link. Old `.env` files without a mode are inferred from domain and bind, and repeat installs preserve the selected mode.
 - README now documents a one-line GitHub deployment with `--domain api.bkbk.baby` for the future second server. The installer clones the delivery branch, generates first-run secrets locally, preserves existing `.env` and the data volume on reruns, validates backups before fast-forward updates, and rolls back failed application/Nginx changes.
-- Text/video continue through encrypted database maintenance. The image entry writes server-owned `AI_IMAGE_BASE_URL` and `AI_IMAGE_MODELS` but never accepts an administrator image key. Users retain isolated encrypted keys and image generation remains zero site points.
+- Text/image/video `h` entries now maintain only addresses and models, with video points retained; they do not accept shared runtime keys. `AI_IMAGE_BASE_URL` remains the server image default/fallback.
 - Image relay URLs require HTTPS in production, reject credentials/query/fragment and unsafe DNS/IP targets, and image requests use manual redirects so user authorization cannot follow an unvalidated redirect.
 - At the user's explicit request, `h status` now displays administrator email/password to root. Administrator registration and password changes store an AES-256-GCM ciphertext alongside the bcrypt hash; application APIs never expose it, legacy administrators require one password change, and backup validation checks it with the dedicated `admin-login` derived key.
 - The earlier relay audit found one trailing-empty-model validation gap, which was fixed. The final read-only audit completed; its stale help/recovery wording findings were corrected, while its Nginx-link concern was already covered by the current installer rollback logic and tests.
-- Production was safely updated to `3f7b52d`, then switched through the new `h` menu to `public`: `0.0.0.0:3102`, detected IPv4 `116.62.191.104`, healthy container and public health endpoint. Browser acceptance found a blank page because Helmet's default `upgrade-insecure-requests` CSP upgraded the HTTP JS/CSS URLs to unavailable HTTPS. The local follow-up disables that directive and adds regression coverage; production still needs this follow-up commit.
+- Production was safely updated to `3f7b52d` and switched to `public`: `0.0.0.0:3102`, detected IPv4 `116.62.191.104`, healthy container and public health endpoint. All later CSP, root-credential, interaction and three-key work remains local until a new verified production update.
 - Never delete or overwrite `.env`, the application database, Docker volumes, relay keys or any directory under `/srv/canvas-backups`.
 
 ## Completed
+
+- Added a shared browser UUID helper with secure-context and no-`crypto` fallbacks; genuine ordinary HTTP refresh restored the accepted canvas instead of producing a blank root.
+- Completed command-menu/sidebar separation, repeatable close behavior, every Dock action, clear/undo, navigation, appearance, upload and responsive Agent geometry.
+- Added encrypted per-user text, image and video key save/test/replace/clear paths; all runtime and video-poll operations use the authenticated user's corresponding key.
+- Replaced administrator shared-key surfaces with text/image/video address/model controls, text model discovery, and administrator-owned-key tests.
+- Added Agent and text-generation node selection for administrator-opened text models; both submitted the second discovered model successfully in browser acceptance.
+- Closed upstream key-reflection paths across video errors/tasks/downloads, text content/usage, image results, models, API responses, logs and persisted/cached records.
 
 - Added authenticated `PUT`/`DELETE /api/me/image-key` and `POST /api/me/image-key/test` routes.
 - Added `imageApiKeyConfigured` to the public user contract without returning key material or ciphertext.
 - Stored each user's image key with AES-256-GCM server-side encryption and enforced user isolation.
 - Removed administrator shared-image routes, configuration UI, image point settings, and image charge wording. Legacy database columns remain only for old-schema compatibility and are not used by runtime image requests.
-- Added account-security controls for save, test, replace, and clear with the server-selected endpoint displayed read-only. The input value is transient and cleared after each request; it is not stored in localStorage, canvas documents, notices, or logs.
+- Historical image-only note: the earlier account control displayed the server-selected image endpoint read-only. The active three-key UI supersedes that behavior and displays no endpoint; each input remains transient and clears after requests.
 - Preserved image request idempotency, content-conflict detection, reference-image edits, retry-after-failure behavior, and cache replay.
 - Corrected the desktop image toolbar so it is centered in the visible canvas region and remains horizontally scrollable when its contents are wider than the available space.
 - Completed desktop and `390x844` mobile geometry checks for the image toolbar, settings popover, panel-open/panel-closed offsets, Dock, navigation, Account Security drawer, and Operations drawer.
@@ -31,7 +46,7 @@
 - Synchronized `AGENTS.md`, handoff/memory/decision files, the archived visual specification/plan, and all three worker status files with the accepted implementation and browser evidence.
 - Added `deploy/install.sh` and `deploy/manage.sh` with a documented one-line Ubuntu/Debian deployment command. Default install publishes 0.0.0.0:3102, accepts validated --port/--bind, preserves .env/data, rejects dirty or divergent repositories, backs up before fast-forward updates, safely installs /usr/local/bin/h, reports the public IP URL and warns about unencrypted HTTP. The h panel covers service, update, port, domain/HTTPS, text/video relay, quota, backup/restore, logs, diagnostics and administrator-token operations with hidden secret input.
 - Hardened repeat installs and `h safe_update` with `FETCH_HEAD`, fast-forward validation, validated backups, code/environment/application/Nginx rollback, clean-worktree checks, accurate recovery messages and retained `0600` rescue snapshots when rollback cannot be confirmed.
-- Added encrypted terminal relay maintenance with managed tombstones for legacy `.env` migration and explicit `CLEAR`; URLs with embedded credentials are rejected, legacy environment keys are cleared, and the app container is force-recreated.
+- Historical deployment hardening: terminal maintenance once used managed tombstones and `CLEAR` for legacy shared-key migration. The active contract supersedes that credential path; current terminal relay maintenance persists only address/model configuration and video points.
 - Enforced `127.0.0.1` binding for existing domain deployments, ignored forwarded headers in public mode and trusted one loopback Nginx hop in domain mode.
 - Rejected backup/restore database symlinks and rechecked canonical backup roots after creation; validated backups survive service-recovery failure.
 - Fixed private deployment backup validation without relaxing permissions: one-shot database maintenance runs as root, restored files return to the application owner, and both update-time and manual production backups now pass.
@@ -39,9 +54,10 @@
 
 ## Next
 
-1. Push and fast-forward the CSP/root-credential follow-up through the validated backup workflow, then verify `h status` and public rendering.
-2. Register the first administrator with the initialization token if none exists, then verify status displays the exact credential and application login succeeds.
-3. Verify the dynamic image address and preserved data/backups; inspect existing 80/443 state before any future domain switch.
+1. Commander reviews the complete candidate, reruns final automated gates if files changed after the recorded run, then creates a normal commit.
+2. Push `codex/infinite-canvas` without force and verify local/remote full SHA equality.
+3. Update production from `3f7b52d` only through the validated backup/fast-forward path in MobaXterm; verify backup, SHA, database, health and rendered application.
+4. Keep the separate DNS/Beaver 80/443 conflict outside this delivery unless the user gives explicit, reversible production approval.
 
 ## Blockers
 
@@ -49,6 +65,13 @@
 - Automated SSH authentication is not available. Production commands may require the user to enter them in the already-authenticated MobaXterm session, unless a separate non-UI authenticated path becomes available.
 
 ## Evidence
+
+- Current-round automated evidence: reflection `2/2`; server `19/19`; production configuration `12/12`; full suite `32/32`; UUID `1/1`; build passed with `index-DDen9KmM.js` and `index-ZMfIRUE0.css`; four Node and four Shell syntax checks, post-build scan and global diff check passed.
+- Current-round browser evidence: genuine HTTP `http://192.168.5.35:3113/`, desktop `1440x1000`, mobile `390x844`, missing page-level `crypto`, every Dock action, sidebars, three keys, three Operations tabs, model discovery/selection, Agent/text-node requests, zero page overflow, empty browser warning/error logs, and no failed/HTTP/external requests.
+- Current-round cleanup: fixture ports `3113/3120` have zero listeners; temporary mock, database and logs were removed; viewport reset and isolated tab closed; no cleanup command targeted real `3102/5182`.
+- Delivery boundary evidence: `git rev-parse HEAD` and `git rev-parse origin/codex/infinite-canvas` both report `991b4f00b66c4612912b5530856528c262b1f5e2`; current changes are still unstaged/uncommitted/unpushed, and production remains `3f7b52d`.
+
+Historical evidence retained below applies to the dated rounds that produced it; it is not the latest test or delivery state.
 
 - Public DNS recheck on 2026-08-01: `api.bkbk.baby CNAME bkbk.baby`; `bkbk.baby A 64.83.20.132`.
 - Forced-origin recheck: HTTP request to `116.62.191.104` with host `api.bkbk.baby` returned `403 Forbidden` and `Server: Beaver`; forced HTTPS reset the connection.
@@ -73,7 +96,7 @@
 - Desktop toolbar with panel open: center `x=860`, matching the visible canvas center; panel closed: center `x=720`, matching the viewport center.
 - Desktop settings popover: fully visible inside `1440x1000`; page `scrollWidth=clientWidth=1440`.
 - Mobile page: `scrollWidth=clientWidth=390`; image toolbar `clientWidth=376`, `scrollWidth=785`; Dock `clientWidth=368`, `scrollWidth=513`; both reached their final controls after horizontal scrolling.
-- Historical mobile acceptance: Account Security and Operations drawers had width `390`, no horizontal overflow, and old shared-image controls had zero DOM matches. The endpoint field is still read-only but now reflects server configuration.
+- Historical mobile acceptance for the image-only round: drawers were `390px` wide and old shared-image controls were absent; that round's read-only endpoint field was later removed by the active three-key UI.
 - Browser runtime checks: no console warning/error, page error, failed request, HTTP error, or external request in the accepted isolated scenarios.
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
 - GitHub delivery: commit `7c48c59` pushed normally to `origin/codex/infinite-canvas` (push response advanced `467ce07..7c48c59`).

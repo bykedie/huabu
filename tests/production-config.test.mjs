@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -87,10 +87,39 @@ test('production environment example exposes current video and media settings', 
     .map((line) => /^([A-Z0-9_]+)=/.exec(line)?.[1])
     .filter(Boolean))
   for (const key of [
-    'AI_VIDEO_BASE_URL', 'AI_VIDEO_API_KEY', 'AI_VIDEO_MODELS', 'AI_VIDEO_POINTS',
+    'AI_VIDEO_BASE_URL', 'AI_VIDEO_MODELS', 'AI_VIDEO_POINTS',
     'AI_VIDEO_TIMEOUT_MS', 'AI_VIDEO_POLL_MS', 'AI_VIDEO_PENDING_RECOVERY_MS',
     'AI_VIDEO_MAX_RESPONSE_BYTES', 'AI_VIDEO_MEDIA_ORIGINS', 'MAX_USER_MEDIA_BYTES',
   ]) assert.equal(exampleKeys.has(key), true, `${key} is missing from .env.example`)
+  for (const key of ['AI_API_KEY', 'AI_IMAGE_API_KEY', 'AI_VIDEO_API_KEY']) {
+    assert.equal(exampleKeys.has(key), false, `${key} must not be required by the deployment example`)
+  }
+})
+
+test('public HTTP UUID fallback and account security do not depend on hidden relay endpoints', () => {
+  const appSource = readFileSync(join(root, 'src', 'App.tsx'), 'utf8')
+  const uuidSource = readFileSync(join(root, 'src', 'uuid.ts'), 'utf8')
+  const accountStart = appSource.indexOf('function AccountDrawer')
+  const accountEnd = appSource.indexOf('function AdminDrawer', accountStart)
+  assert.notEqual(accountStart, -1, 'AccountDrawer is missing')
+  assert.notEqual(accountEnd, -1, 'AccountDrawer boundary is missing')
+  const accountSource = appSource.slice(accountStart, accountEnd)
+  const assetsDirectory = join(root, 'dist', 'assets')
+  const builtScripts = existsSync(assetsDirectory)
+    ? readdirSync(assetsDirectory)
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => readFileSync(join(assetsDirectory, name), 'utf8'))
+      .join('\n')
+    : ''
+
+  assert.doesNotMatch(appSource, /(?<![?.])\bcrypto\.randomUUID\s*\(/)
+  assert.match(appSource, /import \{[^}]*\bcreateUuid\b[^}]*\} from ['"]\.\/uuid['"]/)
+  assert.match(uuidSource, /typeof cryptoApi\?\.randomUUID === ['"]function['"]/)
+  assert.match(uuidSource, /getRandomValues/)
+  assert.match(uuidSource, /fallbackCounter/)
+  assert.doesNotMatch(accountSource, /imageEndpoint|当前端点|中转端点|relay endpoint/i)
+  assert.doesNotMatch(builtScripts, /crypto\.randomUUID\s*\(/)
+  assert.doesNotMatch(builtScripts, /当前端点/)
 })
 
 test('public-port deployment and h management preserve the production contract', () => {
@@ -152,6 +181,12 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(envExample, /^MOYU_DOMAIN=$/m)
   assert.match(envExample, /^MOYU_TLS=0$/m)
   assert.match(envExample, /^MOYU_BACKUP_ROOT=\/srv\/canvas-backups$/m)
+  assert.doesNotMatch(envExample, /^AI_(?:VIDEO_)?API_KEY=/m)
+  for (const key of ['AI_API_KEY', 'AI_IMAGE_API_KEY', 'AI_VIDEO_API_KEY']) {
+    assert.doesNotMatch(compose, new RegExp(`^\\s*${key}:`, 'm'))
+    assert.doesNotMatch(compose, new RegExp(`\\$\\{${key}(?=[:}])`))
+  }
+  assert.doesNotMatch(readme, /^AI_(?:VIDEO_)?API_KEY=/m)
 
   for (const script of [backup, restore]) {
     assert.match(script, /PUBLIC_PORT/)
@@ -172,12 +207,10 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(restore, /owner=\$\(stat -c "%u:%g" \/app\)/)
   assert.match(restore, /chown "\$owner" \/app\/data\/app\.db/)
 
-  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_access_mode', 'configure_relay', 'configure_image_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
+  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_access_mode', 'configure_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
   }
-  assert.match(manager, /read -r -s/)
   assert.match(manager, /server\/manage-config\.js relay/)
-  assert.match(manager, /留空保留当前值，输入 CLEAR 清除/)
   for (const label of [
     '查看状态与公网地址', '启动服务', '停止服务', '重启服务', '安全更新 Git 代码',
     '管理访问方式', '修改应用端口', '配置文字中转', '配置图片中转', '配置视频中转', '配置商业参数与配额',
@@ -192,22 +225,17 @@ test('public-port deployment and h management preserve the production contract',
   assert.ok(manager.includes('certbot_contact=(--register-unsafely-without-email)'))
   assert.doesNotMatch(manager, /留空则仅配置 HTTP/)
   assert.match(manager, /8\) configure_relay text/)
-  assert.match(manager, /9\) configure_image_relay/)
+  assert.match(manager, /9\) configure_relay image/)
   assert.match(manager, /10\) configure_relay video/)
   assert.doesNotMatch(manager, /1\) 文字中转  2\) 视频中转/)
   assert.match(manager, /图片中转基础地址/)
   assert.doesNotMatch(manager, /图片中转地址固定/)
   assert.match(manager, /图片 API 密钥由每位用户在“账户安全”中自行保存/)
-  assert.match(manager, /set_env_value AI_IMAGE_BASE_URL/)
-  assert.match(manager, /set_env_value AI_IMAGE_MODELS/)
   assert.match(manager, /server\/manage-config\.js admin-status/)
   assert.match(managerConfig, /admin_password_encrypted/)
   assert.match(managerConfig, /管理员密码/)
-  assert.ok(manager.includes('[[ $models != ,* && $models != *, && $models != *,,* ]]'))
-  assert.match(manager, /图片模型列表不能包含空项/)
-  assert.match(manager, /cp -a -- "\$env_backup" "\$ENV_FILE"/)
-  assert.match(manager, /compose up -d --force-recreate app/)
-  assert.doesNotMatch(manager, /set_env_value AI_IMAGE_API_KEY/)
+  assert.match(manager, /compose up -d (?:--force-recreate )?app/)
+  assert.match(manager, /wait_for_health "\$\(public_port\)"/)
   for (const mapping of [
     /1\) mode=public; bind=0\.0\.0\.0/,
     /2\) mode=domain; bind=127\.0\.0\.1/,
@@ -220,13 +248,14 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /git rev-parse FETCH_HEAD/)
   assert.match(manager, /git update-ref/)
   assert.match(manager, /git read-tree --reset -u/)
-  assert.match(manager, /--force-recreate app/)
-  assert.doesNotMatch(manager, /printf\s+\"\$key\"/)
+  assert.doesNotMatch(manager, /read -r -s|key_action|输入 CLEAR 清除|printf ['"]%s\0%s\0%s\0%s\0/)
+  assert.doesNotMatch(manager, /set_env_value AI_(?:IMAGE_)?API_KEY|set_env_value AI_VIDEO_API_KEY/)
   assert.match(manager, /__DOMAIN__/)
   assert.match(manager, /__PUBLIC_PORT__/)
-  assert.match(managerConfig, /createCipheriv\('aes-256-gcm'/)
-  assert.match(managerConfig, /ai_api_key_encrypted/)
-  assert.match(managerConfig, /ai_video_api_key_encrypted/)
+  assert.match(managerConfig, /text: \['ai_base_url', 'ai_models'\]/)
+  assert.match(managerConfig, /image: \['ai_image_base_url', 'ai_image_models'\]/)
+  assert.match(managerConfig, /video: \['ai_video_base_url', 'ai_video_models'\]/)
+  assert.doesNotMatch(managerConfig, /createCipheriv|ai_api_key_encrypted|ai_video_api_key_encrypted|AI_API_KEY|AI_VIDEO_API_KEY|keyAction|keyInput/)
   assert.match(managerConfig, /配置已更新/)
   assert.match(managerConfig, /配置更新失败/)
   assert.doesNotMatch(managerConfig, /console\.log\(.*key/i)
@@ -236,75 +265,63 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(readme, /HTTP.*未加密|未加密.*HTTP/)
   assert.match(readme, /管理命令|h/)
   assert.match(readme, /配置文字中转.*配置图片中转.*配置视频中转/)
-  assert.match(readme, /图片入口.*AI_IMAGE_MODELS/)
+  assert.match(readme, /AI_IMAGE_BASE_URL/)
+  assert.match(readme, /AI_IMAGE_MODELS/)
   assert.match(readme, /sudo bash -s -- --domain api.bkbk.baby/)
   assert.match(readme, /通知邮箱可以留空/)
 })
 
-test('terminal relay maintenance migrates, encrypts and clears keys without disclosure', () => {
+test('terminal relay maintenance updates only addresses and models without touching compatibility keys', () => {
   const directory = mkdtempSync(join(tmpdir(), 'ink-maintenance-'))
   const databasePath = join(directory, 'test.db')
-  const legacyKey = 'synthetic-legacy-environment-key'
-  const replacementKey = 'synthetic-terminal-replacement-key'
+  const legacyTextCiphertext = 'synthetic.compatibility.text.ciphertext'
+  const legacyVideoCiphertext = 'synthetic.compatibility.video.ciphertext'
   const env = {
     ...childEnvironment,
     NODE_ENV: 'production',
     DB_PATH: databasePath,
     JWT_SECRET: secret,
     ADMIN_SETUP_TOKEN: setupToken,
-    AI_API_KEY: legacyKey,
+    AI_API_KEY: 'forbidden-environment-text-key',
+    AI_VIDEO_API_KEY: 'forbidden-environment-video-key',
   }
-  const run = (action, key = '') => spawnSync(process.execPath, ['server/manage-config.js', 'relay', 'text'], {
+  const run = (kind, baseUrl, models) => spawnSync(process.execPath, ['server/manage-config.js', 'relay', kind], {
     cwd: root, encoding: 'utf8', env,
-    input: Buffer.from(`https://relay.example/v1\0model-a,model-b\0${action}\0${key}\0`),
+    input: Buffer.from(`${baseUrl}\0${models}\0`),
   })
   try {
     const initialized = spawnSync(process.execPath, ['--input-type=module', '--eval',
-      "const { db } = await import('./server/db.js'); db.prepare('UPDATE app_settings SET ai_base_url=?,ai_models=?,ai_api_key_managed=0 WHERE id=1').run('https://legacy-relay.example/v1','[\"legacy-model\"]'); db.close()",
+      `const { db } = await import('./server/db.js'); db.prepare('UPDATE app_settings SET ai_api_key_encrypted=?,ai_video_api_key_encrypted=? WHERE id=1').run(${JSON.stringify(legacyTextCiphertext)},${JSON.stringify(legacyVideoCiphertext)}); db.close()`,
     ], { cwd: root, encoding: 'utf8', env })
     assert.equal(initialized.status, 0, initialized.stderr)
 
-    const migrated = run('keep')
-    assert.equal(migrated.status, 0, migrated.stderr)
-    let database = new DatabaseSync(databasePath)
-    let row = database.prepare('SELECT ai_base_url,ai_api_key_encrypted,ai_api_key_managed,ai_models FROM app_settings WHERE id=1').get()
-    assert.equal(row.ai_base_url, 'https://relay.example/v1')
-    assert.equal(row.ai_models, '["model-a","model-b"]')
-    assert.equal(typeof row.ai_api_key_encrypted, 'string')
-    assert.equal(row.ai_api_key_encrypted.includes(legacyKey), false)
-    assert.equal(Number(row.ai_api_key_managed), 1)
+    const text = run('text', 'https://text-relay.example/v1/', 'model-a, model-b,model-a')
+    const image = run('image', 'https://image-relay.example/v1', 'image-a')
+    const video = run('video', 'https://video-relay.example/v1', 'video-a')
+    for (const result of [text, image, video]) assert.equal(result.status, 0, result.stderr)
+    const database = new DatabaseSync(databasePath)
+    const row = database.prepare('SELECT ai_base_url,ai_models,ai_image_base_url,ai_image_models,ai_video_base_url,ai_video_models,ai_api_key_encrypted,ai_video_api_key_encrypted FROM app_settings WHERE id=1').get()
     database.close()
-
-    const cleared = run('clear')
-    assert.equal(cleared.status, 0, cleared.stderr)
-    const keptClear = run('keep')
-    assert.equal(keptClear.status, 0, keptClear.stderr)
-    database = new DatabaseSync(databasePath)
-    row = database.prepare('SELECT ai_api_key_encrypted,ai_api_key_managed FROM app_settings WHERE id=1').get()
-    assert.equal(row.ai_api_key_encrypted, null)
-    assert.equal(Number(row.ai_api_key_managed), 1)
-    database.close()
+    assert.deepEqual({ ...row }, {
+      ai_base_url: 'https://text-relay.example/v1', ai_models: '["model-a","model-b"]',
+      ai_image_base_url: 'https://image-relay.example/v1', ai_image_models: '["image-a"]',
+      ai_video_base_url: 'https://video-relay.example/v1', ai_video_models: '["video-a"]',
+      ai_api_key_encrypted: legacyTextCiphertext, ai_video_api_key_encrypted: legacyVideoCiphertext,
+    })
 
     const credentialUrl = spawnSync(process.execPath, ['server/manage-config.js', 'relay', 'text'], {
       cwd: root, encoding: 'utf8', env,
-      input: Buffer.from('https://user:password@relay.example/v1\0model-a\0keep\0\0'),
+      input: Buffer.from('https://user:password@relay.example/v1\0model-a\0'),
     })
     assert.notEqual(credentialUrl.status, 0)
     assert.match(credentialUrl.stderr, /用户名或密码/)
     assert.equal((credentialUrl.stdout + credentialUrl.stderr).includes('user:password'), false)
 
-    const replaced = run('set', replacementKey)
-    assert.equal(replaced.status, 0, replaced.stderr)
-    database = new DatabaseSync(databasePath)
-    row = database.prepare('SELECT ai_api_key_encrypted FROM app_settings WHERE id=1').get()
-    assert.equal(typeof row.ai_api_key_encrypted, 'string')
-    assert.equal(row.ai_api_key_encrypted.includes(replacementKey), false)
-    database.close()
-
-    for (const result of [migrated, cleared, keptClear, replaced]) {
+    for (const result of [text, image, video, credentialUrl]) {
       const output = result.stdout + result.stderr
-      assert.equal(output.includes(legacyKey), false)
-      assert.equal(output.includes(replacementKey), false)
+      for (const sensitive of [legacyTextCiphertext, legacyVideoCiphertext, env.AI_API_KEY, env.AI_VIDEO_API_KEY]) {
+        assert.equal(output.includes(sensitive), false)
+      }
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -362,7 +379,12 @@ test('database startup migrates existing generations without losing rows', () =>
     const userColumns = db.prepare('PRAGMA table_info(users)').all().map((column) => column.name)
     const settingsColumns = db.prepare('PRAGMA table_info(app_settings)').all().map((column) => column.name)
     const mediaColumns = db.prepare('PRAGMA table_info(media)').all().map((column) => column.name)
-    const user = db.prepare('SELECT id,admin_password_encrypted,image_api_key_encrypted,login_failures,login_failure_started_at,login_locked_until,session_version FROM users WHERE id=?').get('legacy-user')
+    const userRow = db.prepare('SELECT * FROM users WHERE id=?').get('legacy-user')
+    const user = Object.fromEntries([
+      'id', 'admin_password_encrypted',
+      'text_api_key_encrypted', 'image_api_key_encrypted', 'video_api_key_encrypted',
+      'login_failures', 'login_failure_started_at', 'login_locked_until', 'session_version',
+    ].map((key) => [key, userRow[key]]))
     const canvas = db.prepare('SELECT id,version FROM canvases WHERE id=?').get('legacy-canvas')
     const row = db.prepare('SELECT id,request_hash FROM generations WHERE id=?').get('legacy-id')
     process.stdout.write(JSON.stringify({ columns, canvasColumns, userColumns, settingsColumns, mediaColumns, user, canvas, row }))
@@ -375,7 +397,9 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.ok(migrated.columns.includes('request_hash'))
     assert.ok(migrated.columns.includes('kind'))
     assert.ok(migrated.canvasColumns.includes('version'))
-    assert.ok(migrated.userColumns.includes('image_api_key_encrypted'))
+    for (const column of ['text_api_key_encrypted', 'image_api_key_encrypted', 'video_api_key_encrypted']) {
+      assert.ok(migrated.userColumns.includes(column), column + ' was not added to the legacy users table')
+    }
     assert.ok(migrated.userColumns.includes('admin_password_encrypted'))
     assert.ok(migrated.userColumns.includes('login_failures'))
     assert.ok(migrated.userColumns.includes('login_failure_started_at'))
@@ -384,7 +408,11 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.ok(migrated.settingsColumns.includes('ai_image_points'))
     assert.ok(migrated.settingsColumns.includes('ai_video_points'))
     assert.ok(migrated.mediaColumns.includes('data'))
-    assert.deepEqual(migrated.user, { id: 'legacy-user', admin_password_encrypted: null, image_api_key_encrypted: null, login_failures: 0, login_failure_started_at: null, login_locked_until: null, session_version: 0 })
+    assert.deepEqual(migrated.user, {
+      id: 'legacy-user', admin_password_encrypted: null,
+      text_api_key_encrypted: null, image_api_key_encrypted: null, video_api_key_encrypted: null,
+      login_failures: 0, login_failure_started_at: null, login_locked_until: null, session_version: 0,
+    })
     assert.deepEqual(migrated.canvas, { id: 'legacy-canvas', version: 0 })
     assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
   } finally {
@@ -404,8 +432,13 @@ test('database restore checker accepts only a complete, consistent canvas databa
     const legacyInitialized = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
     assert.equal(legacyInitialized.status, 0, legacyInitialized.stderr)
     const legacy = new DatabaseSync(legacyPath)
-    legacy.exec('ALTER TABLE users DROP COLUMN admin_password_encrypted; ALTER TABLE users DROP COLUMN image_api_key_encrypted; ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE admin_audit; DROP TABLE app_settings; DROP TABLE health_probe')
-    legacy.close()
+    try {
+      const columns = legacy.prepare('PRAGMA table_info(users)').all().map((item) => item.name)
+      for (const column of ['text_api_key_encrypted', 'image_api_key_encrypted', 'video_api_key_encrypted']) {
+        assert.equal(columns.includes(column), true, column + ' is missing before the legacy restore fixture can be created')
+      }
+      legacy.exec('ALTER TABLE users DROP COLUMN admin_password_encrypted; ALTER TABLE users DROP COLUMN text_api_key_encrypted; ALTER TABLE users DROP COLUMN image_api_key_encrypted; ALTER TABLE users DROP COLUMN video_api_key_encrypted; ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE admin_audit; DROP TABLE app_settings; DROP TABLE health_probe')
+    } finally { legacy.close() }
     assert.notEqual(runDatabaseCheck(legacyPath).status, 0)
     assert.equal(runDatabaseCheck(legacyPath, true).status, 0)
     const migratedLegacy = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
@@ -429,16 +462,21 @@ test('database restore checker accepts only a complete, consistent canvas databa
     assert.notEqual(missingColumnCheck.status, 0)
     assert.match(missingColumnCheck.stderr, /users/)
 
-    const missingImageKeyPath = join(databaseDirectory, 'missing-image-key.db')
-    const missingImageKeyInitialized = runApp({ DB_PATH: missingImageKeyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
-    assert.equal(missingImageKeyInitialized.status, 0, missingImageKeyInitialized.stderr)
-    const missingImageKey = new DatabaseSync(missingImageKeyPath)
-    missingImageKey.exec('ALTER TABLE users DROP COLUMN image_api_key_encrypted')
-    missingImageKey.close()
-    const missingImageKeyCheck = runDatabaseCheck(missingImageKeyPath)
-    assert.notEqual(missingImageKeyCheck.status, 0)
-    assert.match(missingImageKeyCheck.stderr, /image_api_key_encrypted/)
-    assert.equal(runDatabaseCheck(missingImageKeyPath, true, {}).status, 0)
+    for (const column of ['text_api_key_encrypted', 'image_api_key_encrypted', 'video_api_key_encrypted']) {
+      const missingKeyPath = join(databaseDirectory, `missing-${column}.db`)
+      const missingKeyInitialized = runApp({ DB_PATH: missingKeyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
+      assert.equal(missingKeyInitialized.status, 0, missingKeyInitialized.stderr)
+      const missingKey = new DatabaseSync(missingKeyPath)
+      try {
+        const columns = missingKey.prepare('PRAGMA table_info(users)').all().map((item) => item.name)
+        assert.equal(columns.includes(column), true, column + ' is missing before the restore-check regression can run')
+        missingKey.exec(`ALTER TABLE users DROP COLUMN ${column}`)
+      } finally { missingKey.close() }
+      const missingKeyCheck = runDatabaseCheck(missingKeyPath)
+      assert.notEqual(missingKeyCheck.status, 0)
+      assert.match(missingKeyCheck.stderr, new RegExp(column))
+      assert.equal(runDatabaseCheck(missingKeyPath, true, {}).status, 0)
+    }
 
     const invalidForeignKey = new DatabaseSync(databasePath)
     invalidForeignKey.exec("PRAGMA foreign_keys=OFF; INSERT INTO canvases (id,user_id,name) VALUES ('orphan','missing-user','orphan')")
@@ -459,48 +497,27 @@ test('database restore checker validates encrypted relay settings without exposi
   const imageKey = 'synthetic-restored-image-key'
   const wrongSecret = 'different-jwt-secret-that-is-longer-than-thirty-two-bytes'
   const script = `
-    const { default: app } = await import('./server/app.js')
     const { db } = await import('./server/db.js')
-    const server = app.listen(0, '127.0.0.1')
-    await new Promise((resolve) => server.once('listening', resolve))
-    const base = 'http://127.0.0.1:' + server.address().port + '/api'
-    const json = async (path, options = {}) => {
-      const response = await fetch(base + path, {
-        ...options,
-        headers: { 'content-type': 'application/json', ...(options.headers || {}) },
-      })
-      if (!response.ok) throw new Error('encrypted restore fixture setup failed')
-      return response.json()
+    const { createCipheriv, createHash, randomBytes } = await import('node:crypto')
+    const key = createHash('sha256').update('ai-settings:' + process.env.JWT_SECRET).digest()
+    const encrypt = (value) => {
+      const iv = randomBytes(12)
+      const cipher = createCipheriv('aes-256-gcm', key, iv)
+      const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+      return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64')).join('.')
     }
-    const registration = await json('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ name: 'Restore Owner', email: 'restore-owner@example.com', password: 'password123', setupToken: process.env.ADMIN_SETUP_TOKEN }),
-    })
-    const authorization = 'Bearer ' + registration.token
-    await json('/me/image-key', { method: 'PUT', headers: { authorization }, body: JSON.stringify({ apiKey: ${JSON.stringify(imageKey)} }) })
-    await json('/admin/ai-config', {
-      method: 'PUT', headers: { authorization },
-      body: JSON.stringify({ baseUrl: 'https://text-relay.example/v1', apiKey: ${JSON.stringify(textKey)}, models: ['text-model'] }),
-    })
-    await json('/admin/video-config', {
-      method: 'PUT', headers: { authorization },
-      body: JSON.stringify({ baseUrl: 'https://video-relay.example/v1', apiKey: ${JSON.stringify(videoKey)}, models: ['video-model'], points: 7 }),
-    })
-    await new Promise((resolve) => server.close(resolve))
+    db.prepare('INSERT INTO users (id,email,password_hash,admin_password_encrypted,name,role,text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run('restore-owner','restore-owner@example.com','hash',null,'Restore Owner','user',encrypt(${JSON.stringify(textKey)}),encrypt(${JSON.stringify(imageKey)}),encrypt(${JSON.stringify(videoKey)}))
     db.close()
   `
   try {
     const initialized = runApp({ DB_PATH: databasePath }, script, databaseDirectory)
     assert.equal(initialized.status, 0, initialized.stderr)
     const database = new DatabaseSync(databasePath)
-    const ciphertexts = [
-      ...Object.values(database.prepare('SELECT ai_api_key_encrypted,ai_video_api_key_encrypted FROM app_settings WHERE id=1').get()),
-      database.prepare('SELECT image_api_key_encrypted FROM users WHERE email=?').get('restore-owner@example.com').image_api_key_encrypted,
-      database.prepare('SELECT admin_password_encrypted FROM users WHERE email=?').get('restore-owner@example.com').admin_password_encrypted,
-    ]
+    const ciphertexts = Object.values(database.prepare('SELECT text_api_key_encrypted,image_api_key_encrypted,video_api_key_encrypted FROM users WHERE email=?').get('restore-owner@example.com'))
     database.close()
     assert.equal(ciphertexts.every((value) => typeof value === 'string' && value.split('.').length === 3), true)
-    for (const [ciphertext, plaintext] of ciphertexts.map((value, index) => [value, [textKey, videoKey, imageKey, 'password123'][index]])) {
+    for (const [ciphertext, plaintext] of ciphertexts.map((value, index) => [value, [textKey, imageKey, videoKey][index]])) {
       assert.equal(ciphertext.includes(plaintext), false)
     }
 
@@ -516,7 +533,7 @@ test('database restore checker validates encrypted relay settings without exposi
 
     for (const result of [accepted, rejectedWrong, rejectedMissing]) {
       const output = result.stdout + result.stderr
-      for (const sensitive of [...ciphertexts, textKey, videoKey, imageKey, 'password123']) assert.equal(output.includes(sensitive), false)
+      for (const sensitive of [...ciphertexts, textKey, videoKey, imageKey]) assert.equal(output.includes(sensitive), false)
     }
   } finally {
     rmSync(databaseDirectory, { recursive: true, force: true })

@@ -11,6 +11,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { api, ApiError, session, User } from './api'
+import { createUuid, shortRequestHash } from './uuid'
 
 type CanvasData = {
   kind: 'note' | 'text' | 'ai' | 'image' | 'video' | 'group'
@@ -81,7 +82,7 @@ type AssistantMessage = { id: string; role: 'user' | 'assistant'; content: strin
 type ImageToolDialog = { nodeId: string; tool: 'crop' | 'split' | 'upscale' | 'view' } | null
 type ImageToolbarToolId = 'info' | 'delete' | 'saveAsset' | 'download' | 'edit' | 'replace' | 'resize' | 'crop' | 'split' | 'upscale' | 'view'
 type ImageToolbarConfig = { ids: ImageToolbarToolId[]; showLabels: boolean }
-const uid = () => crypto.randomUUID()
+const uid = createUuid
 const maxImageImportCount = 12
 const imageToolbarStorageKey = 'ink-image-quick-tools-v1'
 const imageToolbarToolIds: ImageToolbarToolId[] = ['info', 'delete', 'saveAsset', 'download', 'edit', 'replace', 'resize', 'crop', 'split', 'upscale', 'view']
@@ -225,8 +226,7 @@ function readDraft(userId: string, canvasId: string): CanvasDraft | null {
   } catch { return null }
 }
 async function aiRequestKey(canvasId: string, nodeId: string, prompt: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(prompt))
-  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 16)
+  const hash = await shortRequestHash(prompt)
   const storageKey = `ink-ai:${canvasId}:${nodeId}:${hash}`
   const requestKey = localStorage.getItem(storageKey) || uid()
   localStorage.setItem(storageKey, requestKey)
@@ -364,7 +364,8 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const icon = data.kind === 'group' ? <Group size={15} /> : data.kind === 'ai' ? <Bot size={15} /> : data.kind === 'video' ? <Video size={15} /> : data.kind === 'image' ? <Image size={15} /> : data.kind === 'note' ? <StickyNote size={15} /> : <Text size={15} />
   const mode: NonNullable<CanvasData['mode']> = data.mode === 'image' || data.mode === 'video' ? data.mode : 'text'
   const models = mode === 'image' ? data.imageModels || [] : mode === 'video' ? data.videoModels || [] : data.textModels || []
-  const model = mode === 'image' ? data.imageModel || models[0] || '' : mode === 'video' ? data.videoModel || models[0] || '' : data.textModel || models[0] || ''
+  const configuredModel = mode === 'image' ? data.imageModel : mode === 'video' ? data.videoModel : data.textModel
+  const model = configuredModel && models.includes(configuredModel) ? configuredModel : models[0] || ''
   const imageSize = data.imageSize || '1024x1024'
   const videoSize = data.videoSize || '1280x720'
   const videoSeconds = data.videoSeconds || 6
@@ -380,6 +381,10 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   }
   useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current) }, [])
   useEffect(() => setImageToolbarSettingsOpen(false), [id])
+  useEffect(() => {
+    if (data.kind !== 'ai' || !models.length || configuredModel === model) return
+    data.onChange?.(id, mode === 'image' ? { imageModel: model } : mode === 'video' ? { videoModel: model } : { textModel: model })
+  }, [configuredModel, data.kind, data.onChange, id, mode, model, models])
   const saveImageToolbarConfig = (next: ImageToolbarConfig) => {
     setImageToolbarConfig(next)
     localStorage.setItem(imageToolbarStorageKey, JSON.stringify(next))
@@ -700,11 +705,19 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   </Drawer>
 }
 
-function AccountDrawer({ user, imageEndpoint, refresh, close, notify }: { user: User; imageEndpoint: string; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
+function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
+  type RelayKeyKind = 'text' | 'image' | 'video'
+  const relayKeys: Array<{ kind: RelayKeyKind; label: string; configured: boolean }> = [
+    { kind: 'text', label: '文字', configured: user.textApiKeyConfigured },
+    { kind: 'image', label: '图片', configured: user.imageApiKeyConfigured },
+    { kind: 'video', label: '视频', configured: user.videoApiKeyConfigured },
+  ]
   const [busy, setBusy] = useState(false)
   const [passwordError, setPasswordError] = useState('')
-  const [imageApiKey, setImageApiKey] = useState('')
-  const [imageKeyError, setImageKeyError] = useState('')
+  const [relayKeyValues, setRelayKeyValues] = useState<Record<RelayKeyKind, string>>({ text: '', image: '', video: '' })
+  const [relayKeyErrors, setRelayKeyErrors] = useState<Record<RelayKeyKind, string>>({ text: '', image: '', video: '' })
+  const setRelayKeyValue = (kind: RelayKeyKind, value: string) => setRelayKeyValues((current) => ({ ...current, [kind]: value }))
+  const setRelayKeyError = (kind: RelayKeyKind, value: string) => setRelayKeyErrors((current) => ({ ...current, [kind]: value }))
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
@@ -723,45 +736,45 @@ function AccountDrawer({ user, imageEndpoint, refresh, close, notify }: { user: 
       notify({ type: 'ok', text: '密码已更新，其他设备需要重新登录' })
     } catch (err) { setPasswordError((err as Error).message) } finally { setBusy(false) }
   }
-  async function saveImageKey() {
-    const apiKey = imageApiKey.trim()
+  async function saveRelayKey(kind: RelayKeyKind, label: string) {
+    const apiKey = relayKeyValues[kind].trim()
     if (busy || !apiKey) return
     setBusy(true)
-    setImageKeyError('')
+    setRelayKeyError(kind, '')
     try {
-      await api('/me/image-key', { method: 'PUT', body: JSON.stringify({ apiKey }) })
+      await api(`/me/${kind}-key`, { method: 'PUT', body: JSON.stringify({ apiKey }) })
       await refresh()
-      notify({ type: 'ok', text: '生图 API 密钥已安全保存' })
-    } catch (err) { setImageKeyError((err as Error).message) } finally { setImageApiKey(''); setBusy(false) }
+      notify({ type: 'ok', text: `${label} API 密钥已安全保存` })
+    } catch (err) { setRelayKeyError(kind, (err as Error).message) } finally { setRelayKeyValue(kind, ''); setBusy(false) }
   }
-  async function testImageKey() {
-    if (busy || (!imageApiKey.trim() && !user.imageApiKeyConfigured)) return
+  async function testRelayKey(kind: RelayKeyKind, label: string, configured: boolean) {
+    const apiKey = relayKeyValues[kind].trim()
+    if (busy || (!apiKey && !configured)) return
     setBusy(true)
-    setImageKeyError('')
+    setRelayKeyError(kind, '')
     try {
-      await api('/me/image-key/test', { method: 'POST', body: JSON.stringify({ apiKey: imageApiKey.trim() || undefined }) })
-      notify({ type: 'ok', text: '生图 API 密钥测试成功' })
-    } catch (err) { setImageKeyError((err as Error).message) } finally { setImageApiKey(''); setBusy(false) }
+      await api(`/me/${kind}-key/test`, { method: 'POST', body: JSON.stringify({ apiKey: apiKey || undefined }) })
+      notify({ type: 'ok', text: `${label} API 密钥测试成功` })
+    } catch (err) { setRelayKeyError(kind, (err as Error).message) } finally { setRelayKeyValue(kind, ''); setBusy(false) }
   }
-  async function clearImageKey() {
-    if (busy || !user.imageApiKeyConfigured || !window.confirm('确认清除已保存的生图 API 密钥？清除后将无法生成图片，直到重新配置。')) return
+  async function clearRelayKey(kind: RelayKeyKind, label: string, configured: boolean) {
+    if (busy || !configured || !window.confirm(`确认清除已保存的${label} API 密钥？清除后对应生成功能将不可用，直到重新配置。`)) return
     setBusy(true)
-    setImageKeyError('')
+    setRelayKeyError(kind, '')
     try {
-      await api('/me/image-key', { method: 'DELETE' })
+      await api(`/me/${kind}-key`, { method: 'DELETE' })
       await refresh()
-      notify({ type: 'ok', text: '生图 API 密钥已清除' })
-    } catch (err) { setImageKeyError((err as Error).message) } finally { setImageApiKey(''); setBusy(false) }
+      notify({ type: 'ok', text: `${label} API 密钥已清除` })
+    } catch (err) { setRelayKeyError(kind, (err as Error).message) } finally { setRelayKeyValue(kind, ''); setBusy(false) }
   }
   return <Drawer title={'账户安全'} onClose={close}>
     <section className={'drawer-section'}><h3>登录账号</h3><p className={'account-email'}>{user.email}</p></section>
-    <section className={'drawer-section'}><h3>生图 API 密钥</h3>
-      <label>当前端点<input type={'url'} value={imageEndpoint} readOnly /></label>
-      <label>你的 API 密钥<input type={'password'} placeholder={user.imageApiKeyConfigured ? '已配置，输入新密钥可替换' : '请先输入自己的生图 API 密钥'} value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} autoComplete={'new-password'} disabled={busy} /></label>
-      <p className={'muted'}>{user.imageApiKeyConfigured ? '已配置。密钥不会回显，只保存在服务端。' : '尚未配置。生成图片前，请先在此保存并测试你的密钥。'}</p>
-      {imageKeyError && <div className={'form-error'} role={'alert'}>{imageKeyError}</div>}
-      <div className={'relay-actions'}><button className={'primary'} type={'button'} onClick={() => void saveImageKey()} disabled={busy || !imageApiKey.trim()}><KeyRound size={16} />保存密钥</button><button className={'secondary'} type={'button'} onClick={() => void testImageKey()} disabled={busy || (!imageApiKey.trim() && !user.imageApiKeyConfigured)}><Check size={16} />测试密钥</button>{user.imageApiKeyConfigured && <button className={'secondary danger-text'} type={'button'} onClick={() => void clearImageKey()} disabled={busy}>清除密钥</button>}</div>
-    </section>
+    {relayKeys.map(({ kind, label, configured }) => <section className={'drawer-section relay-key-section'} key={kind}><h3>{label} API 密钥</h3>
+      <label>你的 API 密钥<input type={'password'} placeholder={configured ? '已配置，输入新密钥可替换' : `输入你的${label} API 密钥`} value={relayKeyValues[kind]} onChange={(event) => setRelayKeyValue(kind, event.target.value)} autoComplete={'new-password'} disabled={busy} /></label>
+      <p className={'muted'}>{configured ? '已配置。密钥不会回显，只保存在服务端。' : `尚未配置。使用${label}生成前，请先保存并测试。`}</p>
+      {relayKeyErrors[kind] && <div className={'form-error'} role={'alert'}>{relayKeyErrors[kind]}</div>}
+      <div className={'relay-actions'}><button className={'primary'} type={'button'} onClick={() => void saveRelayKey(kind, label)} disabled={busy || !relayKeyValues[kind].trim()}><KeyRound size={16} />{configured ? '替换密钥' : '保存密钥'}</button><button className={'secondary'} type={'button'} onClick={() => void testRelayKey(kind, label, configured)} disabled={busy || (!relayKeyValues[kind].trim() && !configured)}><Check size={16} />测试密钥</button>{configured && <button className={'secondary danger-text'} type={'button'} onClick={() => void clearRelayKey(kind, label, configured)} disabled={busy}>清除密钥</button>}</div>
+    </section>)}
     <form className={'drawer-section'} onSubmit={changePassword}><h3>修改密码</h3>
       <label>当前密码<input name={'currentPassword'} type={'password'} minLength={8} maxLength={72} autoComplete={'current-password'} required /></label>
       <label>新密码<input name={'newPassword'} type={'password'} minLength={8} maxLength={72} autoComplete={'new-password'} required /></label>
@@ -774,29 +787,35 @@ function AccountDrawer({ user, imageEndpoint, refresh, close, notify }: { user: 
 }
 
 function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
+  type RelayKind = 'text' | 'image' | 'video'
   type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
   type AuditEntry = { id: string; action: string; target_id?: string; actor_email: string; details: Record<string, string | number | null>; created_at: string }
-  type RelayData = { configured: boolean; keyConfigured: boolean; baseUrl: string; models: string[]; source: string }
+  type RelayData = { baseUrl: string; models: string[]; source: string }
   type VideoRelayData = RelayData & { points: number }
-  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; ai: RelayData; video: VideoRelayData }
+  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; text: RelayData; image: RelayData; video: VideoRelayData }
   const [data, setData] = useState<AdminData | null>(null)
   const [points, setPoints] = useState(100)
   const [count, setCount] = useState(1)
   const [codes, setCodes] = useState<string[]>([])
-  const [aiBaseUrl, setAiBaseUrl] = useState('')
-  const [aiApiKey, setAiApiKey] = useState('')
-  const [aiModels, setAiModels] = useState('gpt-4o-mini')
+  const [textBaseUrl, setTextBaseUrl] = useState('')
+  const [textModels, setTextModels] = useState<string[]>([])
+  const [discoveredTextModels, setDiscoveredTextModels] = useState<string[]>([])
+  const [textModelQuery, setTextModelQuery] = useState('')
+  const [imageBaseUrl, setImageBaseUrl] = useState('')
+  const [imageModels, setImageModels] = useState('')
   const [videoBaseUrl, setVideoBaseUrl] = useState('')
-  const [videoApiKey, setVideoApiKey] = useState('')
   const [videoModels, setVideoModels] = useState('')
   const [videoPoints, setVideoPoints] = useState(24)
-  const [relayTab, setRelayTab] = useState<'text' | 'video'>('text')
+  const [relayTab, setRelayTab] = useState<RelayKind>('text')
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const load = useCallback(() => api<AdminData>('/admin/overview').then((result) => {
     setData(result)
-    setAiBaseUrl(result.ai.baseUrl)
-    setAiModels(result.ai.models.join(', '))
+    setTextBaseUrl(result.text.baseUrl)
+    setTextModels(result.text.models)
+    setDiscoveredTextModels((models) => [...new Set([...models, ...result.text.models])])
+    setImageBaseUrl(result.image.baseUrl)
+    setImageModels(result.image.models.join(', '))
     setVideoBaseUrl(result.video.baseUrl)
     setVideoModels(result.video.models.join(', '))
     setVideoPoints(result.video.points)
@@ -814,56 +833,50 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
       notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
-  async function saveAIConfig(clearApiKey = false) {
+  const parseModels = (value: string) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
+  const relayDraft = (kind: RelayKind) => kind === 'text'
+    ? { baseUrl: textBaseUrl.trim(), models: textModels }
+    : kind === 'image'
+      ? { baseUrl: imageBaseUrl.trim(), models: parseModels(imageModels) }
+      : { baseUrl: videoBaseUrl.trim(), models: parseModels(videoModels), points: videoPoints }
+  async function saveRelayConfig(kind: RelayKind) {
     if (busyRef.current) return
-    const models = aiModels.split(',').map((item) => item.trim()).filter(Boolean)
-    if (!models.length) return notify({ type: 'error', text: '请至少填写一个模型' })
-    if (clearApiKey && !window.confirm('确认清除后台保存的密钥？如果服务器 .env 中有密钥，将自动使用该密钥。')) return
+    const draft = relayDraft(kind)
+    const label = kind === 'text' ? '文字' : kind === 'image' ? '图片' : '视频'
+    if (!draft.baseUrl) return notify({ type: 'error', text: `请填写${label}中转站地址` })
+    if (!draft.models.length) return notify({ type: 'error', text: `请至少开放一个${label}模型` })
+    if (kind === 'video' && (!Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000)) return notify({ type: 'error', text: '视频积分必须是 1 到 1000000 的整数' })
     busyRef.current = true
     setBusy(true)
     try {
-      await api('/admin/ai-config', { method: 'PUT', body: JSON.stringify({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined, clearApiKey, models }) })
-      setAiApiKey('')
+      await api(`/admin/${kind}-config`, { method: 'PUT', body: JSON.stringify(draft) })
       await load()
-      notify({ type: 'ok', text: clearApiKey ? '已清除后台保存的密钥' : 'AI 中转配置已保存' })
+      notify({ type: 'ok', text: `${label}中转配置已保存` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
-  async function testAIConfig() {
+  async function testRelayConfig(kind: RelayKind) {
     if (busyRef.current) return
-    const models = aiModels.split(',').map((item) => item.trim()).filter(Boolean)
-    const model = models[0]
-    if (!aiBaseUrl.trim() || !model) return notify({ type: 'error', text: '请先填写中转站地址和模型' })
+    const draft = relayDraft(kind)
+    const label = kind === 'text' ? '文字' : kind === 'image' ? '图片' : '视频'
+    if (!draft.baseUrl || !draft.models[0]) return notify({ type: 'error', text: `请先填写${label}中转站地址并选择模型` })
     busyRef.current = true
     setBusy(true)
     try {
-      const result = await api<{ reply: string }>('/admin/ai-config/test', { method: 'POST', body: JSON.stringify({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined, model }) })
-      notify({ type: 'ok', text: `中转测试成功：${result.reply || '上游已响应'}` })
+      const result = await api<{ reply?: string }>(`/admin/${kind}-config/test`, { method: 'POST', body: JSON.stringify({ baseUrl: draft.baseUrl, model: draft.models[0] }) })
+      notify({ type: 'ok', text: `${label}中转测试成功${result.reply ? `：${result.reply}` : ''}` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
-  async function saveVideoConfig(clearApiKey = false) {
+  async function discoverModels() {
     if (busyRef.current) return
-    const models = videoModels.split(',').map((item) => item.trim()).filter(Boolean)
-    if (!models.length) return notify({ type: 'error', text: '请至少填写一个视频模型' })
-    if (!Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000) return notify({ type: 'error', text: '视频积分必须是 1 到 1000000 的整数' })
-    if (clearApiKey && !window.confirm('确认清除后台保存的视频密钥？如果服务器 .env 中有密钥，将自动使用该密钥。')) return
+    const baseUrl = textBaseUrl.trim()
+    if (!baseUrl) return notify({ type: 'error', text: '请先填写文字中转站地址' })
     busyRef.current = true
     setBusy(true)
     try {
-      await api('/admin/video-config', { method: 'PUT', body: JSON.stringify({ baseUrl: videoBaseUrl, apiKey: clearApiKey ? undefined : videoApiKey || undefined, clearApiKey, models, points: videoPoints }) })
-      await load()
-      notify({ type: 'ok', text: clearApiKey ? '已清除后台保存的视频密钥' : '视频中转配置已保存' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { setVideoApiKey(''); busyRef.current = false; setBusy(false) }
-  }
-  async function testVideoConfig() {
-    if (busyRef.current) return
-    const model = videoModels.split(',').map((item) => item.trim()).filter(Boolean)[0]
-    if (!videoBaseUrl.trim() || !model) return notify({ type: 'error', text: '请先填写视频中转站地址和模型' })
-    busyRef.current = true
-    setBusy(true)
-    try {
-      await api('/admin/video-config/test', { method: 'POST', body: JSON.stringify({ baseUrl: videoBaseUrl, apiKey: videoApiKey || undefined, model }) })
-      notify({ type: 'ok', text: '视频中转测试成功，上游已创建测试任务' })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { setVideoApiKey(''); busyRef.current = false; setBusy(false) }
+      const result = await api<{ models: string[] }>('/admin/text-config/models', { method: 'POST', body: JSON.stringify({ baseUrl }) })
+      setDiscoveredTextModels([...new Set([...textModels, ...result.models])])
+      notify({ type: 'ok', text: `已获取 ${result.models.length} 个上游文字模型` })
+    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   function closeAdmin() {
     if (busyRef.current) {
@@ -898,16 +911,26 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     } catch (err) { notify({ type: 'error', text: committed ? '订单已处理，但界面刷新失败，请重新打开运营管理' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   const pending = data?.orders.filter((order) => order.status === 'pending') || []
-  const auditText = (entry: AuditEntry) => entry.action === 'ai_config.update'
+  const auditText = (entry: AuditEntry) => entry.action === 'text_config.update' || entry.action === 'ai_config.update'
     ? '更新文字中转配置'
+    : entry.action === 'image_config.update'
+    ? '更新图片中转配置'
     : entry.action === 'video_config.update'
     ? '更新视频中转配置'
     : entry.action === 'codes.create'
     ? `生成 ${entry.details.count} 个兑换码 · 每码 ${entry.details.points} 积分`
-    : `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
+    : entry.action === 'topup.approve' || entry.action === 'topup.reject'
+    ? `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
+    : entry.action
+  const visibleTextModels = discoveredTextModels.filter((model) => model.toLowerCase().includes(textModelQuery.trim().toLowerCase()))
+  const relayReady = (relay: RelayData) => Boolean(relay.baseUrl && relay.models.length)
   return <Drawer title="运营管理" onClose={closeAdmin}>
-    {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className="relay-summary"><div className={`config-status ${data.ai.configured ? 'ready' : ''}`}><span>{data.ai.configured ? <Check size={16} /> : <Settings size={16} />}{data.ai.configured ? '文字中转已配置' : '文字中转待配置'}</span><small>{data.ai.baseUrl || '尚未设置地址和密钥'}</small></div><div className={`config-status ${data.video.configured ? 'ready' : ''}`}><span>{data.video.configured ? <Check size={16} /> : <Video size={16} />}{data.video.configured ? '视频中转已配置' : '视频中转待配置'}</span><small>{data.video.baseUrl || '尚未设置地址和密钥'}</small></div></div></>}
-    <section className="drawer-section relay-config"><div className="relay-tabs" role="tablist" aria-label="中转配置类型"><button role="tab" aria-selected={relayTab === 'text'} className={relayTab === 'text' ? 'active' : ''} onClick={() => setRelayTab('text')}><Bot size={15} />文字</button><button role="tab" aria-selected={relayTab === 'video'} className={relayTab === 'video' ? 'active' : ''} onClick={() => setRelayTab('video')}><Video size={15} />视频</button></div>{relayTab === 'text' ? <><h3>文字中转</h3><label>文字中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} disabled={busy} /></label><label>文字 API 密钥<input type="password" placeholder={data?.ai.keyConfigured ? '留空则保持当前密钥' : '输入文字中转密钥'} value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放文字模型<input value={aiModels} onChange={(event) => setAiModels(event.target.value)} placeholder="gpt-5, gpt-4.1-mini" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testAIConfig()} disabled={busy || !aiBaseUrl.trim() || !aiModels.trim()}><Check size={16} />测试文字</button>{data?.ai.keyConfigured && <button className="secondary danger-text" onClick={() => void saveAIConfig(true)} disabled={busy}>清除密钥</button>}</div><small>文字中转密钥只保存在服务端。</small></> : <><h3>视频中转</h3><label>视频中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={videoBaseUrl} onChange={(event) => setVideoBaseUrl(event.target.value)} disabled={busy} /></label><label>视频 API 密钥<input type="password" placeholder={data?.video.keyConfigured ? '留空则保持当前密钥' : '输入视频中转密钥'} value={videoApiKey} onChange={(event) => setVideoApiKey(event.target.value)} autoComplete="new-password" disabled={busy} /></label><label>开放视频模型<input value={videoModels} onChange={(event) => setVideoModels(event.target.value)} placeholder="video-model" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><label>每次视频积分<input type="number" min={1} max={1000000} step={1} value={videoPoints} onChange={(event) => setVideoPoints(Number(event.target.value))} disabled={busy} /></label><div className="relay-actions"><button className="primary" onClick={() => void saveVideoConfig()} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim() || !Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testVideoConfig()} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim()}><Check size={16} />测试视频</button>{data?.video.keyConfigured && <button className="secondary danger-text" onClick={() => void saveVideoConfig(true)} disabled={busy}>清除密钥</button>}</div><small>视频密钥只保存在服务端；测试不会保存输入框中的临时密钥。</small></>}</section>
+    {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className="relay-summary">{([['text', '文字', Bot], ['image', '图片', Image], ['video', '视频', Video]] as const).map(([kind, label, Icon]) => { const relay = data[kind]; const ready = relayReady(relay); return <div className={`config-status ${ready ? 'ready' : ''}`} key={kind}><span>{ready ? <Check size={16} /> : <Icon size={16} />}{ready ? `${label}中转已配置` : `${label}中转待配置`}</span><small>{relay.baseUrl || '尚未设置地址'} · {relay.models.length} 个开放模型</small></div> })}</div></>}
+    <section className="drawer-section relay-config"><div className="relay-tabs" role="tablist" aria-label="中转配置类型"><button role="tab" aria-selected={relayTab === 'text'} className={relayTab === 'text' ? 'active' : ''} onClick={() => setRelayTab('text')}><Bot size={15} />文字</button><button role="tab" aria-selected={relayTab === 'image'} className={relayTab === 'image' ? 'active' : ''} onClick={() => setRelayTab('image')}><Image size={15} />图片</button><button role="tab" aria-selected={relayTab === 'video'} className={relayTab === 'video' ? 'active' : ''} onClick={() => setRelayTab('video')}><Video size={15} />视频</button></div>
+      {relayTab === 'text' && <><h3>文字中转</h3><label>文字中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={textBaseUrl} onChange={(event) => setTextBaseUrl(event.target.value)} disabled={busy} /></label><div className="relay-model-heading"><strong>开放文字模型</strong><button className="secondary" type="button" onClick={() => void discoverModels()} disabled={busy || !textBaseUrl.trim()}><Search size={15} />获取上游模型</button></div>{discoveredTextModels.length > 0 ? <><label className="relay-model-search"><Search size={14} /><input aria-label="筛选文字模型" placeholder="筛选模型" value={textModelQuery} onChange={(event) => setTextModelQuery(event.target.value)} /></label><div className="relay-model-list">{visibleTextModels.map((model) => <label key={model}><input type="checkbox" checked={textModels.includes(model)} onChange={(event) => setTextModels((models) => event.target.checked ? [...new Set([...models, model])] : models.filter((item) => item !== model))} disabled={busy} /><span>{model}</span></label>)}{visibleTextModels.length === 0 && <p className="muted">没有匹配模型</p>}</div><small>已开放 {textModels.length} 个模型</small></> : <p className="muted">获取上游模型后选择要向用户开放的模型。</p>}<div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('text')} disabled={busy || !textBaseUrl.trim() || !textModels.length}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('text')} disabled={busy || !textBaseUrl.trim() || !textModels.length}><Check size={16} />测试文字</button></div></>}
+      {relayTab === 'image' && <><h3>图片中转</h3><label>图片中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={imageBaseUrl} onChange={(event) => setImageBaseUrl(event.target.value)} disabled={busy} /></label><label>开放图片模型<input value={imageModels} onChange={(event) => setImageModels(event.target.value)} placeholder="image-model" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('image')} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('image')} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Check size={16} />测试图片</button></div></>}
+      {relayTab === 'video' && <><h3>视频中转</h3><label>视频中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={videoBaseUrl} onChange={(event) => setVideoBaseUrl(event.target.value)} disabled={busy} /></label><label>开放视频模型<input value={videoModels} onChange={(event) => setVideoModels(event.target.value)} placeholder="video-model" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><label>每次视频积分<input type="number" min={1} max={1000000} step={1} value={videoPoints} onChange={(event) => setVideoPoints(Number(event.target.value))} disabled={busy} /></label><div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('video')} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim() || !Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('video')} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim()}><Check size={16} />测试视频</button></div></>}
+    </section>
     <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
     <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
     <section className="drawer-section"><h3>操作审计</h3><div className="audit-list">{data?.audit.map((entry) => <div key={entry.id}><strong>{auditText(entry)}</strong><small>{entry.actor_email} · {new Date(entry.created_at + 'Z').toLocaleString()}</small></div>)}{data?.audit.length === 0 && <p className="muted">暂无后台操作记录</p>}</div></section>
@@ -960,24 +983,27 @@ function CanvasSidePanel({ open, width, tab, query, nodes, assets, assetsLoading
   </aside>
 }
 
-function CanvasAssistantPanel({ open, messages, busy, contextCount, onClose, onSend, onInsertText, onCreateImage, onClear }: {
+function CanvasAssistantPanel({ open, messages, busy, contextCount, models, model, onModel, onClose, onSend, onInsertText, onCreateImage, onClear }: {
   open: boolean
   messages: AssistantMessage[]
   busy: boolean
   contextCount: number
+  models: string[]
+  model: string
+  onModel: (model: string) => void
   onClose: () => void
-  onSend: (content: string) => void
+  onSend: (content: string, model: string) => void
   onInsertText: (content: string) => void
   onCreateImage: (content: string) => void
   onClear: () => void
 }) {
   const [value, setValue] = useState('')
-  const submit = (event: FormEvent) => { event.preventDefault(); const content = value.trim(); if (!content || busy) return; setValue(''); onSend(content) }
+  const submit = (event: FormEvent) => { event.preventDefault(); const content = value.trim(); if (!content || !model || busy) return; setValue(''); onSend(content, model) }
   return <aside className={'canvas-assistant ' + (open ? 'open' : '')} aria-hidden={!open} onClick={(event) => event.stopPropagation()}>
     <header><span><MessageSquare size={16} /><strong>画布助手</strong></span><div>{messages.length > 0 && <button title="清空对话" aria-label="清空对话" onClick={onClear}><Trash2 size={15} /></button>}<button title="收起助手" aria-label="收起助手" onClick={onClose}><PanelRightClose size={16} /></button></div></header>
-    <div className="assistant-context"><span>{contextCount ? `已聚焦 ${contextCount} 个节点` : '基于整张画布'}</span></div>
+    <div className="assistant-context"><span>{contextCount ? `已聚焦 ${contextCount} 个节点` : '基于整张画布'}</span><select aria-label="画布助手文字模型" title="文字模型" value={model} onChange={(event) => onModel(event.target.value)}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select></div>
     <div className="assistant-messages">{messages.length === 0 ? <div className="assistant-empty"><Sparkles size={22} /><strong>从画布继续思考</strong></div> : messages.map((message) => <article className={message.role} key={message.id}><div>{message.content}</div>{message.role === 'assistant' && <footer><button onClick={() => onInsertText(message.content)}><Text size={13} />放入画布</button><button onClick={() => onCreateImage(message.content)}><Image size={13} />转为生图</button></footer>}</article>)}{busy && <article className="assistant loading"><div>正在整理画布内容…</div></article>}</div>
-    <form className="assistant-composer" onSubmit={submit}><textarea className="nodrag nowheel" aria-label="询问画布助手" placeholder="描述下一步创作方向…" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} /><button title="发送" aria-label="发送" disabled={busy || !value.trim()}><Send size={17} /></button></form>
+    <form className="assistant-composer" onSubmit={submit}><textarea className="nodrag nowheel" aria-label="询问画布助手" placeholder="描述下一步创作方向…" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} /><button title="发送" aria-label="发送" disabled={busy || !model || !value.trim()}><Send size={17} /></button></form>
   </aside>
 }
 
@@ -1032,6 +1058,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([])
   const assistantMessagesRef = useRef<AssistantMessage[]>([])
   const [assistantBusy, setAssistantBusy] = useState(false)
+  const [assistantModel, setAssistantModel] = useState('')
   const assistantBusyRef = useRef(false)
   const [canvasMenu, setCanvasMenu] = useState<CanvasMenu>(null)
   const canvasMenuRef = useRef<HTMLDivElement | null>(null)
@@ -1052,10 +1079,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [relayConfig, setRelayConfig] = useState<{
     textModels: string[]
     imageModels: string[]
-    imageEndpoint: string
     videoModels: string[]
     videoPoints: number
-  }>({ textModels: [], imageModels: [], imageEndpoint: '', videoModels: [], videoPoints: 24 })
+  }>({ textModels: [], imageModels: [], videoModels: [], videoPoints: 24 })
   const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | 'deleted' | null>(null)
   const [historyVersion, setHistoryVersion] = useState(0)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
@@ -1137,14 +1163,16 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   }, [setUser])
   useEffect(() => {
     if (panel !== null) return
-    api<{ textModels: string[]; imageModels: string[]; imageEndpoint: string; videoModels: string[]; videoPoints: number }>('/config')
+    api<{ textModels: string[]; imageModels: string[]; videoModels: string[]; videoPoints: number }>('/config')
       .then((config) => setRelayConfig({
         textModels: config.textModels || [], imageModels: config.imageModels || [],
-        imageEndpoint: config.imageEndpoint || '',
         videoModels: config.videoModels || [], videoPoints: config.videoPoints || 24,
       }))
       .catch((err) => setNotice({ type: 'error', text: err.message }))
   }, [panel])
+  useEffect(() => {
+    setAssistantModel((currentModel) => relayConfig.textModels.includes(currentModel) ? currentModel : relayConfig.textModels[0] || '')
+  }, [relayConfig.textModels])
   const markDirty = useCallback(() => {
     revision.current += 1
     setSaveState('dirty')
@@ -1378,6 +1406,11 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const runAI = useCallback(async (id: string, prompt: string, model?: string) => {
     const canvasId = activeCanvasId.current
     if (!canvasId || aiNodesInFlight.current.has(id)) return
+    if (!user.textApiKeyConfigured) {
+      setNotice({ type: 'error', text: '请先在账户安全中保存并测试你的文字 API 密钥' })
+      setPanel('account')
+      return
+    }
     aiNodesInFlight.current.add(id)
     aiInFlight.current += 1
     setNodeBusy(id, true)
@@ -1397,12 +1430,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       aiNodesInFlight.current.delete(id)
       aiInFlight.current = Math.max(0, aiInFlight.current - 1)
     }
-  }, [appendResultNode, refreshUser, setNodeBusy])
+  }, [appendResultNode, refreshUser, setNodeBusy, user.textApiKeyConfigured])
   const runImage = useCallback(async (id: string, prompt: string, model?: string, size: ImageSize = '1024x1024') => {
     const canvasId = activeCanvasId.current
     if (!canvasId || aiNodesInFlight.current.has(id)) return
     if (!user.imageApiKeyConfigured) {
-      setNotice({ type: 'error', text: '请先在账户安全中保存并测试你的生图 API 密钥' })
+      setNotice({ type: 'error', text: '请先在账户安全中保存并测试你的图片 API 密钥' })
       setPanel('account')
       return
     }
@@ -1425,6 +1458,11 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const runVideo = useCallback(async (id: string, prompt: string, model?: string, size: VideoSize = '1280x720', seconds = 6) => {
     const canvasId = activeCanvasId.current
     if (!canvasId || aiNodesInFlight.current.has(id)) return
+    if (!user.videoApiKeyConfigured) {
+      setNotice({ type: 'error', text: '请先在账户安全中保存并测试你的视频 API 密钥' })
+      setPanel('account')
+      return
+    }
     aiNodesInFlight.current.add(id); aiInFlight.current += 1; setNodeBusy(id, true)
     try {
       if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
@@ -1450,7 +1488,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       await refreshUser().catch(() => {})
       setNotice({ type: 'error', text: (err as Error).message })
     } finally { aiNodesInFlight.current.delete(id); aiInFlight.current = Math.max(0, aiInFlight.current - 1) }
-  }, [appendResultNode, refreshUser, setNodeBusy])
+  }, [appendResultNode, refreshUser, setNodeBusy, user.videoApiKeyConfigured])
   const deleteEdge = useCallback((id: string) => { setEdges((items) => items.filter((edge) => edge.id !== id)); markDirty() }, [markDirty, setEdges])
   const groupChildCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -1727,10 +1765,14 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   }
   const assistantContextNodes = nodes.filter((node) => node.selected && node.data.kind !== 'group')
   const assistantContextCount = assistantContextNodes.length
-  async function sendAssistant(content: string) {
+  async function sendAssistant(content: string, model: string) {
     const canvasId = activeCanvasId.current
-    const model = relayConfig.textModels[0]
     if (!canvasId || assistantBusyRef.current) return
+    if (!user.textApiKeyConfigured) {
+      setNotice({ type: 'error', text: '请先在账户安全中保存并测试你的文字 API 密钥' })
+      setPanel('account')
+      return
+    }
     if (!model) { setNotice({ type: 'error', text: '管理员尚未配置文字模型' }); return }
     const sourceNodes = (assistantContextNodes.length ? assistantContextNodes : nodesRef.current.filter((node) => node.data.kind !== 'group')).slice(0, 24)
     const context = sourceNodes.map((node, index) => {
@@ -1967,6 +2009,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         setCanvasMenu(null)
         setAppearanceOpen(false)
         setTopbarMenuOpen(false)
+        setSidebar(false)
         setShortcutsOpen(false)
         setNodes((items) => items.map((node) => node.selected ? { ...node, selected: false } : node))
         setEdges((items) => items.map((edge) => edge.selected ? { ...edge, selected: false } : edge))
@@ -2116,7 +2159,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const backgroundGridColor = themeMode === 'dark' ? 'rgba(245,245,244,.10)' : 'rgba(68,64,60,.12)'
   return <main className={`workspace theme-${themeMode}`}>
     <aside className={`sidebar ${sidebar ? 'open' : ''}`} aria-hidden={!sidebar} inert={!sidebar}>
-      <div className="sidebar-brand"><div className="brand-mark small">墨</div><strong>墨屿</strong><button className="icon-button sidebar-close" title="收起" onClick={() => setSidebar(false)}><ChevronLeft size={18} /></button></div>
+      <div className="sidebar-brand"><div className="brand-mark small">墨</div><strong>墨屿</strong><button className="icon-button sidebar-close" title="收起" aria-label="收起我的画布" onClick={() => setSidebar(false)}><ChevronLeft size={18} /></button></div>
       <button className="new-canvas" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button>
       <nav className="canvas-list" aria-label="我的画布">{canvases.map((canvas) => <div className={canvas.id === current?.id ? 'active' : ''} key={canvas.id}><button onClick={() => openCanvas(canvas.id)}><LayoutDashboard size={15} /><span>{canvas.name}</span></button><button className="canvas-delete" title="删除画布" onClick={() => deleteCanvas(canvas.id)}><Trash2 size={14} /></button></div>)}</nav>
       <div className={'sidebar-account'}><button onClick={() => setPanel('account')}><div className={'avatar'}>{user.name.slice(0, 1)}</div><span><strong>{user.name}</strong><small>{user.balance} 积分</small></span></button><button className={'icon-button'} title={'退出登录'} onClick={() => void logout()}><LogOut size={17} /></button></div>
@@ -2147,7 +2190,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       <input ref={imageImportInput} className="visually-hidden" type="file" accept="image/*" multiple tabIndex={-1} onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; const center = flow.current?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) || { x: 200, y: 150 }; if (files.length) void insertImageFiles(files, center, '导入') }} />
       {current ? <div className={`flow-wrap ${canvasPanelOpen ? 'panel-open' : ''}`} onMouseDown={(event) => { const target = event.target as HTMLElement; if (!target.closest('.react-flow__node, .canvas-context-menu, .canvas-assistant, .canvas-side-panel, .canvas-dock, .canvas-navigation, .selection-toolbar, .node-toolbar')) (document.activeElement as HTMLElement | null)?.blur() }} onClick={() => { setCanvasMenu(null); setAppearanceOpen(false) }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (target.closest('.react-flow__node, .canvas-context-menu, .canvas-assistant, .canvas-side-panel, .canvas-dock, .canvas-navigation, .selection-toolbar, .node-toolbar')) return; event.preventDefault(); setCanvasMenu({ type: 'canvas', x: event.clientX, y: event.clientY, screenX: event.clientX, screenY: event.clientY }) }} onDoubleClick={(event) => { const target = event.target as HTMLElement; if (target.closest('.react-flow__node, .react-flow__minimap, .tool-rail, .canvas-dock, .canvas-navigation, .selection-toolbar, .canvas-side-panel, .canvas-assistant, .canvas-context-menu')) return; addNode('text', { x: event.clientX, y: event.clientY }) }} onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) event.preventDefault() }} onDrop={(event) => void dropImage(event)}>
         {canvasPanelOpen && <CanvasSidePanel open width={canvasPanelWidth} tab={canvasPanelTab} query={canvasPanelQuery} nodes={nodes} assets={assets} assetsLoading={assetsLoading} selectedNodeIds={selectedNodeIds} onTab={(tab) => { setCanvasPanelTab(tab); if (tab === 'assets') void loadAssets() }} onQuery={setCanvasPanelQuery} onFocus={focusNode} onAdd={(kind, content, title) => addNode(kind, undefined, content, title)} onInsertAsset={insertAsset} onDeleteAsset={(id) => void deleteAsset(id)} onResizeStart={startCanvasPanelResize} />}
-        {assistantOpen && <CanvasAssistantPanel open messages={assistantMessages} busy={assistantBusy} contextCount={assistantContextCount} onClose={() => setAssistantOpen(false)} onSend={(content) => void sendAssistant(content)} onInsertText={(content) => addNode('text', undefined, content, '助手建议')} onCreateImage={createImageFromAssistant} onClear={clearAssistant} />}
+        {assistantOpen && <CanvasAssistantPanel open messages={assistantMessages} busy={assistantBusy} contextCount={assistantContextCount} models={relayConfig.textModels} model={assistantModel} onModel={setAssistantModel} onClose={() => setAssistantOpen(false)} onSend={(content, model) => void sendAssistant(content, model)} onInsertText={(content) => addNode('text', undefined, content, '助手建议')} onCreateImage={createImageFromAssistant} onClear={clearAssistant} />}
         <ReactFlow<CanvasNode, Edge> nodes={liveNodes} edges={liveEdges} nodeTypes={canvasNodeTypes} edgeTypes={canvasEdgeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={connect} onConnectEnd={handleConnectEnd} onNodeClick={selectNode} onNodeContextMenu={openNodeMenu} onNodeMouseEnter={(_event, node) => setHoveredNodeId(node.id)} onNodeMouseLeave={() => setHoveredNodeId(null)} onNodeDragStart={startNodeDrag} onNodeDrag={dragNode} onNodeDragStop={stopNodeDrag} onInit={(instance) => { flow.current = instance; setCanvasZoom(instance.getZoom()) }} onMove={(_event, viewport) => setCanvasZoom(viewport.zoom)} fitView fitViewOptions={{ padding: 0.22, maxZoom: 1.2 }} deleteKeyCode={['Backspace', 'Delete']} minZoom={0.05} maxZoom={5} selectionKeyCode={['Control', 'Meta']} selectionMode={SelectionMode.Partial} panOnDrag={[0, 1, 2]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift', 'Control', 'Meta']} zoomOnDoubleClick={false}>
           {backgroundMode !== 'blank' && <Background variant={backgroundMode === 'lines' ? BackgroundVariant.Lines : BackgroundVariant.Dots} gap={backgroundMode === 'lines' ? 28 : 24} size={backgroundMode === 'lines' ? 1 : 1.2} color={backgroundGridColor} />}
           {showMiniMap && <MiniMap className="canvas-minimap" position="bottom-left" pannable zoomable nodeColor={(node) => node.data?.kind === 'ai' ? '#80cbc4' : node.data?.kind === 'note' ? '#efb64f' : node.data?.kind === 'image' ? '#70a5dc' : '#a8a29e'} />}
@@ -2193,7 +2236,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         </div>
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
-    {panel === 'account' && <AccountDrawer user={user} imageEndpoint={relayConfig.imageEndpoint} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
+    {panel === 'account' && <AccountDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'wallet' && <WalletDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={refreshUser} />}
     {inspectedNodeId && nodes.find((node) => node.id === inspectedNodeId) && <NodeInfoDrawer node={nodes.find((node) => node.id === inspectedNodeId)!} nodes={nodes} edges={edges} close={() => setInspectedNodeId(null)} />}

@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
   admin_password_encrypted TEXT,
   name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
+  text_api_key_encrypted TEXT,
   image_api_key_encrypted TEXT,
+  video_api_key_encrypted TEXT,
   login_failures INTEGER NOT NULL DEFAULT 0, login_failure_started_at TEXT, login_locked_until TEXT,
   session_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -97,22 +99,6 @@ if (!settingsColumns.some((column) => column.name === 'ai_video_api_key_encrypte
 if (!settingsColumns.some((column) => column.name === 'ai_video_api_key_managed')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_api_key_managed INTEGER NOT NULL DEFAULT 0')
 if (!settingsColumns.some((column) => column.name === 'ai_video_models')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_models TEXT')
 if (!settingsColumns.some((column) => column.name === 'ai_video_points')) db.exec('ALTER TABLE app_settings ADD COLUMN ai_video_points INTEGER')
-db.exec(`
-UPDATE app_settings SET ai_api_key_managed=1
-WHERE ai_api_key_managed=0 AND (
-  ai_api_key_encrypted IS NOT NULL OR EXISTS (
-    SELECT 1 FROM admin_audit
-    WHERE action='ai_config.update' AND instr(details,'"keyChanged":true') > 0
-  )
-);
-UPDATE app_settings SET ai_video_api_key_managed=1
-WHERE ai_video_api_key_managed=0 AND (
-  ai_video_api_key_encrypted IS NOT NULL OR EXISTS (
-    SELECT 1 FROM admin_audit
-    WHERE action='video_config.update' AND instr(details,'"keyChanged":true') > 0
-  )
-);
-`)
 const generationColumns = db.prepare('PRAGMA table_info(generations)').all()
 if (!generationColumns.some((column) => column.name === 'request_hash')) {
   db.exec('ALTER TABLE generations ADD COLUMN request_hash TEXT')
@@ -130,8 +116,14 @@ const userColumns = db.prepare('PRAGMA table_info(users)').all()
 if (!userColumns.some((column) => column.name === 'admin_password_encrypted')) {
   db.exec('ALTER TABLE users ADD COLUMN admin_password_encrypted TEXT')
 }
+if (!userColumns.some((column) => column.name === 'text_api_key_encrypted')) {
+  db.exec('ALTER TABLE users ADD COLUMN text_api_key_encrypted TEXT')
+}
 if (!userColumns.some((column) => column.name === 'image_api_key_encrypted')) {
   db.exec('ALTER TABLE users ADD COLUMN image_api_key_encrypted TEXT')
+}
+if (!userColumns.some((column) => column.name === 'video_api_key_encrypted')) {
+  db.exec('ALTER TABLE users ADD COLUMN video_api_key_encrypted TEXT')
 }
 if (!userColumns.some((column) => column.name === 'login_failures')) {
   db.exec('ALTER TABLE users ADD COLUMN login_failures INTEGER NOT NULL DEFAULT 0')

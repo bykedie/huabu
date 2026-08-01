@@ -17,7 +17,7 @@ try {
   const requiredSchema = {
     users: [
       'id', 'email', 'password_hash', 'name', 'role', 'balance',
-      ...(allowLegacy ? [] : ['admin_password_encrypted', 'image_api_key_encrypted', 'login_failures', 'login_failure_started_at', 'login_locked_until', 'session_version']),
+      ...(allowLegacy ? [] : ['admin_password_encrypted', 'text_api_key_encrypted', 'image_api_key_encrypted', 'video_api_key_encrypted', 'login_failures', 'login_failure_started_at', 'login_locked_until', 'session_version']),
     ],
     canvases: ['id', 'user_id', 'name', 'document', ...(allowLegacy ? [] : ['version'])],
     ...(!allowLegacy ? { assets: ['id', 'user_id', 'kind', 'title', 'content'] } : {}),
@@ -44,10 +44,10 @@ try {
     const settingsKey = jwtSecret ? createHash('sha256').update(`ai-settings:${jwtSecret}`).digest() : null
     const adminLoginKey = jwtSecret ? createHash('sha256').update(`admin-login:${jwtSecret}`).digest() : null
     const encryptedColumns = [
-      ['app_settings', 'ai_api_key_encrypted', settingsKey],
-      ['app_settings', 'ai_video_api_key_encrypted', settingsKey],
       ['users', 'admin_password_encrypted', adminLoginKey],
+      ['users', 'text_api_key_encrypted', settingsKey],
       ['users', 'image_api_key_encrypted', settingsKey],
+      ['users', 'video_api_key_encrypted', settingsKey],
     ]
     const decrypt = (value, key) => {
       const parts = typeof value === 'string' ? value.split('.') : []
