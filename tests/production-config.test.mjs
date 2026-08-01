@@ -160,7 +160,7 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(restore, /owner=\$\(stat -c "%u:%g" \/app\)/)
   assert.match(restore, /chown "\$owner" \/app\/data\/app\.db/)
 
-  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_domain', 'configure_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
+  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_domain', 'configure_relay', 'configure_image_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
   }
   assert.match(manager, /read -r -s/)
@@ -168,13 +168,25 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /留空保留当前值，输入 CLEAR 清除/)
   for (const label of [
     '查看状态与公网地址', '启动服务', '停止服务', '重启服务', '安全更新 Git 代码',
-    '配置公网监听与端口', '配置域名与 HTTPS', '配置文字/视频中转', '配置商业参数与配额',
+    '配置公网监听与端口', '配置域名与 HTTPS', '配置文字中转', '配置图片中转', '配置视频中转', '配置商业参数与配额',
     '立即备份', '查看备份列表', '恢复备份', '查看日志', '运行诊断', '管理员初始化令牌',
   ]) assert.match(manager, new RegExp(label), `${label} is missing from the localized h menu`)
   assert.match(manager, /输入 RESTORE 确认替换数据库/)
   assert.match(manager, /输入 SHOW 在当前 root 终端显示令牌/)
   assert.doesNotMatch(manager, /Status and public URL|Start service|Safe Git update|Commercial and quota settings|Administrator initialization token/)
   assert.match(manager, /backup_root_path/)
+  assert.match(manager, /8\) configure_relay text/)
+  assert.match(manager, /9\) configure_image_relay/)
+  assert.match(manager, /10\) configure_relay video/)
+  assert.doesNotMatch(manager, /1\) 文字中转  2\) 视频中转/)
+  assert.match(manager, /图片中转固定地址：https:\/\/www\.bkbk\.baby\//)
+  assert.match(manager, /图片 API 密钥由每位用户在“账户安全”中自行保存/)
+  assert.match(manager, /set_env_value AI_IMAGE_MODELS/)
+  assert.ok(manager.includes('[[ $models != ,* && $models != *, && $models != *,,* ]]'))
+  assert.match(manager, /图片模型列表不能包含空项/)
+  assert.match(manager, /cp -a -- "\$env_backup" "\$ENV_FILE"/)
+  assert.match(manager, /compose up -d --force-recreate app/)
+  assert.doesNotMatch(manager, /set_env_value AI_IMAGE_(?:BASE_URL|API_KEY)/)
   assert.match(manager, /git rev-parse FETCH_HEAD/)
   assert.match(manager, /git update-ref/)
   assert.match(manager, /git read-tree --reset -u/)
@@ -193,6 +205,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(readme, /公网 IP|公网IP/)
   assert.match(readme, /HTTP.*未加密|未加密.*HTTP/)
   assert.match(readme, /管理命令|h/)
+  assert.match(readme, /配置文字中转.*配置图片中转.*配置视频中转/)
+  assert.match(readme, /图片入口.*AI_IMAGE_MODELS/)
 })
 
 test('terminal relay maintenance migrates, encrypts and clears keys without disclosure', () => {

@@ -2,21 +2,15 @@
 
 ## Current
 
-- Active goal: fully localize the `h` operations panel, deploy and verify it, then continuously audit and improve the canvas in bounded rounds until the user explicitly pauses.
-- Current round: the first post-localization canvas audit found and fixed a reproducible right/bottom viewport collision in both canvas and node context menus. The rendered menu is measured and clamped to an 8px margin, remeasured on content-size changes, and repositioned on window resize; the original right-click coordinates remain unchanged for adding nodes at the clicked canvas position.
-- Worker policy for this goal: the user permits up to 10 concurrent subagents, but one worker at a time remains the default. One `gpt-5.6-sol`/`Ultra` collaboration seat was assigned only `src/App.tsx`; it encountered a system error after adding the hook import, so the commander completed and verified the bounded implementation. No collaboration seat is currently editing project files.
-- Confirmed root cause: `docker compose cp` created the expected flat backup layout, but `umask 077` made the host backup directory `0700 root:root`; the default `node` validation container could not traverse the bind-mounted `/backup` directory and misreported the existing database as missing.
-- Accepted fix: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions remain `0700`.
-- Production was last verified on clean commit `666339e`; the localized `h` panel, container health and host `/api/health` passed. The context-menu fix is delivered to GitHub separately and has not been claimed as deployed in this round.
-- The user-owned image relay migration remains complete and accepted; this audit must not reopen or replace that behavior without evidence of a real defect.
-- Image relay behavior is fixed: the UI shows `https://www.bkbk.baby/`, the server calls only `https://www.bkbk.baby/v1/images/generations` or `/images/edits`, and every image call uses the authenticated user's encrypted key.
-- Image requests reserve and charge zero site points. Success, upstream failure, retry after failure, cached replay, edit requests, and request-key conflicts are covered without changing balance or ledger entries.
-- Text and video server contracts and billing remain independent from user image keys. The operations drawer contains separate text and video relay administration; the old shared image configuration remains absent.
-- Frontend remains at `http://127.0.0.1:5182/`; the real API remains on port `3102`. Browser acceptance used disposable isolated instances and did not open or alter the real canvas draft.
-- The current isolated acceptance used port `3114` and a database under `.codex-acceptance`; the tab was closed, the temporary viewport was reset, PID `17096` was command-line verified and stopped, port `3114` was confirmed closed, and the temporary directory was removed. The real `3102/5182` draft was not opened or modified.
-- Collaboration workers use `gpt-5.6-sol` with `Ultra` reasoning. Activate one worker at a time by default; the user may explicitly approve higher concurrency for a particular task, up to the runtime limit. Only the current commander thread is pinned; child/collaboration threads remain unpinned.
-- The context-menu implementation is committed as `4aae778` (`fix: keep canvas menus within viewport`). Future tasks may create new dirty changes; never reset, checkout, clean or overwrite unrelated work.
-- Browser acceptance, isolated-environment cleanup and the fresh automated gates are complete; the next round must begin from new evidence rather than reopening this accepted fix.
+- Active goal: restore `api.bkbk.baby`, split the `h` relay configuration into text/image/video entries, deploy safely and complete public acceptance without losing data, secrets or backups.
+- Confirmed public failure: `api.bkbk.baby` is a CNAME to `bkbk.baby`, which currently resolves to `64.83.20.132`; the actual ECS used for this deployment is `116.62.191.104`.
+- The correct ECS is not ready for this hostname yet: forcing HTTP to `116.62.191.104` returns `403 Forbidden` from `Server: Beaver`, while forced HTTPS resets. DNS correction alone will therefore not complete the repair; the ECS Nginx/HTTPS virtual host and certificate must also be corrected.
+- Local implementation is complete but uncommitted: `h` now exposes `8 配置文字中转`, `9 配置图片中转`, and `10 配置视频中转`; later menu items are numbered 11-17.
+- Text/video continue through encrypted database maintenance. The image entry never accepts an administrator image URL or key, keeps `https://www.bkbk.baby/` fixed, and only validates and writes `AI_IMAGE_MODELS`; failed health checks restore the prior `.env` and attempt to restore the old service.
+- Modified implementation files are `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`; this status/goal/decision synchronization adds only recovery documentation.
+- One read-only `gpt-5.6-sol`/`Ultra` audit completed. It found one trailing-empty-model validation gap; the commander fixed it and added coverage. No remaining code or secret-boundary issue was reported.
+- Production DNS/Nginx/HTTPS has not been changed in this round. That traffic switch requires explicit approval immediately before execution and must retain a reversible copy of existing site state.
+- Never delete or overwrite `.env`, the application database, Docker volumes, relay keys or any directory under `/srv/canvas-backups`.
 
 ## Completed
 
@@ -42,17 +36,22 @@
 
 ## Next
 
-1. Begin the next evidence-driven canvas audit round and choose one reproducible, bounded defect.
-2. Preserve single-file ownership where possible, then run focused checks, full gates and isolated browser acceptance for user-facing changes.
-3. Continue recording each accepted round in `GOALS.md` and this file until the user explicitly pauses.
+1. Commit and push the accepted three-entry implementation and synchronized recovery documents.
+2. Obtain explicit approval for the high-impact DNS and reverse-proxy switch, then change `api.bkbk.baby` to the actual ECS and configure the hostname/certificate through the safe production path.
+3. Fast-forward production through the validated backup workflow and verify the 17-item `h` menu, healthy container, preserved data/backups, HTTP-to-HTTPS redirect, matching certificate, HTTPS health endpoint and rendered application.
 
 ## Blockers
 
-- No implementation, test, browser-acceptance or delivery blocker remains for the context-menu round.
-- Public-IP reachability may still depend on the Alibaba Cloud security group, which was not inspectable from the instance because no RAM role or Alibaba CLI was available.
-- The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
+- The production traffic switch has not been approved in the current execution step. DNS and Nginx/HTTPS changes are intentionally pending because they can briefly interrupt public access.
+- The existing `Beaver` listener/site on ports 80/443 may conflict with the project Nginx virtual host. Inspect its ownership and current site configuration before any replacement; do not disable or delete it without a reversible backup and explicit confirmation.
+- Automated SSH authentication is not available. Production commands may require the user to enter them in the already-authenticated MobaXterm session, unless a separate non-UI authenticated path becomes available.
 
 ## Evidence
+
+- Public DNS recheck on 2026-08-01: `api.bkbk.baby CNAME bkbk.baby`; `bkbk.baby A 64.83.20.132`.
+- Forced-origin recheck: HTTP request to `116.62.191.104` with host `api.bkbk.baby` returned `403 Forbidden` and `Server: Beaver`; forced HTTPS reset the connection.
+- Current worktree before document synchronization contained only `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`, with 58 insertions and 11 deletions.
+- Fresh local gates for this goal: `npm.cmd run build` passed; full tests passed 23/23; focused production tests passed 9/9; four deployment Shell files and four server Node files passed syntax checks; `git diff --check` passed with line-ending warnings only; targeted scan found no administrator image URL/key write.
 
 - Production incident verification on 2026-08-01: old HEAD `56e29a7`; live database `/app/data/app.db` with WAL/SHM; the default `node` maintenance container could not traverse a `0700 root:root` backup bind, while `--user 0:0` could.
 - Delivery commit `e261aeb` pushed normally and deployed by the exact SHA-256-verified installer. The update created a validated backup before fast-forwarding `56e29a7..e261aeb`, rebuilt the image, and returned healthy.

@@ -21,6 +21,9 @@ usage() {
 命令：
   status       显示服务状态和公网访问地址
   -h, --help   显示此帮助
+
+交互式面板分别提供文字、图片和视频中转配置入口。图片中转地址固定为
+https://www.bkbk.baby/，API 密钥由每位用户在账户安全中自行保存。
 EOF
 }
 
@@ -264,14 +267,13 @@ configure_domain() {
 }
 
 configure_relay() {
-  need_install; local kind relay_kind base key models key_action
-  printf '1) 文字中转  2) 视频中转\n'; read -r -p '请选择：' kind
-  case $kind in
-    1) relay_kind=text ;;
-    2) relay_kind=video ;;
+  need_install; local relay_kind=$1 relay_label base key models key_action
+  case $relay_kind in
+    text) relay_label=文字 ;;
+    video) relay_label=视频 ;;
     *) die '未知的中转类型' ;;
   esac
-  read -r -p '中转站基础地址（生产环境必须使用 HTTPS）：' base
+  read -r -p "${relay_label}中转站基础地址（生产环境必须使用 HTTPS）：" base
   read -r -p '开放模型（多个模型用英文逗号分隔）：' models
   read -r -s -p 'API 密钥（隐藏输入；留空保留当前值，输入 CLEAR 清除）：' key; printf '\n'
   if [[ $key == CLEAR ]]; then key_action=clear; key=''; elif [[ -z $key ]]; then key_action=keep; else key_action=set; fi
@@ -282,6 +284,40 @@ configure_relay() {
   compose up -d --force-recreate app
   wait_for_health "$(public_port)" || die '中转配置已保存，但重建后的应用未恢复健康'
   printf '中转配置已保存，API 密钥未显示。\n'
+}
+
+configure_image_relay() {
+  need_install
+  local models current_models model normalized='' env_backup port
+  local -a image_models
+  current_models=$(env_value AI_IMAGE_MODELS GPT-image-2)
+  printf '图片中转固定地址：https://www.bkbk.baby/（服务端实际使用 /v1）。\n'
+  printf '图片 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存图片密钥。\n'
+  read -r -p "开放图片模型（多个模型用英文逗号分隔；当前：$current_models）：" models
+  models=${models:-$current_models}
+  [[ $models != *$'\n'* && $models != *$'\r'* ]] || die '图片模型配置不能包含换行符'
+  [[ $models != ,* && $models != *, && $models != *,,* ]] || die '图片模型列表不能包含空项'
+  IFS=, read -r -a image_models <<< "$models"
+  (( ${#image_models[@]} >= 1 && ${#image_models[@]} <= 50 )) || die '图片模型列表必须包含 1-50 个模型'
+  for model in "${image_models[@]}"; do
+    model=${model#"${model%%[![:space:]]*}"}; model=${model%"${model##*[![:space:]]}"}
+    [[ -n $model && ${#model} -le 100 ]] || die '每个图片模型必须包含 1-100 个字符'
+    [[ -z $normalized ]] && normalized=$model || normalized+=",$model"
+  done
+  models=$normalized
+  env_backup=$(mktemp); cp -a -- "$ENV_FILE" "$env_backup"; port=$(public_port)
+  set_env_value AI_IMAGE_MODELS "$models"
+  if ! compose up -d --force-recreate app || ! wait_for_health "$port"; then
+    cp -a -- "$env_backup" "$ENV_FILE"
+    if compose up -d --force-recreate app && wait_for_health "$port"; then
+      remove_temp_files "$env_backup"
+      die '服务拒绝图片模型配置，已恢复原环境配置和服务'
+    fi
+    remove_temp_files "$env_backup"
+    die '服务拒绝图片模型配置；原环境配置已恢复，但服务未恢复健康，请立即检查日志'
+  fi
+  remove_temp_files "$env_backup"
+  printf '图片开放模型已保存；固定地址和用户自有密钥契约未更改。\n'
 }
 
 configure_commercial() {
@@ -336,9 +372,9 @@ admin_token_menu() {
 
 menu() {
   while true; do
-    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 配置公网监听与端口\n7 配置域名与 HTTPS\n8 配置文字/视频中转\n9 配置商业参数与配额\n10 立即备份\n11 查看备份列表\n12 恢复备份\n13 查看日志\n14 运行诊断\n15 管理员初始化令牌\n0 退出\n'
+    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 配置公网监听与端口\n7 配置域名与 HTTPS\n8 配置文字中转\n9 配置图片中转\n10 配置视频中转\n11 配置商业参数与配额\n12 立即备份\n13 查看备份列表\n14 恢复备份\n15 查看日志\n16 运行诊断\n17 管理员初始化令牌\n0 退出\n'
     local choice; read -r -p '请选择：' choice || exit 0
-    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_port ;; 7) configure_domain ;; 8) configure_relay ;; 9) configure_commercial ;; 10) backup_now ;; 11) list_backups ;; 12) restore_backup ;; 13) show_logs ;; 14) diagnose ;; 15) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
+    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_port ;; 7) configure_domain ;; 8) configure_relay text ;; 9) configure_image_relay ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
   done
 }
 

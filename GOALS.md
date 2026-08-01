@@ -15,37 +15,37 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
-## Active Goal: Chinese Operations Panel and Continuous Canvas Iteration
+## Active Goal: Restore `api.bkbk.baby` and Split Relay Management
 
 - Status: active
 - Started: 2026-08-01
 - Commander thread: current main thread
-- Objective: fully localize the `h` server-management experience into Chinese, deploy and verify it without changing operational safety contracts, then continuously audit and improve the current canvas in bounded implementation/test/acceptance rounds until the user explicitly pauses.
+- Objective: restore public access through `api.bkbk.baby`, split the `h` relay configuration into independent text, image and video entries, deploy the accepted code safely, and verify the public application while preserving data, secrets and every existing backup.
 
 ### Success Criteria
 
-- The `h` main menu, help, prompts, warnings, errors and operation-result messages are understandable Chinese; safety confirmation tokens such as `CLEAR`, `RESTORE` and `SHOW` remain stable and are explained in Chinese.
-- Menu numbering, command routing, secret handling, safe-update checks, backup/restore behavior, rollback behavior and deployment data remain unchanged.
-- Automated tests assert the Chinese menu contract and all build, full-test, focused deployment, Shell syntax and diff checks pass.
-- The accepted change is committed, pushed and fast-forwarded onto production; the production container remains healthy and the database/backups are preserved.
-- After localization, each canvas iteration starts from a verified issue, uses bounded file ownership, passes focused and full gates, and records the next checkpoint here and in `STATUS.md`.
+- `h` exposes separate `配置文字中转`, `配置图片中转` and `配置视频中转` menu entries with correct routing and Chinese prompts.
+- Text and video continue to use encrypted administrator configuration. The image entry only manages `AI_IMAGE_MODELS`; the endpoint remains fixed at `https://www.bkbk.baby/` and image keys remain user-owned, encrypted and never displayed or copied into `.env`.
+- A rejected image-model change restores the previous `.env` and attempts to return the existing application to a healthy state. No database, Docker volume, `.env`, secret or backup is deleted or replaced.
+- Build, full tests, focused deployment tests, Shell/Node syntax and diff checks pass before delivery.
+- The accepted commits are pushed and production is updated only through the validated backup/fast-forward path.
+- Public DNS resolves `api.bkbk.baby` to the actual ECS, HTTP redirects to HTTPS, the certificate matches the hostname, `https://api.bkbk.baby/api/health` returns 200, and the application opens normally.
 
 ### Current Round
 
 | Step | Status | Evidence |
 | --- | --- | --- |
-| Establish clean localization baseline | complete | Worktree restored clean; deployment-focused suite passed 9/9 |
-| Localize the `h` management experience | complete | Main menu, help, status, prompts, warnings, errors, results and relay-maintenance output are Chinese; safety tokens remain unchanged |
-| Run complete local verification | complete | Build passed; full tests 23/23; focused deployment tests 9/9; four Node and four Bash syntax checks plus diff check passed |
-| Commit, push and deploy localization | complete | `666339e` was pushed and production was fast-forwarded through the validated backup/update path; localized `h --help`, container health and `/api/health` passed |
-| Audit the first post-localization canvas round | complete | Static evidence confirmed the fixed-position context menu could leave the viewport at the right and bottom edges |
-| Keep canvas and node menus inside the viewport | complete | `4aae778` measures the rendered menu, clamps it to an 8px viewport margin, repositions on resize/content-size changes, and preserves the original click coordinates for node insertion |
-| Run automated and isolated browser acceptance | complete | Build and 23/23 tests passed; desktop, resized and `240x220` short-viewport geometry checks passed with no browser console warning/error; the isolated database, tab, viewport override and port `3114` process were removed |
-| Deliver the first canvas iteration | complete | Implementation `4aae778` and recovery-document commit `f6192ce` were pushed normally to `origin/codex/infinite-canvas` |
+| Diagnose the public-domain failure | complete | `api.bkbk.baby` is a CNAME to `bkbk.baby`, whose A record is `64.83.20.132`; the actual ECS is `116.62.191.104`. Forced HTTP to the ECS returns `403 Server: Beaver`, and forced HTTPS resets, so DNS and the ECS reverse proxy/certificate both require correction |
+| Implement three independent relay entries | complete | `deploy/manage.sh` now routes menu items 8/9/10 to text/image/video independently; image configuration preserves the fixed endpoint and user-owned-key contract |
+| Add documentation and deployment-contract tests | complete | README and focused tests cover menu labels/routing, image model persistence/rollback, fixed endpoint language and the absence of administrator image URL/key writes |
+| Synchronize recovery documents and run final local gates | complete | Read-only audit completed; trailing empty image-model entries were fixed; build, full 23/23 tests, focused 9/9 tests, four Bash and four Node syntax checks, secret-boundary scan and diff check passed |
+| Commit and push the accepted local change | in progress | Final diff is accepted and ready for precise staging |
+| Switch DNS and configure ECS Nginx/HTTPS | pending | High-impact production change requires explicit user confirmation immediately before execution; existing site state must be backed up and rollback retained |
+| Deploy and complete public acceptance | pending | Verify production SHA, validated backup, healthy container, new 17-item `h` menu, HTTP redirect, certificate hostname, HTTPS health and rendered application |
 
 ### Recovery Instructions
 
-Read `git status`, the current diff and `STATUS.md`. The next action is a fresh evidence-driven canvas audit round; do not reopen the accepted context-menu fix without a verified regression. Never delete `.env`, Docker volumes, databases or `/srv/canvas-backups`. Preserve the real browser draft. Continue iteration until the user explicitly says to pause.
+Read `git status`, the current diff and `STATUS.md`; do not reconstruct this goal from chat history. The local three-entry implementation is not equivalent to production completion. Before changing DNS or Nginx, reconfirm the target ECS and obtain explicit approval for the traffic switch. Never delete or expose `.env`, Docker volumes, databases, relay keys or anything under `/srv/canvas-backups`.
 
 ## Completed Goal: Production Backup Permission Compatibility
 
