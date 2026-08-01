@@ -17,7 +17,7 @@ When an idea has been accepted for implementation:
 
 ## Active Goal: Four Access Modes and Server Image Relay
 
-- Status: local implementation complete; delivery and production acceptance pending
+- Status: GitHub delivery complete; production update and acceptance pending
 - Started: 2026-08-01
 - Commander thread: current main thread
 - Objective: default a fresh deployment to detected public IP plus port, let `h` select public/domain/both/private, make the image relay address server-configurable while retaining user-owned keys, and deliver the verified result through GitHub without losing deployment state.
@@ -40,7 +40,7 @@ When an idea has been accepted for implementation:
 | Preserve user-owned image-key and zero-charge contract | complete | complete tests cover encryption, isolation, routes, generation/edit calls, cache/retry and unchanged balances |
 | Run local gates | complete | build passed; full tests 24/24; deployment tests 10/10; Shell/Node syntax and diff checks passed |
 | Synchronize recovery documents | complete | README, AGENTS, SPEC, PLAN, memory, handoff, decisions, goals and main status updated |
-| Commit and push delivery | pending | Must review final diff and secret scan first |
+| Commit and push delivery | complete | `5fa5804` pushed normally to `origin/codex/infinite-canvas`; local and remote full SHA match |
 | Update and accept production | pending | Use MobaXterm and validated backup; do not alter existing Beaver/Nginx state without reversible inspection |
 
 ### Recovery Instructions

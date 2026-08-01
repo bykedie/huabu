@@ -38,9 +38,8 @@
 
 ## Next
 
-1. Review the final diff and secret boundary, commit and normally push the verified delivery branch.
-2. Fast-forward production through the validated backup workflow using MobaXterm, then reopen `h` so the new process loads the menu.
-3. Verify default/current access mode, public IP URL, dynamic image address, healthy container and preserved data/backups; inspect existing 80/443 state before any domain switch.
+1. Fast-forward production through the validated backup workflow using MobaXterm, then reopen `h` so the new process loads the menu.
+2. Verify default/current access mode, public IP URL, dynamic image address, healthy container and preserved data/backups; inspect existing 80/443 state before any domain switch.
 
 ## Blockers
 
@@ -77,6 +76,7 @@
 - Video acceptance: generated WebM `readyState=4`, no media error, download control inside the preview, asset save succeeded, and the mobile model/size/duration controls stayed in one row without page overflow.
 - GitHub delivery: commit `7c48c59` pushed normally to `origin/codex/infinite-canvas` (push response advanced `467ce07..7c48c59`).
 - Four-mode/image-relay gates on 2026-08-01: `npm.cmd run build` passed; `npm.cmd test` passed 24/24; focused deployment tests passed 10/10; four deployment Shell files and four server Node files passed syntax checks; `git diff --check` passed with line-ending warnings only.
+- Four-mode/image-relay GitHub delivery: commit `5fa5804` pushed normally to `origin/codex/infinite-canvas`; fetched remote and local full SHA both equal `5fa580431cc4ad3e4eca82171bb361d2e7d2e085`.
 - Context-menu round gates on 2026-08-01: `npm.cmd run build` passed; `npm.cmd test` passed 23/23; four Node syntax checks and `git diff --check` passed.
 - Context-menu desktop acceptance: at `1280x720`, a right-click at `1274,714` produced a `176x264` menu at `x=1096,y=448`, leaving exactly 8px at the right and bottom; resizing the open menu to `900x500` moved it to `x=716,y=228`, again leaving 8px.
 - Context-menu node acceptance: at `900x500`, the two-item node menu measured `176x79` at `x=716,y=413`, leaving 8px at the right and bottom.
