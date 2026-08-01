@@ -79,3 +79,4 @@
 - Context-menu desktop acceptance: at `1280x720`, a right-click at `1274,714` produced a `176x264` menu at `x=1096,y=448`, leaving exactly 8px at the right and bottom; resizing the open menu to `900x500` moved it to `x=716,y=228`, again leaving 8px.
 - Context-menu node acceptance: at `900x500`, the two-item node menu measured `176x79` at `x=716,y=413`, leaving 8px at the right and bottom.
 - Context-menu short-viewport acceptance: at `240x220`, the seven-item menu stayed inside `x=56..232` and `y=8..212`; `scrollHeight=262`, `clientHeight=202`, and page `scrollWidth=clientWidth=240`. Browser warning/error logs were empty.
+- Context-menu GitHub delivery: implementation `4aae778` and recovery-document commit `f6192ce` were pushed normally to `origin/codex/infinite-canvas`.

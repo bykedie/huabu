@@ -41,7 +41,7 @@ When an idea has been accepted for implementation:
 | Audit the first post-localization canvas round | complete | Static evidence confirmed the fixed-position context menu could leave the viewport at the right and bottom edges |
 | Keep canvas and node menus inside the viewport | complete | `4aae778` measures the rendered menu, clamps it to an 8px viewport margin, repositions on resize/content-size changes, and preserves the original click coordinates for node insertion |
 | Run automated and isolated browser acceptance | complete | Build and 23/23 tests passed; desktop, resized and `240x220` short-viewport geometry checks passed with no browser console warning/error; the isolated database, tab, viewport override and port `3114` process were removed |
-| Deliver the first canvas iteration | complete | The implementation and synchronized recovery documents are committed for normal push to `origin/codex/infinite-canvas` |
+| Deliver the first canvas iteration | complete | Implementation `4aae778` and recovery-document commit `f6192ce` were pushed normally to `origin/codex/infinite-canvas` |
 
 ### Recovery Instructions
 
