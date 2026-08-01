@@ -86,7 +86,7 @@ app.use('/api/ai', limiter(40))
 app.use('/api', express.json({ limit: '12mb' }))
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
-const normalizeRelayBaseUrl = (value, label, status = 500) => {
+const normalizeRelayBaseUrl = (value, label, status = 500, kind = '') => {
   const input = String(value || '').trim().replace(/\/+$/, '')
   if (!input) return ''
   let url
@@ -96,9 +96,10 @@ const normalizeRelayBaseUrl = (value, label, status = 500) => {
   }
   if (url.username || url.password) throw fail(status, label + '地址不能包含用户名或密码')
   if (url.search || url.hash) throw fail(status, label + '地址不能包含查询参数或片段')
+  if (['text', 'image'].includes(kind) && url.pathname === '/') url.pathname = '/v1'
   return url.toString().replace(/\/+$/, '')
 }
-normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站')
+normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站', 500, 'image')
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
 const adminLoginKey = createHash('sha256').update(`admin-login:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
@@ -163,6 +164,8 @@ const relaySettings = (kind = 'text') => {
   const baseUrl = normalizeRelayBaseUrl(
     databaseConfigured ? (storedBaseUrl || '') : definition.environmentBaseUrl(),
     definition.label,
+    500,
+    kind,
   )
   const models = databaseConfigured
     ? (storedModels ? parseStoredModels(storedModels, definition.label) : [])
@@ -485,7 +488,7 @@ videoLoopbackAddresses.addAddress('::1', 'ipv6')
 videoLoopbackAddresses.addSubnet('::ffff:127.0.0.0', 104, 'ipv6')
 const videoGlobalIpv6Addresses = new BlockList()
 videoGlobalIpv6Addresses.addSubnet('2000::', 3, 'ipv6')
-const videoUnsafeAddresses = new BlockList()
+const relayUnsafeAddresses = { ipv4: new BlockList(), ipv6: new BlockList() }
 for (const [network, prefix, type] of [
   ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
   ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'], ['192.0.0.0', 24, 'ipv4'],
@@ -498,7 +501,24 @@ for (const [network, prefix, type] of [
   ['2001:db8::', 32, 'ipv6'], ['2002::', 16, 'ipv6'], ['3fff::', 20, 'ipv6'],
   ['5f00::', 16, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'],
   ['fec0::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
-]) videoUnsafeAddresses.addSubnet(network, prefix, type)
+]) relayUnsafeAddresses[type].addSubnet(network, prefix, type)
+const mappedIpv4Address = (address) => {
+  const normalized = String(address || '').toLowerCase()
+  const dotted = /^(?:::ffff:|0:0:0:0:0:ffff:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(normalized)
+  if (dotted && isIP(dotted[1]) === 4) return dotted[1]
+  const hexadecimal = /^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized)
+  if (!hexadecimal) return ''
+  const high = Number.parseInt(hexadecimal[1], 16)
+  const low = Number.parseInt(hexadecimal[2], 16)
+  return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`
+}
+const relayAddressType = (value) => {
+  const address = String(value || '').split('%')[0]
+  const mapped = mappedIpv4Address(address)
+  if (mapped) return { address: mapped, type: 'ipv4' }
+  const family = isIP(address)
+  return { address, type: family === 4 ? 'ipv4' : family === 6 ? 'ipv6' : null }
+}
 const videoMediaOrigins = () => {
   const raw = process.env.AI_VIDEO_MEDIA_ORIGINS || ''
   if (!raw.trim()) return new Set()
@@ -525,12 +545,10 @@ const validateVideoDownloadUrl = async (value, allowedOrigins, apiKey) => {
   catch { throw fail(502, '视频地址无法解析') }
   if (!addresses.length) throw fail(502, '视频地址无法解析')
   for (const item of addresses) {
-    const address = String(item.address || '').split('%')[0]
-    const family = isIP(address)
-    const type = family === 4 ? 'ipv4' : family === 6 ? 'ipv6' : null
+    const { address, type } = relayAddressType(item.address)
     if (!type) throw fail(502, '视频地址解析结果无效')
     const loopback = videoLoopbackAddresses.check(address, type)
-    const unsafe = videoUnsafeAddresses.check(address, type)
+    const unsafe = relayUnsafeAddresses[type].check(address, type)
       || (type === 'ipv6' && !videoGlobalIpv6Addresses.check(address, type))
     if ((loopback && isProduction) || (!loopback && unsafe)) {
       throw fail(502, '视频地址解析到不安全的网络地址')
@@ -543,21 +561,21 @@ const validateImageRelayUrl = async (value) => {
   if (url.username || url.password) throw fail(502, '图片中转站地址不能包含用户名或密码')
   const hostname = url.hostname.replace(/^\[|\]$/g, '')
   const literalFamily = isIP(hostname)
-  const checkAddress = (address, family) => {
-    const type = family === 4 ? 'ipv4' : family === 6 ? 'ipv6' : null
+  const checkAddress = (value) => {
+    const { address, type } = relayAddressType(value)
     if (!type) throw fail(502, '图片中转站地址解析结果无效')
     const loopback = videoLoopbackAddresses.check(address, type)
-    const unsafe = videoUnsafeAddresses.check(address, type)
+    const unsafe = relayUnsafeAddresses[type].check(address, type)
       || (type === 'ipv6' && !videoGlobalIpv6Addresses.check(address, type))
     if ((loopback && isProduction) || (!loopback && unsafe)) throw fail(502, '图片中转站解析到不安全的网络地址')
   }
-  if (literalFamily) checkAddress(hostname, literalFamily)
+  if (literalFamily) checkAddress(hostname)
   else if (isProduction) {
     let addresses
     try { addresses = await lookup(hostname, { all: true, verbatim: true }) }
     catch { throw fail(502, '图片中转站地址无法解析') }
     if (!addresses.length) throw fail(502, '图片中转站地址无法解析')
-    for (const item of addresses) checkAddress(String(item.address || '').split('%')[0], isIP(String(item.address || '').split('%')[0]))
+    for (const item of addresses) checkAddress(item.address)
   }
   return url
 }
@@ -1435,7 +1453,7 @@ const updateAdminRelayConfig = (kind) => async (req, res, next) => {
       ...(kind === 'video' ? { points: z.number().int().min(1).max(1000000) } : {}),
     }).strict(), req.body)
     const definition = relayKind(kind)
-    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, definition.label, 400)
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl, definition.label, 400, kind)
     if (kind === 'image') await validateImageRelayUrl(baseUrl)
     const models = normalizeModels(body.models)
     const apiKey = userRelayApiKey(req.auth.sub, kind)
@@ -1465,7 +1483,7 @@ const testAdminRelay = (kind) => async (req, res, next) => {
       model: z.string().trim().min(1).max(100).optional(),
     }).strict(), req.body || {})
     const relay = relaySettings(kind)
-    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, relayKind(kind).label, 400)
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, relayKind(kind).label, 400, kind)
     if (!baseUrl) throw fail(400, `${relayKind(kind).label}地址无效`)
     const model = body.model || relay.models[0]
     if (!model) throw fail(400, `请填写${relayKind(kind).label}模型`)
@@ -1489,7 +1507,7 @@ const handleTextModelDiscovery = async (req, res, next) => {
   try {
     const body = parse(z.object({ baseUrl: z.string().trim().min(1).max(2000).optional() }).strict(), req.body || {})
     const relay = relaySettings('text')
-    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, '文字中转站', 400)
+    const baseUrl = normalizeRelayBaseUrl(body.baseUrl || relay.baseUrl, '文字中转站', 400, 'text')
     if (!baseUrl) throw fail(400, '文字中转站地址无效')
     const apiKey = userRelayApiKey(req.auth.sub, 'text')
     if (!apiKey) throw fail(400, '请先在账户设置中保存文字中转站 API 密钥')

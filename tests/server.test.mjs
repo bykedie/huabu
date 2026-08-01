@@ -245,7 +245,8 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
+  const relayRootUrl = `http://127.0.0.1:${relay.address().port}`
+  const relayBaseUrl = `${relayRootUrl}/v1`
   const forbiddenConfig = await request('/admin/ai-config', {
     token: member.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['gpt-4o-mini'] }),
   })
@@ -727,7 +728,8 @@ test('three user relay keys and text model discovery remain isolated and secret-
   })
   relay.listen(0, '127.0.0.1')
   await new Promise((resolve) => relay.once('listening', resolve))
-  const relayBaseUrl = `http://127.0.0.1:${relay.address().port}/v1`
+  const relayRootUrl = `http://127.0.0.1:${relay.address().port}`
+  const relayBaseUrl = `${relayRootUrl}/v1`
   const observable = []
   const capturedErrors = []
   const originalConsoleError = console.error
@@ -763,12 +765,33 @@ test('three user relay keys and text model discovery remain isolated and secret-
       token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['x'.repeat(101)] }),
     })).status, 400)
 
+    const mappedPublicImageConfig = await request('/admin/image-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'https://[::ffff:8.8.8.8]', models: ['image-open'] }),
+    })
+    assert.deepEqual(mappedPublicImageConfig, {
+      status: 200, body: { baseUrl: 'https://[::ffff:808:808]/v1', models: ['image-open'], source: 'database' },
+    })
+    const mappedPrivateImageConfig = await request('/admin/image-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'https://[::ffff:10.0.0.1]', models: ['image-open'] }),
+    })
+    assert.equal(mappedPrivateImageConfig.status, 502)
+    const publicIpv4ImageConfig = await request('/admin/image-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'https://8.8.8.8', models: ['image-open'] }),
+    })
+    assert.deepEqual(publicIpv4ImageConfig, {
+      status: 200, body: { baseUrl: 'https://8.8.8.8/v1', models: ['image-open'], source: 'database' },
+    })
+    const privateIpv4ImageConfig = await request('/admin/image-config', {
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: 'https://10.0.0.1', models: ['image-open'] }),
+    })
+    assert.equal(privateIpv4ImageConfig.status, 502)
+
     const savedTextConfig = await request('/admin/text-config', {
       token: admin.token, method: 'PUT',
-      body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['text-open', 'text-second', 'text-open'] }),
+      body: JSON.stringify({ baseUrl: relayRootUrl, models: ['text-open', 'text-second', 'text-open'] }),
     })
     const savedImageConfig = await request('/admin/image-config', {
-      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['image-open'] }),
+      token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayRootUrl, models: ['image-open'] }),
     })
     const savedVideoConfig = await request('/admin/video-config', {
       token: admin.token, method: 'PUT', body: JSON.stringify({ baseUrl: relayBaseUrl, models: ['video-open'], points: 5 }),
