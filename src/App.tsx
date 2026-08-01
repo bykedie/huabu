@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   addEdge, Background, BackgroundVariant, BaseEdge, Connection, Edge, EdgeLabelRenderer, EdgeProps, getBezierPath, Handle, MiniMap, NodeResizer, NodeToolbar,
   EdgeChange, Node, NodeChange, NodeProps, Position, ReactFlow, ReactFlowInstance, SelectionMode,
@@ -1034,6 +1034,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const assistantBusyRef = useRef(false)
   const [canvasMenu, setCanvasMenu] = useState<CanvasMenu>(null)
+  const canvasMenuRef = useRef<HTMLDivElement | null>(null)
+  const [canvasMenuPosition, setCanvasMenuPosition] = useState({ x: 0, y: 0 })
   const [topbarMenuOpen, setTopbarMenuOpen] = useState(false)
   const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [themeMode, setThemeMode] = useState<CanvasThemeMode>(() => localStorage.getItem('ink-theme') === 'light' ? 'light' : 'dark')
@@ -1484,6 +1486,29 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setNodes((items) => items.map((item) => ({ ...item, selected: item.id === node.id })))
     setCanvasMenu({ type: 'node', x: event.clientX, y: event.clientY, nodeId: node.id })
   }, [setNodes])
+  useLayoutEffect(() => {
+    const menu = canvasMenuRef.current
+    if (!canvasMenu || !menu) return
+
+    const placeMenu = () => {
+      const margin = 8
+      const { width, height } = menu.getBoundingClientRect()
+      const viewportWidth = document.documentElement.clientWidth
+      const viewportHeight = document.documentElement.clientHeight
+      const x = Math.min(Math.max(margin, canvasMenu.x), Math.max(margin, viewportWidth - width - margin))
+      const y = Math.min(Math.max(margin, canvasMenu.y), Math.max(margin, viewportHeight - height - margin))
+      setCanvasMenuPosition((position) => position.x === x && position.y === y ? position : { x, y })
+    }
+
+    placeMenu()
+    const observer = new ResizeObserver(placeMenu)
+    observer.observe(menu)
+    window.addEventListener('resize', placeMenu)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', placeMenu)
+    }
+  }, [canvasMenu])
   const clearCanvas = useCallback(() => {
     if (!nodesRef.current.length && !edgesRef.current.length) return
     if (!window.confirm('清空当前画布上的所有节点和连接吗？')) return
@@ -2134,7 +2159,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         </div>
         {shortcutsOpen && <div className="shortcuts-backdrop" role="presentation" onMouseDown={() => setShortcutsOpen(false)}><section className="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onMouseDown={(event) => event.stopPropagation()}><header><h2 id="shortcuts-title">快捷键</h2><button className="icon-button" title="关闭" aria-label="关闭" onClick={() => setShortcutsOpen(false)}><X size={18} /></button></header><div><span><kbd>拖动画布</kbd><small>平移视图</small></span><span><kbd>滚轮</kbd><small>缩放画布</small></span><span><kbd>Ctrl / Cmd + 拖动</kbd><small>框选多个节点</small></span><span><kbd>Shift / Ctrl / Cmd + 点击</kbd><small>追加选择节点</small></span><span><kbd>Ctrl / Cmd + C / V</kbd><small>复制 / 粘贴节点</small></span><span><kbd>Delete / Backspace</kbd><small>删除选中节点</small></span><span><kbd>Ctrl / Cmd + Z</kbd><small>撤销</small></span><span><kbd>Esc</kbd><small>取消选择并关闭浮层</small></span></div></section></div>}
         {appearanceOpen && <div className="appearance-popover" role="dialog" aria-label="画布外观" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}><strong>画布外观</strong><span>主题</span><div className="appearance-options two"><button className={themeMode === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}><Moon size={15} />深色</button><button className={themeMode === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}><Sun size={15} />浅色</button></div><span>背景</span><div className="appearance-options"><button className={backgroundMode === 'dots' ? 'active' : ''} onClick={() => { setBackgroundMode('dots'); localStorage.setItem('ink-background-mode', 'dots') }}><CircleDot size={15} />点阵</button><button className={backgroundMode === 'lines' ? 'active' : ''} onClick={() => { setBackgroundMode('lines'); localStorage.setItem('ink-background-mode', 'lines') }}><Grid2X2 size={15} />网格</button><button className={backgroundMode === 'blank' ? 'active' : ''} onClick={() => { setBackgroundMode('blank'); localStorage.setItem('ink-background-mode', 'blank') }}><Square size={15} />空白</button></div><label className="appearance-switch"><span>显示小地图</span><input type="checkbox" checked={showMiniMap} onChange={(event) => { setShowMiniMap(event.target.checked); localStorage.setItem('ink-show-minimap', String(event.target.checked)) }} /></label></div>}
-        {canvasMenu && <div className="canvas-context-menu" style={{ left: canvasMenu.x, top: canvasMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>{canvasMenu.type === 'node' ? <><button onClick={() => { duplicateNode(canvasMenu.nodeId); setCanvasMenu(null) }}><Copy size={15} />复制</button><button className="danger" onClick={() => { deleteNode(canvasMenu.nodeId); setCanvasMenu(null) }}><Trash2 size={15} />删除</button></> : <><button onClick={() => { addNode('text', canvasMenu); setCanvasMenu(null) }}><Text size={15} />添加文本</button><button onClick={() => { addNode('note', canvasMenu); setCanvasMenu(null) }}><StickyNote size={15} />添加便签</button><button onClick={() => { addNode('image', canvasMenu); setCanvasMenu(null) }}><Image size={15} />添加图片</button><button onClick={() => { addNode('ai', canvasMenu); setCanvasMenu(null) }}><Sparkles size={15} />添加 AI</button><button onClick={() => { addNode('group', canvasMenu); setCanvasMenu(null) }}><Group size={15} />添加框架</button><i /><button onClick={() => { undo(); setCanvasMenu(null) }} disabled={!undoStack.current.length}><Undo2 size={15} />撤销</button><button onClick={() => { redo(); setCanvasMenu(null) }} disabled={!redoStack.current.length}><Redo2 size={15} />重做</button></>}</div>}
+        {canvasMenu && <div ref={canvasMenuRef} className="canvas-context-menu" style={{ left: canvasMenuPosition.x, top: canvasMenuPosition.y, minWidth: 'min(176px, calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 16px)', overflowY: 'auto' }} role="menu" onPointerDown={(event) => event.stopPropagation()}>{canvasMenu.type === 'node' ? <><button onClick={() => { duplicateNode(canvasMenu.nodeId); setCanvasMenu(null) }}><Copy size={15} />复制</button><button className="danger" onClick={() => { deleteNode(canvasMenu.nodeId); setCanvasMenu(null) }}><Trash2 size={15} />删除</button></> : <><button onClick={() => { addNode('text', canvasMenu); setCanvasMenu(null) }}><Text size={15} />添加文本</button><button onClick={() => { addNode('note', canvasMenu); setCanvasMenu(null) }}><StickyNote size={15} />添加便签</button><button onClick={() => { addNode('image', canvasMenu); setCanvasMenu(null) }}><Image size={15} />添加图片</button><button onClick={() => { addNode('ai', canvasMenu); setCanvasMenu(null) }}><Sparkles size={15} />添加 AI</button><button onClick={() => { addNode('group', canvasMenu); setCanvasMenu(null) }}><Group size={15} />添加框架</button><i /><button onClick={() => { undo(); setCanvasMenu(null) }} disabled={!undoStack.current.length}><Undo2 size={15} />撤销</button><button onClick={() => { redo(); setCanvasMenu(null) }} disabled={!redoStack.current.length}><Redo2 size={15} />重做</button></>}</div>}
         {selectedNodeCount >= 2 && <div className="selection-toolbar" role="toolbar" aria-label="多选排版">
           <span>{selectedNodeCount} 个节点</span>
           <button title="左对齐" onClick={() => arrangeSelection('left')}><AlignStartVertical size={17} /></button>
