@@ -65,6 +65,7 @@ app.use(helmet({
     directives: {
       imgSrc: ["'self'", 'data:', 'https:', 'http:'],
       mediaSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+      upgradeInsecureRequests: null,
     },
   },
 }))

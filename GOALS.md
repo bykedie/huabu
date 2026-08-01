@@ -41,7 +41,7 @@ When an idea has been accepted for implementation:
 | Run local gates | complete | build passed; full tests 24/24; deployment tests 10/10; Shell/Node syntax and diff checks passed |
 | Synchronize recovery documents | complete | README, AGENTS, SPEC, PLAN, memory, handoff, decisions, goals and main status updated |
 | Commit and push delivery | complete | `5fa5804` pushed normally to `origin/codex/infinite-canvas`; local and remote full SHA match |
-| Update and accept production | pending | Use MobaXterm and validated backup; do not alter existing Beaver/Nginx state without reversible inspection |
+| Update and accept production | in progress | `3f7b52d` deployed with healthy container and `public` mode active; browser acceptance exposed a CSP HTTP asset-upgrade blank page, fixed locally and awaiting follow-up deployment |
 
 ### Recovery Instructions
 

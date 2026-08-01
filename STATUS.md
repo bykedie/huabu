@@ -11,7 +11,7 @@
 - Text/video continue through encrypted database maintenance. The image entry writes server-owned `AI_IMAGE_BASE_URL` and `AI_IMAGE_MODELS` but never accepts an administrator image key. Users retain isolated encrypted keys and image generation remains zero site points.
 - Image relay URLs require HTTPS in production, reject credentials/query/fragment and unsafe DNS/IP targets, and image requests use manual redirects so user authorization cannot follow an unvalidated redirect.
 - The earlier relay audit found one trailing-empty-model validation gap, which was fixed. The final read-only audit completed; its stale help/recovery wording findings were corrected, while its Nginx-link concern was already covered by the current installer rollback logic and tests.
-- Production DNS/Nginx/HTTPS has not yet changed in this round. The user's latest instruction authorizes the commander to choose and execute the safe configuration; existing site state must still be inspected and backed up before replacement.
+- Production was safely updated to `3f7b52d`, then switched through the new `h` menu to `public`: `0.0.0.0:3102`, detected IPv4 `116.62.191.104`, healthy container and public health endpoint. Browser acceptance found a blank page because Helmet's default `upgrade-insecure-requests` CSP upgraded the HTTP JS/CSS URLs to unavailable HTTPS. The local follow-up disables that directive and adds regression coverage; production still needs this follow-up commit.
 - Never delete or overwrite `.env`, the application database, Docker volumes, relay keys or any directory under `/srv/canvas-backups`.
 
 ## Completed
@@ -38,8 +38,8 @@
 
 ## Next
 
-1. Fast-forward production through the validated backup workflow using MobaXterm, then reopen `h` so the new process loads the menu.
-2. Verify default/current access mode, public IP URL, dynamic image address, healthy container and preserved data/backups; inspect existing 80/443 state before any domain switch.
+1. Push and fast-forward the CSP follow-up through the validated backup workflow, then verify the public page renders instead of leaving an empty root.
+2. Verify the dynamic image address and preserved data/backups; inspect existing 80/443 state before any future domain switch.
 
 ## Blockers
 
@@ -77,6 +77,8 @@
 - GitHub delivery: commit `7c48c59` pushed normally to `origin/codex/infinite-canvas` (push response advanced `467ce07..7c48c59`).
 - Four-mode/image-relay gates on 2026-08-01: `npm.cmd run build` passed; `npm.cmd test` passed 24/24; focused deployment tests passed 10/10; four deployment Shell files and four server Node files passed syntax checks; `git diff --check` passed with line-ending warnings only.
 - Four-mode/image-relay GitHub delivery: commit `5fa5804` pushed normally to `origin/codex/infinite-canvas`; fetched remote and local full SHA both equal `5fa580431cc4ad3e4eca82171bb361d2e7d2e085`.
+- Production access-mode acceptance: `h status` reported `public`, `0.0.0.0:3102`, detected IPv4 `116.62.191.104`; Docker reported the application healthy, and `/api/health`, `/`, the hashed JS and CSS all returned HTTP 200 externally. Independent browser rendering still produced an empty `#root`; the response CSP contained `upgrade-insecure-requests`, proving the HTTP asset-upgrade defect.
+- CSP follow-up gates: production build passed; full tests passed 25/25 including the new public-HTTP response-header regression; `node --check server/app.js` and `git diff --check` passed.
 - Context-menu round gates on 2026-08-01: `npm.cmd run build` passed; `npm.cmd test` passed 23/23; four Node syntax checks and `git diff --check` passed.
 - Context-menu desktop acceptance: at `1280x720`, a right-click at `1274,714` produced a `176x264` menu at `x=1096,y=448`, leaving exactly 8px at the right and bottom; resizing the open menu to `900x500` moved it to `x=716,y=228`, again leaving 8px.
 - Context-menu node acceptance: at `900x500`, the two-item node menu measured `176x79` at `x=716,y=413`, leaving 8px at the right and bottom.

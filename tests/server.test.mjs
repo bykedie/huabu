@@ -66,6 +66,14 @@ test('health check verifies SQLite read and write access', async () => {
   assert.equal(Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value), before)
 })
 
+test('public HTTP mode does not upgrade same-origin frontend assets to HTTPS', async () => {
+  const response = await fetch(new URL('/', base))
+  assert.equal(response.status, 200)
+  const policy = response.headers.get('content-security-policy') || ''
+  assert.doesNotMatch(policy, /upgrade-insecure-requests/)
+  assert.match(await response.text(), /<div id="root"><\/div>/)
+})
+
 test('canvas count and storage quotas are enforced server-side', async () => {
   const member = await register('配额用户', 'quota@example.com')
   const create = () => request('/canvases', { token: member.token, method: 'POST', body: JSON.stringify({ name: '配额测试' }) })
