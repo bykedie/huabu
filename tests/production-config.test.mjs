@@ -114,6 +114,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(installer, /if \[\[ -n \$domain \]\]/)
   assert.match(installer, /apt_packages=\(ca-certificates curl git openssl\)/)
   assert.match(installer, /certbot --nginx --non-interactive --agree-tos --redirect/)
+  assert.match(installer, /--register-unsafely-without-email/)
+  assert.ok(installer.includes('[[ -z $email || $email =~'))
   assert.match(installer, /__DOMAIN__/)
   assert.match(installer, /__PUBLIC_PORT__/)
   assert.match(installer, /status --porcelain/)
@@ -175,6 +177,10 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /输入 SHOW 在当前 root 终端显示令牌/)
   assert.doesNotMatch(manager, /Status and public URL|Start service|Safe Git update|Commercial and quota settings|Administrator initialization token/)
   assert.match(manager, /backup_root_path/)
+  assert.match(manager, /Let's Encrypt 通知邮箱（可留空）/)
+  assert.match(manager, /apt-get install -y nginx certbot python3-certbot-nginx/)
+  assert.ok(manager.includes('certbot_contact=(--register-unsafely-without-email)'))
+  assert.doesNotMatch(manager, /留空则仅配置 HTTP/)
   assert.match(manager, /8\) configure_relay text/)
   assert.match(manager, /9\) configure_image_relay/)
   assert.match(manager, /10\) configure_relay video/)
@@ -207,6 +213,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(readme, /管理命令|h/)
   assert.match(readme, /配置文字中转.*配置图片中转.*配置视频中转/)
   assert.match(readme, /图片入口.*AI_IMAGE_MODELS/)
+  assert.match(readme, /sudo bash -s -- --domain api.bkbk.baby/)
+  assert.match(readme, /通知邮箱可以留空/)
 })
 
 test('terminal relay maintenance migrates, encrypts and clears keys without disclosure', () => {

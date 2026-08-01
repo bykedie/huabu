@@ -223,16 +223,17 @@ configure_domain() {
   local domain email='' port old_port env_backup site_backup='' nginx_tmp=''
   local site=/etc/nginx/sites-available/moyu-canvas link=/etc/nginx/sites-enabled/moyu-canvas
   local site_existed=0 link_existed=0 link_target=''
+  local -a certbot_contact
   read -r -p '域名（留空将关闭域名模式）：' domain
   port=$(public_port); old_port=$port
   if [[ -n $domain ]]; then
     valid_domain "$domain" || die '域名格式无效'
     [[ $port -ne 80 && $port -ne 443 ]] || die '域名模式下应用端口不能使用 80 或 443'
-    read -r -p "Let's Encrypt 邮箱（留空则仅配置 HTTP）：" email
+    read -r -p "Let's Encrypt 通知邮箱（可留空）：" email
     [[ -z $email ]] || valid_email "$email" || die '证书邮箱格式无效'
     [[ -f "$INSTALL_DIR/deploy/nginx.conf" ]] || die '未找到 deploy/nginx.conf'
     apt-get update
-    if [[ -n $email ]]; then apt-get install -y nginx certbot python3-certbot-nginx; else apt-get install -y nginx; fi
+    apt-get install -y nginx certbot python3-certbot-nginx
   fi
   if [[ -L $link ]]; then link_existed=1; link_target=$(readlink -- "$link"); elif [[ -e $link ]]; then die "Nginx 启用路径不是符号链接：$link"; fi
   if [[ -f $site ]]; then site_existed=1; site_backup=$(mktemp); cp -a -- "$site" "$site_backup"; fi
@@ -252,14 +253,16 @@ configure_domain() {
     remove_temp_files "$env_backup" "$site_backup"; printf '已关闭域名模式，并恢复公网 IP + 端口访问。\n'; print_status; return
   fi
   nginx_tmp=$(mktemp); sed -e "s/__DOMAIN__/$domain/g" -e "s/__PUBLIC_PORT__/$port/g" "$INSTALL_DIR/deploy/nginx.conf" > "$nginx_tmp"; chmod 644 "$nginx_tmp"
-  set_env_value PUBLIC_BIND 127.0.0.1; set_env_value MOYU_DOMAIN "$domain"; set_env_value PUBLIC_DOMAIN ''; if [[ -n $email ]]; then set_env_value MOYU_TLS 1; else set_env_value MOYU_TLS 0; fi
+  set_env_value PUBLIC_BIND 127.0.0.1; set_env_value MOYU_DOMAIN "$domain"; set_env_value PUBLIC_DOMAIN ''; set_env_value MOYU_TLS 1
   if ! compose up -d || ! wait_for_health "$port"; then cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; remove_temp_files "$env_backup" "$site_backup" "$nginx_tmp"; die '启用域名模式后应用未恢复健康，已恢复原配置'; fi
   mv -f -- "$nginx_tmp" "$site"; nginx_tmp=''; rm -f -- "$link"; ln -s -- "$site" "$link"
   if ! nginx -t || ! systemctl enable --now nginx || ! systemctl reload nginx; then
     restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; nginx -t && systemctl reload nginx || true
     remove_temp_files "$env_backup" "$site_backup"; die 'Nginx 配置或启动失败，已恢复原域名和监听配置'
   fi
-  if [[ -n $email ]] && ! certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$domain"; then
+  certbot_contact=(--register-unsafely-without-email)
+  if [[ -n $email ]]; then certbot_contact=(--email "$email"); fi
+  if ! certbot --nginx --non-interactive --agree-tos --redirect "${certbot_contact[@]}" -d "$domain"; then
     restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; nginx -t && systemctl reload nginx || true
     remove_temp_files "$env_backup" "$site_backup"; die '证书申请失败，已恢复原域名和监听配置'
   fi

@@ -40,12 +40,13 @@ When an idea has been accepted for implementation:
 | Add documentation and deployment-contract tests | complete | README and focused tests cover menu labels/routing, image model persistence/rollback, fixed endpoint language and the absence of administrator image URL/key writes |
 | Synchronize recovery documents and run final local gates | complete | Read-only audit completed; trailing empty image-model entries were fixed; build, full 23/23 tests, focused 9/9 tests, four Bash and four Node syntax checks, secret-boundary scan and diff check passed |
 | Commit and push the accepted local change | complete | `80ba173` (`feat: split relay management entries`) was pushed normally to `origin/codex/infinite-canvas`; direct GitHub access failed, then the existing local proxy completed the non-force push |
+| Make domain deployment automatic and reusable | complete | Domain mode now defaults to HTTPS with optional Let's Encrypt email, retains rollback behavior, and README documents a GitHub one-line domain deployment for the future server; build, 23/23 tests, 9/9 focused tests, Bash syntax and diff checks pass |
 | Switch DNS and configure ECS Nginx/HTTPS | pending | High-impact production change requires explicit user confirmation immediately before execution; existing site state must be backed up and rollback retained |
 | Deploy and complete public acceptance | pending | Verify production SHA, validated backup, healthy container, new 17-item `h` menu, HTTP redirect, certificate hostname, HTTPS health and rendered application |
 
 ### Recovery Instructions
 
-Read `git status`, the current diff and `STATUS.md`; do not reconstruct this goal from chat history. The local three-entry implementation is not equivalent to production completion. Before changing DNS or Nginx, reconfirm the target ECS and obtain explicit approval for the traffic switch. Never delete or expose `.env`, Docker volumes, databases, relay keys or anything under `/srv/canvas-backups`.
+Read `git status`, the current diff and `STATUS.md`; do not reconstruct this goal from chat history. The user has delegated the listening, reverse-proxy and certificate choices to the commander. Use loopback application binding plus Nginx HTTPS, and retain a reversible copy of existing site state before switching traffic. The local implementation is not equivalent to production completion. Never delete or expose `.env`, Docker volumes, databases, relay keys or anything under `/srv/canvas-backups`.
 
 ## Completed Goal: Production Backup Permission Compatibility
 

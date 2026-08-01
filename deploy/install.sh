@@ -28,7 +28,7 @@ usage() {
   --port PORT            公网宿主端口（1-65535），默认 3102
   --bind ADDRESS         监听地址，只允许 0.0.0.0 或 127.0.0.1，默认 0.0.0.0
   --domain DOMAIN        可选站点域名；只有提供此项才安装和配置 Nginx
-  --email EMAIL          Let's Encrypt 通知邮箱；启用 TLS 时必填
+  --email EMAIL          可选的 Let's Encrypt 通知邮箱；留空时无邮箱注册证书
   --no-tls               域名模式只配置 HTTP；不提供 --domain 时始终为 HTTP
   --repo-url URL         Git 仓库，默认 https://github.com/bykedie/huabu.git
   --branch BRANCH        部署分支，默认 codex/infinite-canvas
@@ -143,7 +143,7 @@ validate_port "$public_port"
 if [[ -n $domain ]]; then
   validate_domain "$domain"
   if [[ $enable_tls -eq 1 ]]; then
-    [[ $email =~ ^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$ ]] || die "启用 HTTPS 时必须提供有效的 --email；或显式使用 --no-tls"
+    [[ -z $email || $email =~ ^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$ ]] || die "--email 格式无效"
   fi
 else
   [[ -z $email ]] || die "--email 只能与 --domain 一起使用"
@@ -546,7 +546,7 @@ if [[ -n $domain ]]; then
       "$rollback_site" > "$nginx_tmp"
   elif [[ $preserve_domain_config -eq 1 && $old_tls -eq 1 ]]; then
     rm -f -- "$nginx_tmp"
-    die "现有 HTTPS 部署缺少 Nginx 站点文件；请修复站点后重试，或显式提供 --domain 与 --email"
+    die "现有 HTTPS 部署缺少 Nginx 站点文件；请修复站点后重试，或显式提供 --domain"
   else
     sed -e "s|__DOMAIN__|$domain|g" -e "s|__PUBLIC_PORT__|$public_port|g" "$template" > "$nginx_tmp"
   fi
@@ -559,7 +559,9 @@ if [[ -n $domain ]]; then
   systemctl enable --now nginx || die "Nginx 启动失败"
   systemctl reload nginx || die "Nginx 重载失败"
   if [[ $domain_explicit -eq 1 && $enable_tls -eq 1 ]]; then
-    certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$domain" \
+    certbot_contact=(--register-unsafely-without-email)
+    if [[ -n $email ]]; then certbot_contact=(--email "$email"); fi
+    certbot --nginx --non-interactive --agree-tos --redirect "${certbot_contact[@]}" -d "$domain" \
       || die "HTTPS 证书申请失败；请检查域名解析和 80/443 端口"
   fi
 fi

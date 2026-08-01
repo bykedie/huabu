@@ -6,10 +6,12 @@
 - Confirmed public failure: `api.bkbk.baby` is a CNAME to `bkbk.baby`, which currently resolves to `64.83.20.132`; the actual ECS used for this deployment is `116.62.191.104`.
 - The correct ECS is not ready for this hostname yet: forcing HTTP to `116.62.191.104` returns `403 Forbidden` from `Server: Beaver`, while forced HTTPS resets. DNS correction alone will therefore not complete the repair; the ECS Nginx/HTTPS virtual host and certificate must also be corrected.
 - Local implementation is committed and pushed as `80ba173`: `h` now exposes `8 配置文字中转`, `9 配置图片中转`, and `10 配置视频中转`; later menu items are numbered 11-17.
+- The user delegated domain/listening/proxy/certificate decisions. The accepted operating layout is application on `127.0.0.1:3102`, public traffic on Nginx 80/443 with HTTPS redirect, and optional certificate email. The GitHub installer and `h` panel now implement this without requiring the user to understand those settings.
+- README now documents a one-line GitHub deployment with `--domain api.bkbk.baby` for the future second server. The installer clones the delivery branch, generates first-run secrets locally, preserves existing `.env` and the data volume on reruns, validates backups before fast-forward updates, and rolls back failed application/Nginx changes.
 - Text/video continue through encrypted database maintenance. The image entry never accepts an administrator image URL or key, keeps `https://www.bkbk.baby/` fixed, and only validates and writes `AI_IMAGE_MODELS`; failed health checks restore the prior `.env` and attempt to restore the old service.
 - Modified implementation files are `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`; this status/goal/decision synchronization adds only recovery documentation.
 - One read-only `gpt-5.6-sol`/`Ultra` audit completed. It found one trailing-empty-model validation gap; the commander fixed it and added coverage. No remaining code or secret-boundary issue was reported.
-- Production DNS/Nginx/HTTPS has not been changed in this round. That traffic switch requires explicit approval immediately before execution and must retain a reversible copy of existing site state.
+- Production DNS/Nginx/HTTPS has not yet changed in this round. The user's latest instruction authorizes the commander to choose and execute the safe configuration; existing site state must still be inspected and backed up before replacement.
 - Never delete or overwrite `.env`, the application database, Docker volumes, relay keys or any directory under `/srv/canvas-backups`.
 
 ## Completed
@@ -36,12 +38,12 @@
 
 ## Next
 
-1. Obtain explicit approval for the high-impact DNS and reverse-proxy switch, then change `api.bkbk.baby` to the actual ECS and configure the hostname/certificate through the safe production path.
-2. Fast-forward production through the validated backup workflow and verify the 17-item `h` menu, healthy container, preserved data/backups, HTTP-to-HTTPS redirect, matching certificate, HTTPS health endpoint and rendered application.
+1. Commit and push the optional-email automatic HTTPS workflow.
+2. Use an authenticated non-UI server channel, or one exact user-entered SSH command when no such channel is available, to inspect and back up the existing 80/443 site before replacement.
+3. Fast-forward production through the validated backup workflow, switch DNS to the actual deployment host, and verify the 17-item `h` menu, healthy container, preserved data/backups, HTTP-to-HTTPS redirect, matching certificate, HTTPS health endpoint and rendered application.
 
 ## Blockers
 
-- The production traffic switch has not been approved in the current execution step. DNS and Nginx/HTTPS changes are intentionally pending because they can briefly interrupt public access.
 - The existing `Beaver` listener/site on ports 80/443 may conflict with the project Nginx virtual host. Inspect its ownership and current site configuration before any replacement; do not disable or delete it without a reversible backup and explicit confirmation.
 - Automated SSH authentication is not available. Production commands may require the user to enter them in the already-authenticated MobaXterm session, unless a separate non-UI authenticated path becomes available.
 
@@ -52,6 +54,7 @@
 - Current worktree before document synchronization contained only `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`, with 58 insertions and 11 deletions.
 - Fresh local gates for this goal: `npm.cmd run build` passed; full tests passed 23/23; focused production tests passed 9/9; four deployment Shell files and four server Node files passed syntax checks; `git diff --check` passed with line-ending warnings only; targeted scan found no administrator image URL/key write.
 - GitHub delivery: implementation and recovery documents were committed as `80ba173` and pushed without force to `origin/codex/infinite-canvas` (`ade00c3..80ba173`).
+- Automatic-HTTPS follow-up gates: `npm.cmd run build` passed; full tests passed 23/23; focused deployment tests passed 9/9; all four deployment Shell files passed `bash -n`; `git diff --check` passed with line-ending warnings only.
 
 - Production incident verification on 2026-08-01: old HEAD `56e29a7`; live database `/app/data/app.db` with WAL/SHM; the default `node` maintenance container could not traverse a `0700 root:root` backup bind, while `--user 0:0` could.
 - Delivery commit `e261aeb` pushed normally and deployed by the exact SHA-256-verified installer. The update created a validated backup before fast-forwarding `56e29a7..e261aeb`, rebuilt the image, and returned healthy.
