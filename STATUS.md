@@ -2,10 +2,10 @@
 
 ## Current
 
-- Active goal: web-only relay configuration, three-kind upstream model discovery, Responses-first text compatibility, default-disabled site billing, top-right API-key access, hidden point/recharge surfaces, canvas rename repair, and GitHub delivery. Local implementation, automation, security review, desktop/mobile acceptance, cleanup, and durable-document synchronization are complete; commit and push remain.
-- Branch: `codex/infinite-canvas`. Local HEAD and `origin/codex/infinite-canvas` are both `11f6fa8312c8610df38924be0276b6364fc1f606`. The current candidate is dirty, unstaged, uncommitted, unpushed, and undeployed.
+- Active goal complete on GitHub: web-only relay configuration, three-kind upstream model discovery, Responses-first text compatibility, default-disabled site billing, top-right API-key access, hidden point/recharge surfaces, and canvas rename repair. Local implementation, automation, security review, desktop/mobile acceptance, cleanup, durable-document synchronization, commit, and normal push are complete.
+- Branch: `codex/infinite-canvas`. Feature delivery commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4` and its documentation-only delivery closeout are on `origin/codex/infinite-canvas`. Production remains undeployed for this round.
 - Current implementation removes h relay items, discovers text/image/video models with the administrator's corresponding user key, replaces candidates and clears old selections, calls Responses first with 404/405-only Chat Completions fallback, hides point/recharge surfaces, defaults text/video to zero site billing, and supports click/touch/Enter canvas renaming with persistence.
-- Recovery and verification evidence for this round is recorded in `coordination/STATUS-text-models.md`; the prior three-key delivery is already present in baseline commits `fde4fb2` and `11f6fa8`.
+- Recovery and verification evidence for this round is recorded in `coordination/STATUS-text-models.md`; feature delivery is `99926be`, and the prior three-key delivery is present in `fde4fb2` and `11f6fa8`.
 - Current execution limit: no more than 3 concurrent subthreads; this replaces the older 10-worker allowance.
 - Production remains at the last separately verified SHA `3f7b52d`; none of the current interaction, three-key, model-discovery, Agent, deployment-contract, or reflection-guard changes are in production yet.
 - Current relay contract: the authenticated user's encrypted text, image, or video key authenticates that relay kind. Administrators manage three independent addresses and open-model lists, not shared runtime keys. Account Security exposes exactly three key controls and no endpoint.
@@ -62,10 +62,9 @@
 
 ## Next
 
-1. Commander reviews the complete candidate, reruns final automated/security gates after document synchronization, then creates a normal commit.
-2. Push `codex/infinite-canvas` without force and verify local/remote full SHA equality.
-3. Update production from `3f7b52d` only through the validated backup/fast-forward path in MobaXterm; verify backup, SHA, database, health and rendered application.
-4. Keep the separate DNS/Beaver 80/443 conflict outside this delivery unless the user gives explicit, reversible production approval.
+1. The user enters item 5 in the MobaXterm `h` panel to update production from `3f7b52d` through the validated backup/fast-forward path.
+2. After the update, verify the deployed SHA, validated backup, database, health endpoint, rendered application, three model-discovery paths, API-key entry, generation flows, and rename persistence.
+3. Keep the separate DNS/Beaver 80/443 conflict outside this delivery unless the user gives explicit, reversible production approval.
 
 ## Blockers
 
@@ -77,7 +76,7 @@
 - Current-round automated evidence: server `19/19`; production configuration `12/12`; relay modernization `4/4`; web contract `4/4`; UUID `1/1`; complete suite `40/40`; build passed with `index-CuruJLMo.js` and `index-CUxjUyFM.css`; four Node and four Shell syntax checks, credential scan, and global diff check passed.
 - Current-round browser evidence: isolated ordinary HTTP application `127.0.0.1:3123` and synthetic relay `127.0.0.1:3124`; desktop `1440x1000` and mobile `390x844`; three keys, zero endpoints, zero billing surfaces, three model-discovery/save/selection paths, Responses text, candidate reset, rename persistence, sidebars, Dock reachability, zero page overflow, and empty browser warning/error logs.
 - Current-round cleanup: fixture ports `3123/3124` have zero listeners; temporary mock, database and logs were removed; viewport reset and isolated tab closed; no cleanup command targeted real `3102/5182`.
-- Delivery boundary evidence: `git rev-parse HEAD` and `git rev-parse origin/codex/infinite-canvas` both report `11f6fa8312c8610df38924be0276b6364fc1f606`; current changes are still unstaged/uncommitted/unpushed, and production remains `3f7b52d`.
+- GitHub delivery evidence: feature commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4` was pushed normally (`11f6fa8..99926be`) to `origin/codex/infinite-canvas`; production remains `3f7b52d` and was not touched.
 
 Historical evidence retained below applies to the dated rounds that produced it; it is not the latest test or delivery state.
 

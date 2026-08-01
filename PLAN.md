@@ -7,8 +7,8 @@
 5. Complete: replaced the top-right points button with the API-key/account entry and made canvas-name editing work by single click/touch, Enter, persistent save, and reload.
 6. Complete: removed h items for text/image/video relay configuration while preserving safe update as item 5 and the remaining operations.
 7. Complete: full `40/40`, build, four Node and four Shell syntax checks, diff/secret gates, desktop/mobile browser acceptance, cleanup, and durable-document synchronization passed.
-8. Pending: review, commit, and normally push the candidate to `origin/codex/infinite-canvas`; verify local and remote full SHA equality.
-9. Pending/user-operated: after GitHub delivery, the user enters item 5 in the MobaXterm `h` panel; then verify deployed SHA, backup, database, health, model discovery, API-key entry, Agent/text/image/video generation, and rename persistence.
+8. Complete: reviewed and committed the feature candidate as `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4`, pushed normally to `origin/codex/infinite-canvas`, fetched, and verified local/remote full SHA equality before the documentation-only closeout.
+9. Pending/user-operated: the user enters item 5 in the MobaXterm `h` panel; then verify deployed SHA, backup, database, health, model discovery, API-key entry, Agent/text/image/video generation, and rename persistence.
 
 # Completed Visual Alignment Plan
 

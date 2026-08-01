@@ -106,3 +106,11 @@
 - Next: Stage the complete candidate, review the staged diff, create a normal commit, push `codex/infinite-canvas` without force, fetch, and verify full local/remote SHA equality.
 - Blockers: None. Production remains user-operated through MobaXterm item 5 and has not been touched.
 - Verification: This record contains no secret values. The candidate remains uncommitted, unpushed, and undeployed at this checkpoint.
+
+## 2026-08-02 03:43:23 +08:00
+
+- Status: complete; GitHub feature delivery and documentation closeout complete, production update pending.
+- Completed: Created and normally pushed feature commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4` to `origin/codex/infinite-canvas`, fetched, and verified local/remote full SHA equality before preparing this final documentation-only closeout on the same branch.
+- Next: The user enters item 5 in the MobaXterm `h` panel, then production acceptance verifies the deployed SHA, backup, database, health, rendered UI, relay workflows, and rename persistence.
+- Blockers: None for GitHub delivery. Production is still `3f7b52d` and was not accessed.
+- Verification: Feature push advanced `11f6fa8..99926be` without force. This final record contains no secret value and is part of the normally pushed documentation closeout.

@@ -6,7 +6,7 @@
 
 ## Active Goal: Web-Only Relay Setup, Model Discovery, and No-Billing UX
 
-- Status: local implementation and acceptance complete; GitHub delivery in progress
+- Status: complete; GitHub delivery complete, production update pending
 - Started: 2026-08-02 00:04 +08:00
 - Commander thread: current main thread
 - Baseline: local and `origin/codex/infinite-canvas` both at `11f6fa8312c8610df38924be0276b6364fc1f606`; worktree was clean at start
@@ -34,11 +34,11 @@
 | Implement administrator/account/header/rename UI | complete | Operations supports three discovery/checklist flows; the top-right API-key entry, hidden billing UI, and click/touch/Enter rename behavior passed browser acceptance |
 | Remove h relay entries and synchronize deployment contract | complete | `h` now has 14 items, safe update remains item 5, and relay configuration is web-only |
 | Run automated, browser, security, and documentation gates | complete | Full `40/40`, build, Node/Shell syntax, diff, secret scan, desktop `1440x1000`, and mobile `390x844` acceptance passed; isolated fixtures were removed |
-| Commit and push GitHub delivery | pending | Candidate remains unstaged, uncommitted, and unpushed on baseline `11f6fa8312c8610df38924be0276b6364fc1f606` |
+| Commit and push GitHub delivery | complete | Feature delivery commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4` was pushed normally to `origin/codex/infinite-canvas`; local and remote full SHA matched before the final documentation-only closeout |
 
 ### Recovery Instructions
 
-Resume from this section, `PLAN.md`, `STATUS.md`, `coordination/STATUS-text-models.md`, `git status`, and the actual diff. Preserve `.env`, SQLite data, Docker volumes, user canvases, relay keys, and `/srv/canvas-backups`. Never copy a real relay key into source, tests, docs, logs, screenshots, or commands. Production updates remain user-operated through MobaXterm item 5 after GitHub delivery.
+This goal is complete on GitHub. Resume production work only from `STATUS.md`, `HANDOFF.md`, `coordination/STATUS-text-models.md`, and the actual Git state. Preserve `.env`, SQLite data, Docker volumes, user canvases, relay keys, and `/srv/canvas-backups`. Never copy a real relay key into source, tests, docs, logs, screenshots, or commands. Production updates remain user-operated through MobaXterm item 5.
 
 ## Goal Workflow
 

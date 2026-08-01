@@ -1,7 +1,7 @@
 # Web Relay, Models, Billing, and Rename Status
 
-- Updated: 2026-08-02 03:38 +08:00
-- Status: local implementation and acceptance complete; GitHub delivery pending
+- Updated: 2026-08-02 03:43 +08:00
+- Status: complete; GitHub feature delivery complete, production update pending
 - Owner: commander/main thread; this round may use concurrent bounded workers, with an absolute limit of 3 active subthreads
 - Baseline: `11f6fa8312c8610df38924be0276b6364fc1f606`, equal to `origin/codex/infinite-canvas`; clean at start
 
@@ -29,13 +29,12 @@
 
 ## Next
 
-1. Review the full candidate after durable-document synchronization.
-2. Create a normal commit and push `codex/infinite-canvas` without force.
-3. Fetch and verify local/remote full SHA equality; production remains user-operated through MobaXterm item 5.
+1. User enters item 5 in the MobaXterm `h` panel.
+2. Verify deployed SHA, backup, database, health, rendered UI, three discovery/generation paths, and rename persistence.
 
 ## Blockers
 
-- None. Production testing must wait for a committed/pushed candidate and the user's MobaXterm item 5 update.
+- None for GitHub delivery. Production acceptance waits for the user's MobaXterm item 5 update.
 
 ## Verification
 
@@ -54,3 +53,4 @@
 - 2026-08-02 03:38 +08:00: Re-ran the complete pre-delivery gate after documentation synchronization. `npm.cmd test` passed `40/40`; `npm.cmd run build` passed with `index-CuruJLMo.js` and `index-CUxjUyFM.css`; production configuration passed `12/12`; four Node syntax checks, four Shell syntax checks, the credential scan, and `git diff --check` passed.
 - Candidate scope matches the active goal: 19 modified tracked files plus `coordination/STATUS-text-models.md`, `tests/relay-modernization.test.mjs`, and `tests/web-modernization-contract.test.mjs`. No unrelated or temporary browser/mock/database/log file is present.
 - Delivery boundary remains unchanged at this checkpoint: the candidate is unstaged, uncommitted, unpushed, and undeployed; production remains `3f7b52d`.
+- 2026-08-02 03:43 +08:00: Created feature commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4`, pushed it normally to `origin/codex/infinite-canvas` (`11f6fa8..99926be`), fetched, and verified local/remote full SHA equality. Production remained untouched at `3f7b52d`.
