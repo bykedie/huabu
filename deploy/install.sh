@@ -40,7 +40,7 @@ usage() {
 同名 MOYU_REPO_URL、MOYU_BRANCH、MOYU_INSTALL_DIR、MOYU_BACKUP_ROOT
 环境变量可覆盖对应默认值。已有 .env、秘密和 Docker 数据卷不会被覆盖。
 重跑时未显式提供 --port 或 --bind 会保留已有 .env 中的值。
-部署后通过 sudo h 配置文字、图片、视频中转地址与开放模型；三类 API 密钥由用户在网站“账户安全”中填写。
+部署后通过网站“运营管理”配置文字、图片、视频中转地址与开放模型；三类 API 密钥由用户在网站“账户安全”中填写。
 应用容器只接收明确列出的运行配置；旧 .env 中的管理员共享中转密钥不会注入新运行时。
 EOF
 }
@@ -671,5 +671,5 @@ if [[ $created_env -eq 1 ]]; then
   echo "需要查看时运行：sudo sed -n 's/^ADMIN_SETUP_TOKEN=//p' '$install_dir/.env'"
   echo "首位管理员创建后，请从 .env 删除 ADMIN_SETUP_TOKEN 并重新运行本部署命令。"
 fi
-echo '中转地址与开放模型可通过 sudo h 配置；文字、图片、视频 API 密钥由每位用户在网站“账户安全”中填写。'
+echo '中转地址与开放模型请在网站“运营管理”中配置；文字、图片、视频 API 密钥由每位用户在网站“账户安全”中填写。'
 echo '现有 .env 会继续保留用于安全回滚，但应用容器不会读取其中的旧管理员共享中转密钥。'

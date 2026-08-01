@@ -1,8 +1,44 @@
 # Infinite Canvas Goals
 
 > This file is the recoverable execution ledger for accepted ideas.
-> Last update: 2026-08-01, Asia/Shanghai.
+> Last update: 2026-08-02, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
+
+## Active Goal: Web-Only Relay Setup, Model Discovery, and No-Billing UX
+
+- Status: local implementation and acceptance complete; GitHub delivery in progress
+- Started: 2026-08-02 00:04 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` both at `11f6fa8312c8610df38924be0276b6364fc1f606`; worktree was clean at start
+- Concurrency: the user approved concurrent work for this goal but capped active subthreads at 3; this cap overrides older 10-worker history
+- Objective: make the web administrator panel the only normal relay-configuration surface, discover and explicitly select text/image/video models from upstream, support Responses-first text generation, temporarily disable site-point charging and hide point/recharge surfaces, move the API-key entry to the former top-right points position, and repair canvas renaming.
+
+### Success Criteria
+
+- `h` no longer displays or dispatches text/image/video relay configuration entries; safe update remains item 5.
+- Operations can fetch `/models` for text, image, and video with the current administrator's corresponding saved user key. A new fetch replaces the candidate list and clears old selections instead of preserving preset checks.
+- Text relay calls `/responses` first, parses `output_text` or nested output text, and falls back to `/chat/completions` only for upstream 404/405. Text nodes and Agent share the same behavior.
+- Fresh configuration contains no built-in text or image model selection. Models become user-visible only after an administrator discovers, selects, and saves them.
+- Site billing defaults off for this release. New text/video calls reserve and charge zero site points while preserving generation idempotency, failure state, secret-reflection protection, and future billing code.
+- The top-right former balance button opens Account Security and is labeled as the API-key entry. Balance, wallet, redeem, recharge request, redeem-code generation, recharge review, and point wording are not reachable in the web UI while billing is disabled.
+- Canvas naming works with a visible single-click/touch edit action and persists after save/reload.
+- Focused regressions, full tests, build, syntax, diff, secret scans, desktop/mobile browser acceptance, commit, and normal GitHub push pass before completion.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Inspect screenshots, current implementation, reference behavior, Git and status files | complete | Both screenshots reviewed one at a time; current text-only discovery merge, fixed Chat Completions path, h relay entries, point UI, and double-click-only rename were located |
+| Add recovery status and regression tests | complete | Added focused relay modernization and web/deployment contract suites; both focused files pass `4/4` |
+| Implement backend protocol, discovery, and no-billing behavior | complete | Three-kind model discovery, Responses-first text calls, 404/405-only fallback, empty model defaults, and opt-in billing compatibility are implemented |
+| Implement administrator/account/header/rename UI | complete | Operations supports three discovery/checklist flows; the top-right API-key entry, hidden billing UI, and click/touch/Enter rename behavior passed browser acceptance |
+| Remove h relay entries and synchronize deployment contract | complete | `h` now has 14 items, safe update remains item 5, and relay configuration is web-only |
+| Run automated, browser, security, and documentation gates | complete | Full `40/40`, build, Node/Shell syntax, diff, secret scan, desktop `1440x1000`, and mobile `390x844` acceptance passed; isolated fixtures were removed |
+| Commit and push GitHub delivery | pending | Candidate remains unstaged, uncommitted, and unpushed on baseline `11f6fa8312c8610df38924be0276b6364fc1f606` |
+
+### Recovery Instructions
+
+Resume from this section, `PLAN.md`, `STATUS.md`, `coordination/STATUS-text-models.md`, `git status`, and the actual diff. Preserve `.env`, SQLite data, Docker volumes, user canvases, relay keys, and `/srv/canvas-backups`. Never copy a real relay key into source, tests, docs, logs, screenshots, or commands. Production updates remain user-operated through MobaXterm item 5 after GitHub delivery.
 
 ## Goal Workflow
 
@@ -15,9 +51,9 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
-## Active Goal: Production Interaction, Relay, and Agent Repair
+## Prior Goal: Production Interaction, Relay, and Agent Repair
 
-- Status: local implementation and acceptance complete; delivery in progress
+- Status: GitHub delivery complete; production update pending
 - Started: 2026-08-01 18:48 +08:00
 - Commander thread: current main thread
 - Objective: repair the production HTTP interaction blackout and canvas shell, correct the Agent panel, replace the legacy shared-key relay contract with three per-user keys, add text/image/video administration and upstream text-model discovery, expose the selected text models to Agent chat and text-generation nodes, then verify, deliver, and update production without losing data or secrets.
@@ -44,12 +80,12 @@ When an idea has been accepted for implementation:
 | Implement Operations, Account Security, Agent, and text-node UI | complete | Three key controls with zero endpoint fields, three Operations tabs, Agent and text-node model selection passed desktop/mobile browser acceptance |
 | Run automated and browser acceptance | complete | Reflection 2/2; server 19/19; production 12/12; full 32/32; UUID 1/1; build/syntax/post-build/diff passed; `1440x1000`, `390x844`, and genuine HTTP acceptance complete |
 | Synchronize durable recovery documents | complete | Nine owned documents now record the three-user-key contract, superseded history, current/origin/production SHA split, final automated/browser evidence, concurrency exception, cleanup, and pending delivery; scoped obsolete-contract/secret scans and diff check passed |
-| Commit and push GitHub delivery | pending | Current HEAD and origin remain `991b4f00b66c4612912b5530856528c262b1f5e2`; candidate is unstaged, uncommitted, and unpushed |
+| Commit and push GitHub delivery | complete | Three-key migration was pushed as `fde4fb2`; relay-origin compatibility followed as `11f6fa8`; local and origin full SHA match `11f6fa8312c8610df38924be0276b6364fc1f606` |
 | Update and accept production | pending | Production remains at `3f7b52d`; update only through the validated backup/fast-forward workflow and MobaXterm |
 
 ### Recovery Instructions
 
-Start from `git status`, `git diff`, this goal, `STATUS.md`, and all current coordination status files. The explicit concurrent-worker exception was used only for the now-complete local implementation phase; new work returns to the one-worker default unless the user grants a new exception. Do not reopen historical fixed-image/shared-text/shared-video contracts. Preserve `.env`, the database, Docker volumes, all user canvases, all relay secrets, and `/srv/canvas-backups`. Local acceptance is not GitHub or production delivery.
+This prior goal has been delivered to GitHub. Resume only from the active goal at the top of this file, `STATUS.md`, and the actual Git diff. Do not reopen historical fixed-image/shared-text/shared-video contracts. Preserve `.env`, the database, Docker volumes, all user canvases, all relay secrets, and `/srv/canvas-backups`. GitHub delivery is not production deployment.
 
 ## Historical Goal: Four Access Modes and Server Image Relay
 

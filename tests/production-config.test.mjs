@@ -11,6 +11,7 @@ const secret = 'jwt-secret-that-is-longer-than-thirty-two-bytes'
 const setupToken = 'admin-setup-token-longer-than-thirty-two-bytes'
 const clearedChildEnvironment = new Set([
   'JWT_SECRET', 'ADMIN_SETUP_TOKEN',
+  'SITE_BILLING_ENABLED',
   'AI_BASE_URL', 'AI_API_KEY', 'AI_IMAGE_BASE_URL', 'AI_IMAGE_API_KEY',
   'AI_VIDEO_BASE_URL', 'AI_VIDEO_API_KEY', 'AI_VIDEO_MEDIA_ORIGINS',
   'PUBLIC_BIND', 'MOYU_ACCESS_MODE', 'MOYU_DOMAIN', 'PUBLIC_DOMAIN',
@@ -60,6 +61,10 @@ test('production refuses unsafe secrets and invalid billing settings', () => {
   assert.notEqual(invalidBilling.status, 0)
   assert.match(invalidBilling.stderr, /CENTS_PER_POINT/)
 
+  const invalidSiteBilling = runApp({ SITE_BILLING_ENABLED: 'yes' })
+  assert.notEqual(invalidSiteBilling.status, 0)
+  assert.match(invalidSiteBilling.stderr, /SITE_BILLING_ENABLED/)
+
   const invalidStorage = runApp({ MAX_CANVAS_BYTES: '2048', MAX_USER_STORAGE_BYTES: '1024' })
   assert.notEqual(invalidStorage.status, 0)
   assert.match(invalidStorage.stderr, /MAX_USER_STORAGE_BYTES/)
@@ -87,6 +92,7 @@ test('production environment example exposes current video and media settings', 
     .map((line) => /^([A-Z0-9_]+)=/.exec(line)?.[1])
     .filter(Boolean))
   for (const key of [
+    'SITE_BILLING_ENABLED',
     'AI_VIDEO_BASE_URL', 'AI_VIDEO_MODELS', 'AI_VIDEO_POINTS',
     'AI_VIDEO_TIMEOUT_MS', 'AI_VIDEO_POLL_MS', 'AI_VIDEO_PENDING_RECOVERY_MS',
     'AI_VIDEO_MAX_RESPONSE_BYTES', 'AI_VIDEO_MEDIA_ORIGINS', 'MAX_USER_MEDIA_BYTES',
@@ -181,6 +187,12 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(envExample, /^MOYU_DOMAIN=$/m)
   assert.match(envExample, /^MOYU_TLS=0$/m)
   assert.match(envExample, /^MOYU_BACKUP_ROOT=\/srv\/canvas-backups$/m)
+  assert.match(envExample, /^SITE_BILLING_ENABLED=0$/m)
+  assert.match(envExample, /^AI_MODELS=$/m)
+  assert.match(envExample, /^AI_IMAGE_MODELS=$/m)
+  assert.match(compose, /SITE_BILLING_ENABLED: "\$\{SITE_BILLING_ENABLED:-0\}"/)
+  assert.match(compose, /AI_MODELS: "\$\{AI_MODELS:-\}"/)
+  assert.match(compose, /AI_IMAGE_MODELS: "\$\{AI_IMAGE_MODELS:-\}"/)
   assert.doesNotMatch(envExample, /^AI_(?:VIDEO_)?API_KEY=/m)
   for (const key of ['AI_API_KEY', 'AI_IMAGE_API_KEY', 'AI_VIDEO_API_KEY']) {
     assert.doesNotMatch(compose, new RegExp(`^\\s*${key}:`, 'm'))
@@ -207,15 +219,16 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(restore, /owner=\$\(stat -c "%u:%g" \/app\)/)
   assert.match(restore, /chown "\$owner" \/app\/data\/app\.db/)
 
-  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_access_mode', 'configure_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
+  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_access_mode', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
   }
-  assert.match(manager, /server\/manage-config\.js relay/)
+  assert.doesNotMatch(manager, /configure_relay|server\/manage-config\.js relay/)
   for (const label of [
     '查看状态与公网地址', '启动服务', '停止服务', '重启服务', '安全更新 Git 代码',
-    '管理访问方式', '修改应用端口', '配置文字中转', '配置图片中转', '配置视频中转', '配置商业参数与配额',
+    '管理访问方式', '修改应用端口', '配置商业参数与配额',
     '立即备份', '查看备份列表', '恢复备份', '查看日志', '运行诊断', '管理员初始化令牌',
   ]) assert.match(manager, new RegExp(label), `${label} is missing from the localized h menu`)
+  for (const label of ['配置文字中转', '配置图片中转', '配置视频中转']) assert.doesNotMatch(manager, new RegExp(label))
   assert.match(manager, /输入 RESTORE 确认替换数据库/)
   assert.match(manager, /输入 SHOW 在当前 root 终端显示令牌/)
   assert.doesNotMatch(manager, /Status and public URL|Start service|Safe Git update|Commercial and quota settings|Administrator initialization token/)
@@ -224,18 +237,14 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /apt-get install -y nginx certbot python3-certbot-nginx/)
   assert.ok(manager.includes('certbot_contact=(--register-unsafely-without-email)'))
   assert.doesNotMatch(manager, /留空则仅配置 HTTP/)
-  assert.match(manager, /8\) configure_relay text/)
-  assert.match(manager, /9\) configure_relay image/)
-  assert.match(manager, /10\) configure_relay video/)
-  assert.doesNotMatch(manager, /1\) 文字中转  2\) 视频中转/)
-  assert.match(manager, /图片中转基础地址/)
-  assert.doesNotMatch(manager, /图片中转地址固定/)
-  assert.match(manager, /图片 API 密钥由每位用户在“账户安全”中自行保存/)
+  assert.match(manager, /8\) configure_commercial/)
+  assert.match(manager, /9\) backup_now/)
+  assert.match(manager, /14\) admin_token_menu/)
+  assert.match(manager, /中转地址与开放模型统一在网站“运营管理”中配置/)
   assert.match(manager, /server\/manage-config\.js admin-status/)
   assert.match(managerConfig, /admin_password_encrypted/)
   assert.match(managerConfig, /管理员密码/)
-  assert.match(manager, /compose up -d (?:--force-recreate )?app/)
-  assert.match(manager, /wait_for_health "\$\(public_port\)"/)
+  assert.match(manager, /wait_for_health "\$port"/)
   for (const mapping of [
     /1\) mode=public; bind=0\.0\.0\.0/,
     /2\) mode=domain; bind=127\.0\.0\.1/,
@@ -264,9 +273,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(readme, /公网 IP|公网IP/)
   assert.match(readme, /HTTP.*未加密|未加密.*HTTP/)
   assert.match(readme, /管理命令|h/)
-  assert.match(readme, /配置文字中转.*配置图片中转.*配置视频中转/)
-  assert.match(readme, /AI_IMAGE_BASE_URL/)
-  assert.match(readme, /AI_IMAGE_MODELS/)
+  assert.match(readme, /文字、图片、视频中转地址和开放模型由网页“运营管理”配置/)
+  assert.doesNotMatch(readme, /sudo h.*配置文字中转|配置文字中转.*配置图片中转.*配置视频中转/)
   assert.match(readme, /sudo bash -s -- --domain api.bkbk.baby/)
   assert.match(readme, /通知邮箱可以留空/)
 })

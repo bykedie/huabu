@@ -90,3 +90,19 @@
 - Cleanup evidence: Fixture ports `3113/3120` have zero listeners; the mock file, temporary database, and logs were removed; viewport reset and isolated tab closed; no command targeted real `3102/5182`.
 - Verification: Scoped obsolete-current-contract scan found no stale implementation or `Next` instruction; explicit historical records remain labeled historical or superseded. Secret-pattern scan across all nine owned files found zero Authorization header, OpenAI-style key, long secret assignment, or ciphertext-value matches. `git diff --check` passed with only existing LF/CRLF conversion notices.
 - Blockers: None for documentation synchronization.
+
+## 2026-08-02 03:19:31 +08:00
+
+- Status: web relay modernization documents synchronized; final delivery verification pending.
+- Completed: Updated the active goal, plan, product baseline, project memory, decisions, handoff, main status, and `STATUS-text-models.md` to the verified web-only relay contract. Current documents now record three-kind discovery, Responses-first text with 404/405-only fallback, empty fresh text/image model defaults, default-disabled site billing and hidden commercial UI, web-only relay administration, top-right API-key access, canvas rename persistence, the three-subthread cap, full `40/40`, final build assets, desktop/mobile acceptance, cleanup, and the `11f6fa8` delivery baseline.
+- Next: Rerun the complete automation, build, Node/Shell syntax, credential scan, and diff gate; then commit and push normally.
+- Blockers: None. The candidate remains unstaged, uncommitted, unpushed, and undeployed; production remains `3f7b52d`.
+- Verification: No real secret, password, Authorization header, `.env` value, database content, or production service was read or changed during documentation synchronization.
+
+## 2026-08-02 03:38:23 +08:00
+
+- Status: final pre-delivery gates complete; normal GitHub delivery is next.
+- Completed: Reconfirmed the synchronized candidate with full tests `40/40`, production configuration `12/12`, the final build assets, four Node and four Shell syntax checks, credential scanning, and `git diff --check`. The changed-file inventory matches the active goal and contains no temporary acceptance fixtures.
+- Next: Stage the complete candidate, review the staged diff, create a normal commit, push `codex/infinite-canvas` without force, fetch, and verify full local/remote SHA equality.
+- Blockers: None. Production remains user-operated through MobaXterm item 5 and has not been touched.
+- Verification: This record contains no secret values. The candidate remains uncommitted, unpushed, and undeployed at this checkpoint.

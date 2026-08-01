@@ -19,6 +19,7 @@ process.env.AI_IMAGE_MODELS = 'GPT-image-2'
 process.env.AI_VIDEO_MAX_RESPONSE_BYTES = '2048'
 process.env.MAX_USER_MEDIA_BYTES = '2048'
 process.env.NODE_ENV = 'test'
+process.env.SITE_BILLING_ENABLED = '1'
 delete process.env.AI_BASE_URL
 process.env.AI_API_KEY = 'forbidden-text-environment-key'
 process.env.AI_VIDEO_API_KEY = 'forbidden-video-environment-key'
@@ -235,12 +236,12 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const memberTextKey = 'test-member-text-relay-key'
   const memberImageKey = 'test-member-image-key'
   const relay = (await import('node:http')).createServer((req, res) => {
-    assert.equal(req.url, '/v1/chat/completions')
+    assert.equal(req.url, '/v1/responses')
     assert.equal(req.headers.authorization, `Bearer ${memberTextKey}`)
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({
-      choices: [{ message: { content: '这是一条模拟中转站回复' } }],
-      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      output_text: '这是一条模拟中转站回复',
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     }))
   })
   relay.listen(0, '127.0.0.1')
@@ -341,7 +342,7 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   const delayedRelay = (await import('node:http')).createServer(async (_req, res) => {
     await delayedRelayReady
     res.setHeader('content-type', 'application/json')
-    res.end(JSON.stringify({ choices: [{ message: { content: '不应结算的迟到回复' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }))
+    res.end(JSON.stringify({ output_text: '不应结算的迟到回复', usage: { input_tokens: 10, output_tokens: 10 } }))
   })
   delayedRelay.listen(0, '127.0.0.1')
   await new Promise((resolve) => delayedRelay.once('listening', resolve))
@@ -457,11 +458,12 @@ test('AI billing applies local minimums when relay reports zero usage', async ()
   let relayCalls = 0
   const relay = (await import('node:http')).createServer((req, res) => {
     assert.equal(req.headers.authorization, `Bearer ${textKey}`)
+    assert.equal(req.url, '/v1/responses')
     relayCalls += 1
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({
-      choices: [{ message: { content } }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      output_text: content,
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
     }))
   })
   relay.listen(0, '127.0.0.1')
@@ -704,10 +706,10 @@ test('three user relay keys and text model discovery remain isolated and secret-
       ] }))
       return
     }
-    if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+    if (req.method === 'POST' && req.url === '/v1/responses') {
       assert.ok([keys.ownerText, keys.replacementText, keys.otherText].some((key) => authorization === `Bearer ${key}`))
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }))
+      res.end(JSON.stringify({ output_text: 'OK', usage: { input_tokens: 1, output_tokens: 1 } }))
       return
     }
     if (req.method === 'POST' && req.url === '/v1/images/generations') {
@@ -821,7 +823,7 @@ test('three user relay keys and text model discovery remain isolated and secret-
       video: initialConfig.body.videoConfigured,
     }, { text: false, image: false, video: false })
     assert.deepEqual(Object.keys(initialConfig.body).sort(), [
-      'aiModel', 'centsPerPoint', 'imageConfigured', 'imageModels', 'textConfigured', 'textModels',
+      'aiModel', 'billingEnabled', 'centsPerPoint', 'imageConfigured', 'imageModels', 'textConfigured', 'textModels',
       'topupInstructions', 'videoConfigured', 'videoModels', 'videoPoints',
     ])
     for (const body of [initialMe.body, initialConfig.body]) {
@@ -1426,21 +1428,21 @@ test('text success payloads cannot reflect the current user key into observable 
   let relayCalls = 0
   const relay = (await import('node:http')).createServer(async (req, res) => {
     assert.equal(req.method, 'POST')
-    assert.equal(req.url, '/v1/chat/completions')
+    assert.equal(req.url, '/v1/responses')
     assert.equal(req.headers.authorization, `Bearer ${textKey}`)
     for await (const _chunk of req) { /* drain JSON request */ }
     relayCalls += 1
     res.setHeader('content-type', 'application/json')
     if (relayCalls === 1) {
       res.end(JSON.stringify({
-        choices: [{ message: { content: `content reflected ${textKey}` } }],
-        usage: { prompt_tokens: 1, completion_tokens: 1 },
+        output_text: `content reflected ${textKey}`,
+        usage: { input_tokens: 1, output_tokens: 1 },
       }))
       return
     }
     res.end(JSON.stringify({
-      choices: [{ message: { content: 'safe content' } }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, diagnostics: { detail: `usage reflected ${encodedTextKey}` } },
+      output_text: 'safe content',
+      usage: { input_tokens: 1, output_tokens: 1, diagnostics: { detail: `usage reflected ${encodedTextKey}` } },
     }))
   })
   relay.listen(0, '127.0.0.1')

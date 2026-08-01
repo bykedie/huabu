@@ -2,21 +2,24 @@
 
 ## Current
 
-- Active goal: local interaction, three-user-key implementation, acceptance and durable-document synchronization are complete; GitHub delivery and production update remain.
-- Branch: `codex/infinite-canvas`. Local HEAD and `origin/codex/infinite-canvas` are both `991b4f00b66c4612912b5530856528c262b1f5e2`. The current candidate is dirty, unstaged, uncommitted, and unpushed.
+- Active goal: web-only relay configuration, three-kind upstream model discovery, Responses-first text compatibility, default-disabled site billing, top-right API-key access, hidden point/recharge surfaces, canvas rename repair, and GitHub delivery. Local implementation, automation, security review, desktop/mobile acceptance, cleanup, and durable-document synchronization are complete; commit and push remain.
+- Branch: `codex/infinite-canvas`. Local HEAD and `origin/codex/infinite-canvas` are both `11f6fa8312c8610df38924be0276b6364fc1f606`. The current candidate is dirty, unstaged, uncommitted, unpushed, and undeployed.
+- Current implementation removes h relay items, discovers text/image/video models with the administrator's corresponding user key, replaces candidates and clears old selections, calls Responses first with 404/405-only Chat Completions fallback, hides point/recharge surfaces, defaults text/video to zero site billing, and supports click/touch/Enter canvas renaming with persistence.
+- Recovery and verification evidence for this round is recorded in `coordination/STATUS-text-models.md`; the prior three-key delivery is already present in baseline commits `fde4fb2` and `11f6fa8`.
+- Current execution limit: no more than 3 concurrent subthreads; this replaces the older 10-worker allowance.
 - Production remains at the last separately verified SHA `3f7b52d`; none of the current interaction, three-key, model-discovery, Agent, deployment-contract, or reflection-guard changes are in production yet.
 - Current relay contract: the authenticated user's encrypted text, image, or video key authenticates that relay kind. Administrators manage three independent addresses and open-model lists, not shared runtime keys. Account Security exposes exactly three key controls and no endpoint.
-- Administrator relay tests use that administrator's saved corresponding user key; text upstream discovery uses the administrator's saved user text key. Text/video retain site-point billing and image remains zero site points.
+- Administrator relay tests and text/image/video upstream discovery use that administrator's saved corresponding user key. Site billing defaults off: text/video reserve and charge zero site points without ledger writes; the explicit opt-in path remains test-covered, and image remains zero site points.
 - Legacy shared-key columns remain inert additive-schema compatibility fields. Compose, `h`, administrator APIs and runtime paths do not use them as credentials.
 - Upstream-controlled errors, content, usage, models, images, task fields and cached results are guarded against raw or encoded current-key reflection into responses, logs, audits, generations or ledgers.
-- The explicit concurrent-worker exception for this goal ended with local acceptance. Future work returns to the one-worker default unless the user grants a new exception.
+- Execution defaults to one worker; when concurrency is explicitly approved, the current absolute cap is 3 active child workers/subthreads.
 - Prior four-access-mode and deployment work remains part of the accepted baseline and must not be regressed.
 - Confirmed public failure: `api.bkbk.baby` is a CNAME to `bkbk.baby`, which currently resolves to `64.83.20.132`; the actual ECS used for this deployment is `116.62.191.104`.
 - The correct ECS is not ready for this hostname yet: forcing HTTP to `116.62.191.104` returns `403 Forbidden` from `Server: Beaver`, while forced HTTPS resets. DNS correction alone will therefore not complete the repair; the ECS Nginx/HTTPS virtual host and certificate must also be corrected.
 - The accepted local implementation now adds `MOYU_ACCESS_MODE=public|domain|both|private`. Fresh deployment defaults to public IP plus port, detects and displays public IPv4, while `h` item 6 manages all four modes and item 7 changes the application port.
 - Mode mapping is explicit: public/both bind `0.0.0.0`; domain/private bind `127.0.0.1`; only domain/both enable this project's Nginx link. Old `.env` files without a mode are inferred from domain and bind, and repeat installs preserve the selected mode.
 - README now documents a one-line GitHub deployment with `--domain api.bkbk.baby` for the future second server. The installer clones the delivery branch, generates first-run secrets locally, preserves existing `.env` and the data volume on reruns, validates backups before fast-forward updates, and rolls back failed application/Nginx changes.
-- Text/image/video `h` entries now maintain only addresses and models, with video points retained; they do not accept shared runtime keys. `AI_IMAGE_BASE_URL` remains the server image default/fallback.
+- `h` no longer contains text/image/video relay entries; safe update remains item 5. Web Operations is the only normal surface for relay addresses, model discovery, and open-model selection. `AI_IMAGE_BASE_URL` remains only a server default/fallback.
 - Image relay URLs require HTTPS in production, reject credentials/query/fragment and unsafe DNS/IP targets, and image requests use manual redirects so user authorization cannot follow an unvalidated redirect.
 - At the user's explicit request, `h status` now displays administrator email/password to root. Administrator registration and password changes store an AES-256-GCM ciphertext alongside the bcrypt hash; application APIs never expose it, legacy administrators require one password change, and backup validation checks it with the dedicated `admin-login` derived key.
 - The earlier relay audit found one trailing-empty-model validation gap, which was fixed. The final read-only audit completed; its stale help/recovery wording findings were corrected, while its Nginx-link concern was already covered by the current installer rollback logic and tests.
@@ -25,6 +28,11 @@
 
 ## Completed
 
+- Added Responses-first text relay handling with `output_text` and nested output parsing, and restricted Chat Completions fallback to upstream 404/405.
+- Added text/image/video upstream model discovery, empty fresh text/image model defaults, replacement candidate lists, and explicit administrator selection.
+- Added `SITE_BILLING_ENABLED`, defaulted it to `0`, retained the opt-in ledger path, and hid wallet, balance, redeem, recharge, recharge review, and point wording from the current web UI.
+- Replaced the top-right balance action with the API-key account entry and removed the three relay configuration entries from `h` while retaining safe update as item 5.
+- Fixed canvas rename entry and Enter completion; desktop acceptance confirmed the new name persisted in SQLite and after refresh.
 - Added a shared browser UUID helper with secure-context and no-`crypto` fallbacks; genuine ordinary HTTP refresh restored the accepted canvas instead of producing a blank root.
 - Completed command-menu/sidebar separation, repeatable close behavior, every Dock action, clear/undo, navigation, appearance, upload and responsive Agent geometry.
 - Added encrypted per-user text, image and video key save/test/replace/clear paths; all runtime and video-poll operations use the authenticated user's corresponding key.
@@ -54,7 +62,7 @@
 
 ## Next
 
-1. Commander reviews the complete candidate, reruns final automated gates if files changed after the recorded run, then creates a normal commit.
+1. Commander reviews the complete candidate, reruns final automated/security gates after document synchronization, then creates a normal commit.
 2. Push `codex/infinite-canvas` without force and verify local/remote full SHA equality.
 3. Update production from `3f7b52d` only through the validated backup/fast-forward path in MobaXterm; verify backup, SHA, database, health and rendered application.
 4. Keep the separate DNS/Beaver 80/443 conflict outside this delivery unless the user gives explicit, reversible production approval.
@@ -66,10 +74,10 @@
 
 ## Evidence
 
-- Current-round automated evidence: reflection `2/2`; server `19/19`; production configuration `12/12`; full suite `32/32`; UUID `1/1`; build passed with `index-DDen9KmM.js` and `index-ZMfIRUE0.css`; four Node and four Shell syntax checks, post-build scan and global diff check passed.
-- Current-round browser evidence: genuine HTTP `http://192.168.5.35:3113/`, desktop `1440x1000`, mobile `390x844`, missing page-level `crypto`, every Dock action, sidebars, three keys, three Operations tabs, model discovery/selection, Agent/text-node requests, zero page overflow, empty browser warning/error logs, and no failed/HTTP/external requests.
-- Current-round cleanup: fixture ports `3113/3120` have zero listeners; temporary mock, database and logs were removed; viewport reset and isolated tab closed; no cleanup command targeted real `3102/5182`.
-- Delivery boundary evidence: `git rev-parse HEAD` and `git rev-parse origin/codex/infinite-canvas` both report `991b4f00b66c4612912b5530856528c262b1f5e2`; current changes are still unstaged/uncommitted/unpushed, and production remains `3f7b52d`.
+- Current-round automated evidence: server `19/19`; production configuration `12/12`; relay modernization `4/4`; web contract `4/4`; UUID `1/1`; complete suite `40/40`; build passed with `index-CuruJLMo.js` and `index-CUxjUyFM.css`; four Node and four Shell syntax checks, credential scan, and global diff check passed.
+- Current-round browser evidence: isolated ordinary HTTP application `127.0.0.1:3123` and synthetic relay `127.0.0.1:3124`; desktop `1440x1000` and mobile `390x844`; three keys, zero endpoints, zero billing surfaces, three model-discovery/save/selection paths, Responses text, candidate reset, rename persistence, sidebars, Dock reachability, zero page overflow, and empty browser warning/error logs.
+- Current-round cleanup: fixture ports `3123/3124` have zero listeners; temporary mock, database and logs were removed; viewport reset and isolated tab closed; no cleanup command targeted real `3102/5182`.
+- Delivery boundary evidence: `git rev-parse HEAD` and `git rev-parse origin/codex/infinite-canvas` both report `11f6fa8312c8610df38924be0276b6364fc1f606`; current changes are still unstaged/uncommitted/unpushed, and production remains `3f7b52d`.
 
 Historical evidence retained below applies to the dated rounds that produced it; it is not the latest test or delivery state.
 

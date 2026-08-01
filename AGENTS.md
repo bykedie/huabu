@@ -18,7 +18,7 @@ Before editing, read `HANDOFF.md`, `GOALS.md`, `PROJECT_MEMORY.md`, `SPEC.md`, `
 
 - Keep only the current commander/main thread pinned. Collaboration and subagent threads must remain unpinned unless the user explicitly changes this preference.
 - Activate one worker at a time by default. Use concurrent workers only when the user explicitly approves it for the current task.
-- The user allows up to 10 concurrent workers/subagents. Do not create workers merely to reach that number, and obey the smaller runtime concurrency limit when the platform exposes fewer slots.
+- The user allows at most 3 concurrent workers/subagents. Do not exceed this limit unless the user explicitly changes it again, do not create workers merely to reach it, and obey any smaller runtime concurrency limit exposed by the platform.
 - Collaboration threads use `gpt-5.6-sol` with `ultra` reasoning unless the user explicitly overrides those settings.
 - When concurrency is reduced, extra workers must stop after safely closing temporary browsers and clearing any test-only data they created.
 - The 2026-08-01 interaction and three-user-key migration had an explicit user-approved exception for concurrent workers with non-overlapping ownership. That exception ended with local acceptance and is not standing permission for future goals.

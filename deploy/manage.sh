@@ -22,7 +22,7 @@ usage() {
   status       显示服务状态和公网访问地址
   -h, --help   显示此帮助
 
-交互式面板分别提供文字、图片和视频中转配置入口，只维护基础地址和开放模型。
+文字、图片和视频中转地址与开放模型统一在网站“运营管理”中配置。
 三类 API 密钥均由每位用户在网站“账户安全”中自行保存。
 EOF
 }
@@ -314,24 +314,6 @@ configure_access_mode() {
   remove_temp_files "$env_backup" "$site_backup"; printf '域名配置已完成。\n'; print_status
 }
 
-configure_relay() {
-  need_install; local relay_kind=$1 relay_label relay_notice relay_prompt base models
-  case $relay_kind in
-    text) relay_label=文字; relay_notice='文字 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='文字中转基础地址（生产环境必须使用 HTTPS）：' ;;
-    image) relay_label=图片; relay_notice='图片 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='图片中转基础地址（生产环境必须使用 HTTPS）：' ;;
-    video) relay_label=视频; relay_notice='视频 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存密钥。'; relay_prompt='视频中转基础地址（生产环境必须使用 HTTPS）：' ;;
-    *) die '未知的中转类型' ;;
-  esac
-  printf '%s\n' "$relay_notice"
-  read -r -p "$relay_prompt" base
-  read -r -p '开放模型（多个模型用英文逗号分隔）：' models
-  [[ $base != *$'\n'* && $base != *$'\r'* && $models != *$'\n'* && $models != *$'\r'* ]] || die '中转配置不能包含换行符'
-  printf '%s\0%s\0' "$base" "$models" | compose run --rm -T --no-deps app node server/manage-config.js relay "$relay_kind"
-  compose up -d app
-  wait_for_health "$(public_port)" || die '中转配置已保存，但应用未恢复健康'
-  printf '%s中转地址和开放模型已保存；用户自有密钥未更改。\n' "$relay_label"
-}
-
 configure_commercial() {
   need_install; local welcome video max_canvas max_assets env_backup port
   read -r -p '新用户欢迎积分（0-10000000）：' welcome; valid_integer_range "$welcome" 0 10000000 || die '欢迎积分无效'
@@ -384,9 +366,9 @@ admin_token_menu() {
 
 menu() {
   while true; do
-    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 管理访问方式\n7 修改应用端口\n8 配置文字中转\n9 配置图片中转\n10 配置视频中转\n11 配置商业参数与配额\n12 立即备份\n13 查看备份列表\n14 恢复备份\n15 查看日志\n16 运行诊断\n17 管理员初始化令牌\n0 退出\n'
+    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 管理访问方式\n7 修改应用端口\n8 配置商业参数与配额\n9 立即备份\n10 查看备份列表\n11 恢复备份\n12 查看日志\n13 运行诊断\n14 管理员初始化令牌\n0 退出\n'
     local choice; read -r -p '请选择：' choice || exit 0
-    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_access_mode ;; 7) configure_port ;; 8) configure_relay text ;; 9) configure_relay image ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
+    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_access_mode ;; 7) configure_port ;; 8) configure_commercial ;; 9) backup_now ;; 10) list_backups ;; 11) restore_backup ;; 12) show_logs ;; 13) diagnose ;; 14) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
   done
 }
 

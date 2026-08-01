@@ -1,14 +1,14 @@
 # Current Delivery Plan
 
-1. Complete: repair the non-secure-HTTP UUID failure, Dock actions, real canvas list, sidebar, and repeatable hamburger/menu behavior.
-2. Complete: add additive encrypted per-user text, image, and video keys and make every runtime/poll path use the authenticated user's corresponding key.
-3. Complete: add administrator text/image/video relay address and open-model management, plus upstream text-model discovery using the administrator's saved user text key.
-4. Complete: expose exactly three Account Security key controls with no endpoint; repair Agent and add opened-model selection to Agent chat and text-generation nodes.
-5. Complete: close key-reflection paths and run reflection 2/2, server 19/19, production 12/12, full 32/32, UUID 1/1, build, Node/Shell syntax, post-build scan, secret review, and diff check.
-6. Complete: commander desktop `1440x1000`, mobile `390x844`, and genuine public-HTTP browser acceptance; temporary `3113/3120` fixtures and artifacts were removed.
-7. Complete: synchronize durable recovery documents; scoped obsolete-contract and secret scans plus `git diff --check` passed.
-8. Pending: review, commit, and normally push the accepted candidate to `origin/codex/infinite-canvas`; local and remote still point to `991b4f00b66c4612912b5530856528c262b1f5e2`.
-9. Pending: update production from `3f7b52d` only through the validated backup/fast-forward path in MobaXterm, then verify SHA, database, health, and rendered application.
+1. Complete: added focused regressions for Responses-first text calls, restricted fallback, three relay model-discovery routes, empty model defaults, disabled site billing, hidden point/recharge UI, removed h relay entries, and click/touch/Enter canvas rename.
+2. Complete: implemented one shared text-relay helper used by relay tests and runtime, while preserving idempotency, secret-reflection guards, timeout limits, and failure recovery.
+3. Complete: generalized upstream model discovery to text/image/video using the administrator's corresponding saved user key; every new fetch replaces candidates and clears previous selections in Operations.
+4. Complete: defaulted site billing off, retained the future billing data/code path behind `SITE_BILLING_ENABLED=1`, charged new text/video calls zero points by default, and hid web wallet/redeem/top-up/admin point surfaces.
+5. Complete: replaced the top-right points button with the API-key/account entry and made canvas-name editing work by single click/touch, Enter, persistent save, and reload.
+6. Complete: removed h items for text/image/video relay configuration while preserving safe update as item 5 and the remaining operations.
+7. Complete: full `40/40`, build, four Node and four Shell syntax checks, diff/secret gates, desktop/mobile browser acceptance, cleanup, and durable-document synchronization passed.
+8. Pending: review, commit, and normally push the candidate to `origin/codex/infinite-canvas`; verify local and remote full SHA equality.
+9. Pending/user-operated: after GitHub delivery, the user enters item 5 in the MobaXterm `h` panel; then verify deployed SHA, backup, database, health, model discovery, API-key entry, Agent/text/image/video generation, and rename persistence.
 
 # Completed Visual Alignment Plan
 

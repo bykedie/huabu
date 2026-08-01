@@ -6,8 +6,8 @@ import {
 } from '@xyflow/react'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceBetween, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceBetween, Group,
-  BookmarkPlus, Bot, Check, ChevronLeft, CircleDot, CircleDollarSign, Compass, Copy, Download, Eraser, FilePlus2, Focus, Grid2X2, Hand, Image, Info, LayoutDashboard, Library,
-  Crop, HelpCircle, KeyRound, LocateFixed, Lock, LockOpen, LogOut, Maximize2, Menu, MessageSquare, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, Palette, Plus, Redo2, Save, Search, Send, Settings, Sparkles, Square, StickyNote, Sun, Text, Trash2, Undo2, Video, X, ZoomIn,
+  BookmarkPlus, Bot, Check, ChevronLeft, CircleDot, Compass, Copy, Download, Eraser, FilePlus2, Focus, Grid2X2, Hand, Image, Info, LayoutDashboard, Library,
+  Crop, HelpCircle, KeyRound, LocateFixed, Lock, LockOpen, LogOut, Maximize2, Menu, MessageSquare, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, Palette, Pencil, Plus, Redo2, Save, Search, Send, Settings, Sparkles, Square, StickyNote, Sun, Text, Trash2, Undo2, Video, X, ZoomIn,
   Upload,
 } from 'lucide-react'
 import { api, ApiError, session, User } from './api'
@@ -31,7 +31,6 @@ type CanvasData = {
   imageModels?: string[]
   freeResize?: boolean
   videoModels?: string[]
-  videoPoints?: number
   groupId?: string
   groupChildCount?: number
   referenceImages?: Array<{ id: string; title: string; imageUrl: string }>
@@ -440,7 +439,7 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
             className={'node-run nodrag ' + (mode === 'image' ? 'image-run' : '')}
             disabled={data.busy || !data.prompt?.trim() || !model}
             onClick={() => mode === 'image' ? data.onRunImage?.(id, data.prompt || '', model, imageSize) : mode === 'video' ? data.onRunVideo?.(id, data.prompt || '', model, videoSize, videoSeconds) : data.onRun?.(id, data.prompt || '', model)}
-          >{data.busy ? '生成中…' : <><Sparkles size={14} />{mode === 'image' ? '生成图片' : mode === 'video' ? `生成视频 · ${data.videoPoints || 24} 积分` : '生成文字'}</>}</button></div>
+          >{data.busy ? '生成中…' : <><Sparkles size={14} />{mode === 'image' ? '生成图片' : mode === 'video' ? '生成视频' : '生成文字'}</>}</button></div>
         </div>
       ) : (
         <textarea className="node-content nodrag nowheel" placeholder="写点什么…" value={data.content || ''} onChange={(event) => data.onChange?.(id, { content: event.target.value })} />
@@ -645,66 +644,6 @@ function NodeInfoDrawer({ node, nodes, edges, close }: { node: CanvasNode; nodes
   </Drawer>
 }
 
-function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
-  type Entry = { id: string; amount: number; note: string; created_at: string }
-  type TopupOrder = { id: string; amount_cents: number; points: number; status: 'pending' | 'approved' | 'rejected' }
-  const [ledger, setLedger] = useState<Entry[]>([])
-  const [orders, setOrders] = useState<TopupOrder[]>([])
-  const [config, setConfig] = useState({ centsPerPoint: 1, topupInstructions: '' })
-  const [code, setCode] = useState('')
-  const [amount, setAmount] = useState(10)
-  const [proof, setProof] = useState('')
-  const [busy, setBusy] = useState(false)
-  const busyRef = useRef(false)
-  const load = useCallback(async () => {
-    const [wallet, topups, publicConfig] = await Promise.all([
-      api<{ ledger: Entry[] }>('/wallet'),
-      api<{ orders: TopupOrder[] }>('/topups'),
-      api<{ centsPerPoint: number; topupInstructions: string }>('/config'),
-    ])
-    setLedger(wallet.ledger)
-    setOrders(topups.orders)
-    setConfig(publicConfig)
-  }, [])
-  useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
-  async function redeem() {
-    if (busyRef.current) return
-    busyRef.current = true
-    setBusy(true)
-    let committed = false
-    try {
-      await api('/redeem', { method: 'POST', body: JSON.stringify({ code }) })
-      committed = true
-      setCode('')
-      await load()
-      await refresh()
-      notify({ type: 'ok', text: '兑换成功，积分已到账' })
-    } catch (err) { notify({ type: 'error', text: committed ? '兑换已成功，但账户信息刷新失败，请重新打开积分账户' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
-  }
-  async function topup() {
-    if (busyRef.current || !Number.isFinite(amount) || amount < 1 || amount > 100000 || proof.trim().length < 4) return
-    busyRef.current = true
-    setBusy(true)
-    let committed = false
-    try {
-      await api('/topups', { method: 'POST', body: JSON.stringify({ amountCents: Math.round(amount * 100), proof }) })
-      committed = true
-      setProof('')
-      await load()
-      notify({ type: 'ok', text: '充值申请已提交，等待管理员审核' })
-    } catch (err) { notify({ type: 'error', text: committed ? '充值申请已提交，但记录刷新失败，请重新打开积分账户' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
-  }
-  const statusText = { pending: '待审核', approved: '已到账', rejected: '已驳回' }
-  const estimatedPoints = Number.isFinite(amount) && amount >= 0 ? Math.floor(amount * 100 / config.centsPerPoint) : 0
-  return <Drawer title="积分账户" onClose={close}>
-    <div className="balance-band"><span>可用积分</span><strong>{user.balance.toLocaleString()}</strong><small>AI 调用按实际用量结算</small></div>
-    <section className="drawer-section"><h3>兑换积分</h3><div className="inline-form"><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="输入兑换码" /><button className="primary" onClick={redeem} disabled={busy || !code.trim()}>兑换</button></div></section>
-    <section className="drawer-section"><h3>充值申请</h3>{config.topupInstructions ? <p className="payment-instructions">{config.topupInstructions}</p> : <p className="muted">管理员尚未配置收款方式，暂时可使用兑换码充值。</p>}<label>充值金额（元）<input type="number" min={1} max={100000} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></label><p className="muted">预计到账 {estimatedPoints.toLocaleString()} 积分</p><label>付款交易单号<input value={proof} minLength={4} maxLength={100} required onChange={(event) => setProof(event.target.value)} placeholder="填写唯一的微信或支付宝交易单号" /></label><button className="secondary" onClick={topup} disabled={busy || !config.topupInstructions || !Number.isFinite(amount) || amount < 1 || amount > 100000 || proof.trim().length < 4}>提交审核</button><p className="muted">当前采用人工审核，管理员确认收款后积分到账。</p></section>
-    {orders.length > 0 && <section className="drawer-section"><h3>充值记录</h3><div className="topup-history">{orders.slice(0, 10).map((order) => <div key={order.id}><span>¥{(order.amount_cents / 100).toFixed(2)} · {order.points.toLocaleString()} 积分</span><strong className={order.status}>{statusText[order.status]}</strong></div>)}</div></section>}
-    <section className="drawer-section"><h3>最近明细</h3><div className="ledger">{ledger.map((item) => <div key={item.id}><span>{item.note || '积分变动'}<small>{new Date(item.created_at + 'Z').toLocaleString()}</small></span><strong className={item.amount > 0 ? 'gain' : 'cost'}>{item.amount > 0 ? '+' : ''}{item.amount}</strong></div>)}</div></section>
-  </Drawer>
-}
-
 function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
   type RelayKeyKind = 'text' | 'image' | 'video'
   const relayKeys: Array<{ kind: RelayKeyKind; label: string; configured: boolean }> = [
@@ -786,26 +725,29 @@ function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: 
   </Drawer>
 }
 
-function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (notice: Notice) => void; refresh: () => Promise<void> }) {
+function AdminDrawer({ close, notify }: { close: () => void; notify: (notice: Notice) => void }) {
   type RelayKind = 'text' | 'image' | 'video'
-  type Order = { id: string; email: string; amount_cents: number; points: number; status: string; proof?: string }
-  type AuditEntry = { id: string; action: string; target_id?: string; actor_email: string; details: Record<string, string | number | null>; created_at: string }
+  type AuditEntry = { id: string; action: string; actor_email: string; created_at: string }
   type RelayData = { baseUrl: string; models: string[]; source: string }
-  type VideoRelayData = RelayData & { points: number }
-  type AdminData = { stats: Record<string, number>; orders: Order[]; audit: AuditEntry[]; text: RelayData; image: RelayData; video: VideoRelayData }
+  type AdminData = { stats: Record<string, number>; audit: AuditEntry[]; text: RelayData; image: RelayData; video: RelayData }
+  const relayModelRoutes: Record<RelayKind, string> = {
+    text: '/admin/text-config/models',
+    image: '/admin/image-config/models',
+    video: '/admin/video-config/models',
+  }
   const [data, setData] = useState<AdminData | null>(null)
-  const [points, setPoints] = useState(100)
-  const [count, setCount] = useState(1)
-  const [codes, setCodes] = useState<string[]>([])
   const [textBaseUrl, setTextBaseUrl] = useState('')
   const [textModels, setTextModels] = useState<string[]>([])
   const [discoveredTextModels, setDiscoveredTextModels] = useState<string[]>([])
   const [textModelQuery, setTextModelQuery] = useState('')
   const [imageBaseUrl, setImageBaseUrl] = useState('')
-  const [imageModels, setImageModels] = useState('')
+  const [imageModels, setImageModels] = useState<string[]>([])
+  const [discoveredImageModels, setDiscoveredImageModels] = useState<string[]>([])
+  const [imageModelQuery, setImageModelQuery] = useState('')
   const [videoBaseUrl, setVideoBaseUrl] = useState('')
-  const [videoModels, setVideoModels] = useState('')
-  const [videoPoints, setVideoPoints] = useState(24)
+  const [videoModels, setVideoModels] = useState<string[]>([])
+  const [discoveredVideoModels, setDiscoveredVideoModels] = useState<string[]>([])
+  const [videoModelQuery, setVideoModelQuery] = useState('')
   const [relayTab, setRelayTab] = useState<RelayKind>('text')
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -813,39 +755,27 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
     setData(result)
     setTextBaseUrl(result.text.baseUrl)
     setTextModels(result.text.models)
-    setDiscoveredTextModels((models) => [...new Set([...models, ...result.text.models])])
+    setDiscoveredTextModels(result.text.models)
     setImageBaseUrl(result.image.baseUrl)
-    setImageModels(result.image.models.join(', '))
+    setImageModels(result.image.models)
+    setDiscoveredImageModels(result.image.models)
     setVideoBaseUrl(result.video.baseUrl)
-    setVideoModels(result.video.models.join(', '))
-    setVideoPoints(result.video.points)
+    setVideoModels(result.video.models)
+    setDiscoveredVideoModels(result.video.models)
   }), [])
   useEffect(() => { void load().catch((err) => notify({ type: 'error', text: err.message })) }, [load, notify])
-  async function createCodes() {
-    if (busyRef.current || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100) return
-    if (codes.length && !window.confirm('新生成的兑换码会替换当前显示的明文码。确认已保存当前兑换码吗？')) return
-    busyRef.current = true
-    setBusy(true)
-    try {
-      const result = await api<{ codes: string[] }>('/admin/codes', { method: 'POST', body: JSON.stringify({ points, count, maxUses: 1, label: '后台生成' }) })
-      setCodes(result.codes)
-      await load()
-      notify({ type: 'ok', text: `已生成 ${result.codes.length} 个兑换码` })
-    } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
-  }
-  const parseModels = (value: string) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
   const relayDraft = (kind: RelayKind) => kind === 'text'
     ? { baseUrl: textBaseUrl.trim(), models: textModels }
     : kind === 'image'
-      ? { baseUrl: imageBaseUrl.trim(), models: parseModels(imageModels) }
-      : { baseUrl: videoBaseUrl.trim(), models: parseModels(videoModels), points: videoPoints }
+      ? { baseUrl: imageBaseUrl.trim(), models: imageModels }
+      : { baseUrl: videoBaseUrl.trim(), models: videoModels }
+  const relayLabel = (kind: RelayKind) => kind === 'text' ? '文字' : kind === 'image' ? '图片' : '视频'
   async function saveRelayConfig(kind: RelayKind) {
     if (busyRef.current) return
     const draft = relayDraft(kind)
-    const label = kind === 'text' ? '文字' : kind === 'image' ? '图片' : '视频'
+    const label = relayLabel(kind)
     if (!draft.baseUrl) return notify({ type: 'error', text: `请填写${label}中转站地址` })
     if (!draft.models.length) return notify({ type: 'error', text: `请至少开放一个${label}模型` })
-    if (kind === 'video' && (!Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000)) return notify({ type: 'error', text: '视频积分必须是 1 到 1000000 的整数' })
     busyRef.current = true
     setBusy(true)
     try {
@@ -857,7 +787,7 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
   async function testRelayConfig(kind: RelayKind) {
     if (busyRef.current) return
     const draft = relayDraft(kind)
-    const label = kind === 'text' ? '文字' : kind === 'image' ? '图片' : '视频'
+    const label = relayLabel(kind)
     if (!draft.baseUrl || !draft.models[0]) return notify({ type: 'error', text: `请先填写${label}中转站地址并选择模型` })
     busyRef.current = true
     setBusy(true)
@@ -866,73 +796,69 @@ function AdminDrawer({ close, notify, refresh }: { close: () => void; notify: (n
       notify({ type: 'ok', text: `${label}中转测试成功${result.reply ? `：${result.reply}` : ''}` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
-  async function discoverModels() {
+  async function discoverModels(kind: RelayKind) {
     if (busyRef.current) return
-    const baseUrl = textBaseUrl.trim()
-    if (!baseUrl) return notify({ type: 'error', text: '请先填写文字中转站地址' })
+    const draft = relayDraft(kind)
+    const label = relayLabel(kind)
+    if (!draft.baseUrl) return notify({ type: 'error', text: `请先填写${label}中转站地址` })
     busyRef.current = true
     setBusy(true)
     try {
-      const result = await api<{ models: string[] }>('/admin/text-config/models', { method: 'POST', body: JSON.stringify({ baseUrl }) })
-      setDiscoveredTextModels([...new Set([...textModels, ...result.models])])
-      notify({ type: 'ok', text: `已获取 ${result.models.length} 个上游文字模型` })
+      const result = await api<{ models: string[] }>(relayModelRoutes[kind], { method: 'POST', body: JSON.stringify({ baseUrl: draft.baseUrl }) })
+      if (kind === 'text') {
+        setDiscoveredTextModels(result.models)
+        setTextModels([])
+        setTextModelQuery('')
+      } else if (kind === 'image') {
+        setDiscoveredImageModels(result.models)
+        setImageModels([])
+        setImageModelQuery('')
+      } else {
+        setDiscoveredVideoModels(result.models)
+        setVideoModels([])
+        setVideoModelQuery('')
+      }
+      notify({ type: 'ok', text: `已获取 ${result.models.length} 个上游${label}模型，请重新勾选要开放的模型` })
     } catch (err) { notify({ type: 'error', text: (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
   }
   function closeAdmin() {
-    if (busyRef.current) {
-      notify({ type: 'error', text: '操作正在处理中，请等待完成后再关闭' })
-      return
-    }
-    if (codes.length && !window.confirm('兑换码明文关闭后无法再次查看。确认已经保存了吗？')) return
+    if (busyRef.current) return notify({ type: 'error', text: '操作正在处理中，请等待完成后再关闭' })
     close()
   }
-  function downloadCodes() {
-    if (!codes.length) return
-    const url = URL.createObjectURL(new Blob([`${codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `redeem-codes-${new Date().toISOString().slice(0, 10)}.txt`
-    link.click()
-    URL.revokeObjectURL(url)
+  function setModelChecked(kind: RelayKind, model: string, checked: boolean) {
+    const update = (models: string[]) => checked ? [...new Set([...models, model])] : models.filter((item) => item !== model)
+    if (kind === 'text') setTextModels(update)
+    else if (kind === 'image') setImageModels(update)
+    else setVideoModels(update)
   }
-  async function review(order: Order, action: 'approve' | 'reject') {
-    if (busyRef.current) return
-    const verb = action === 'approve' ? '通过' : '驳回'
-    if (!window.confirm(`${verb} ${order.email} 的充值申请？\n金额：¥${(order.amount_cents / 100).toFixed(2)}\n积分：${order.points}\n交易单号：${order.proof || '未填写'}`)) return
-    busyRef.current = true
-    setBusy(true)
-    let committed = false
-    try {
-      await api(`/admin/topups/${order.id}/${action}`, { method: 'POST' })
-      committed = true
-      await load()
-      if (action === 'approve') await refresh()
-      notify({ type: 'ok', text: action === 'approve' ? '积分已到账' : '订单已驳回' })
-    } catch (err) { notify({ type: 'error', text: committed ? '订单已处理，但界面刷新失败，请重新打开运营管理' : (err as Error).message }) } finally { busyRef.current = false; setBusy(false) }
-  }
-  const pending = data?.orders.filter((order) => order.status === 'pending') || []
   const auditText = (entry: AuditEntry) => entry.action === 'text_config.update' || entry.action === 'ai_config.update'
     ? '更新文字中转配置'
     : entry.action === 'image_config.update'
-    ? '更新图片中转配置'
-    : entry.action === 'video_config.update'
-    ? '更新视频中转配置'
-    : entry.action === 'codes.create'
-    ? `生成 ${entry.details.count} 个兑换码 · 每码 ${entry.details.points} 积分`
-    : entry.action === 'topup.approve' || entry.action === 'topup.reject'
-    ? `${entry.action === 'topup.approve' ? '通过' : '驳回'}充值 · ¥${(Number(entry.details.amountCents) / 100).toFixed(2)} · ${entry.details.points} 积分`
-    : entry.action
-  const visibleTextModels = discoveredTextModels.filter((model) => model.toLowerCase().includes(textModelQuery.trim().toLowerCase()))
+      ? '更新图片中转配置'
+      : entry.action === 'video_config.update'
+        ? '更新视频中转配置'
+        : '后台操作'
   const relayReady = (relay: RelayData) => Boolean(relay.baseUrl && relay.models.length)
+  const renderRelayConfig = (kind: RelayKind) => {
+    const label = relayLabel(kind)
+    const baseUrl = kind === 'text' ? textBaseUrl : kind === 'image' ? imageBaseUrl : videoBaseUrl
+    const models = kind === 'text' ? textModels : kind === 'image' ? imageModels : videoModels
+    const discovered = kind === 'text' ? discoveredTextModels : kind === 'image' ? discoveredImageModels : discoveredVideoModels
+    const query = kind === 'text' ? textModelQuery : kind === 'image' ? imageModelQuery : videoModelQuery
+    const visibleModels = discovered.filter((model) => model.toLowerCase().includes(query.trim().toLowerCase()))
+    return <><h3>{label}中转</h3><label>{label}中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={baseUrl} onChange={(event) => {
+      if (kind === 'text') setTextBaseUrl(event.target.value)
+      else if (kind === 'image') setImageBaseUrl(event.target.value)
+      else setVideoBaseUrl(event.target.value)
+    }} disabled={busy} /></label><div className="relay-model-heading"><strong>开放{label}模型</strong><button className="secondary" type="button" onClick={() => void discoverModels(kind)} disabled={busy || !baseUrl.trim()}><Search size={15} />获取上游模型</button></div>{discovered.length > 0 ? <><label className="relay-model-search"><Search size={14} /><input aria-label={`筛选${label}模型`} placeholder="筛选模型" value={query} onChange={(event) => {
+      if (kind === 'text') setTextModelQuery(event.target.value)
+      else if (kind === 'image') setImageModelQuery(event.target.value)
+      else setVideoModelQuery(event.target.value)
+    }} /></label><div className="relay-model-list">{visibleModels.map((model) => <label key={model}><input type="checkbox" checked={models.includes(model)} onChange={(event) => setModelChecked(kind, model, event.target.checked)} disabled={busy} /><span>{model}</span></label>)}{visibleModels.length === 0 && <p className="muted">没有匹配模型</p>}</div><small>已开放 {models.length} 个模型</small></> : <p className="muted">获取上游模型后选择要向用户开放的模型。</p>}<div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig(kind)} disabled={busy || !baseUrl.trim() || !models.length}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig(kind)} disabled={busy || !baseUrl.trim() || !models.length}><Check size={16} />测试{label}</button></div></>
+  }
   return <Drawer title="运营管理" onClose={closeAdmin}>
-    {data && <><div className="stats-row"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div><div><span>待审核</span><strong>{data.stats.pendingTopups}</strong></div></div><div className="relay-summary">{([['text', '文字', Bot], ['image', '图片', Image], ['video', '视频', Video]] as const).map(([kind, label, Icon]) => { const relay = data[kind]; const ready = relayReady(relay); return <div className={`config-status ${ready ? 'ready' : ''}`} key={kind}><span>{ready ? <Check size={16} /> : <Icon size={16} />}{ready ? `${label}中转已配置` : `${label}中转待配置`}</span><small>{relay.baseUrl || '尚未设置地址'} · {relay.models.length} 个开放模型</small></div> })}</div></>}
-    <section className="drawer-section relay-config"><div className="relay-tabs" role="tablist" aria-label="中转配置类型"><button role="tab" aria-selected={relayTab === 'text'} className={relayTab === 'text' ? 'active' : ''} onClick={() => setRelayTab('text')}><Bot size={15} />文字</button><button role="tab" aria-selected={relayTab === 'image'} className={relayTab === 'image' ? 'active' : ''} onClick={() => setRelayTab('image')}><Image size={15} />图片</button><button role="tab" aria-selected={relayTab === 'video'} className={relayTab === 'video' ? 'active' : ''} onClick={() => setRelayTab('video')}><Video size={15} />视频</button></div>
-      {relayTab === 'text' && <><h3>文字中转</h3><label>文字中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={textBaseUrl} onChange={(event) => setTextBaseUrl(event.target.value)} disabled={busy} /></label><div className="relay-model-heading"><strong>开放文字模型</strong><button className="secondary" type="button" onClick={() => void discoverModels()} disabled={busy || !textBaseUrl.trim()}><Search size={15} />获取上游模型</button></div>{discoveredTextModels.length > 0 ? <><label className="relay-model-search"><Search size={14} /><input aria-label="筛选文字模型" placeholder="筛选模型" value={textModelQuery} onChange={(event) => setTextModelQuery(event.target.value)} /></label><div className="relay-model-list">{visibleTextModels.map((model) => <label key={model}><input type="checkbox" checked={textModels.includes(model)} onChange={(event) => setTextModels((models) => event.target.checked ? [...new Set([...models, model])] : models.filter((item) => item !== model))} disabled={busy} /><span>{model}</span></label>)}{visibleTextModels.length === 0 && <p className="muted">没有匹配模型</p>}</div><small>已开放 {textModels.length} 个模型</small></> : <p className="muted">获取上游模型后选择要向用户开放的模型。</p>}<div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('text')} disabled={busy || !textBaseUrl.trim() || !textModels.length}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('text')} disabled={busy || !textBaseUrl.trim() || !textModels.length}><Check size={16} />测试文字</button></div></>}
-      {relayTab === 'image' && <><h3>图片中转</h3><label>图片中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={imageBaseUrl} onChange={(event) => setImageBaseUrl(event.target.value)} disabled={busy} /></label><label>开放图片模型<input value={imageModels} onChange={(event) => setImageModels(event.target.value)} placeholder="image-model" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('image')} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('image')} disabled={busy || !imageBaseUrl.trim() || !imageModels.trim()}><Check size={16} />测试图片</button></div></>}
-      {relayTab === 'video' && <><h3>视频中转</h3><label>视频中转站地址<input type="url" placeholder="https://relay.example.com/v1" value={videoBaseUrl} onChange={(event) => setVideoBaseUrl(event.target.value)} disabled={busy} /></label><label>开放视频模型<input value={videoModels} onChange={(event) => setVideoModels(event.target.value)} placeholder="video-model" disabled={busy} /><small>多个模型使用英文逗号分隔</small></label><label>每次视频积分<input type="number" min={1} max={1000000} step={1} value={videoPoints} onChange={(event) => setVideoPoints(Number(event.target.value))} disabled={busy} /></label><div className="relay-actions"><button className="primary" onClick={() => void saveRelayConfig('video')} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim() || !Number.isInteger(videoPoints) || videoPoints < 1 || videoPoints > 1000000}><Settings size={16} />保存配置</button><button className="secondary" onClick={() => void testRelayConfig('video')} disabled={busy || !videoBaseUrl.trim() || !videoModels.trim()}><Check size={16} />测试视频</button></div></>}
-    </section>
-    <section className="drawer-section"><h3>生成兑换码</h3><div className="two-cols"><label>每码积分<input type="number" min={1} max={10000000} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label>生成数量<input type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div><button className="secondary" onClick={createCodes} disabled={busy || !Number.isInteger(points) || points < 1 || points > 10000000 || !Number.isInteger(count) || count < 1 || count > 100}>生成兑换码</button>{codes.length > 0 && <div className="codes-result"><textarea className="codes-output" aria-label="新生成的兑换码" readOnly value={codes.join(String.fromCharCode(10))} /><button className="secondary" onClick={downloadCodes}><Download size={16} />下载兑换码</button></div>}</section>
-    <section className="drawer-section"><h3>充值审核</h3><div className="orders">{pending.map((order) => <div key={order.id}><span><strong>{order.email}</strong><small>¥{(order.amount_cents / 100).toFixed(2)} · {order.points} 积分</small><small>{order.proof || '未填写备注'}</small></span><div><button className="icon-button accept" title="通过" disabled={busy} onClick={() => review(order, 'approve')}><Check size={17} /></button><button className="icon-button" title="驳回" disabled={busy} onClick={() => review(order, 'reject')}><X size={17} /></button></div></div>)}{pending.length === 0 && <p className="muted">暂无待审核订单</p>}</div></section>
+    {data && <><div className="stats-row compact"><div><span>用户</span><strong>{data.stats.users}</strong></div><div><span>画布</span><strong>{data.stats.canvases}</strong></div></div><div className="relay-summary">{([['text', '文字', Bot], ['image', '图片', Image], ['video', '视频', Video]] as const).map(([kind, label, Icon]) => { const relay = data[kind]; const ready = relayReady(relay); return <div className={`config-status ${ready ? 'ready' : ''}`} key={kind}><span>{ready ? <Check size={16} /> : <Icon size={16} />}{ready ? `${label}中转已配置` : `${label}中转待配置`}</span><small>{relay.baseUrl || '尚未设置地址'} · {relay.models.length} 个开放模型</small></div> })}</div></>}
+    <section className="drawer-section relay-config"><div className="relay-tabs" role="tablist" aria-label="中转配置类型"><button role="tab" aria-selected={relayTab === 'text'} className={relayTab === 'text' ? 'active' : ''} onClick={() => setRelayTab('text')}><Bot size={15} />文字</button><button role="tab" aria-selected={relayTab === 'image'} className={relayTab === 'image' ? 'active' : ''} onClick={() => setRelayTab('image')}><Image size={15} />图片</button><button role="tab" aria-selected={relayTab === 'video'} className={relayTab === 'video' ? 'active' : ''} onClick={() => setRelayTab('video')}><Video size={15} />视频</button></div>{renderRelayConfig(relayTab)}</section>
     <section className="drawer-section"><h3>操作审计</h3><div className="audit-list">{data?.audit.map((entry) => <div key={entry.id}><strong>{auditText(entry)}</strong><small>{entry.actor_email} · {new Date(entry.created_at + 'Z').toLocaleString()}</small></div>)}{data?.audit.length === 0 && <p className="muted">暂无后台操作记录</p>}</div></section>
   </Drawer>
 }
@@ -1040,7 +966,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const nodesRef = useRef<CanvasNode[]>([])
   const edgesRef = useRef<Edge[]>([])
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'dirty' | 'error'>('saved')
-  const [panel, setPanel] = useState<'account' | 'wallet' | 'admin' | null>(null)
+  const [panel, setPanel] = useState<'account' | 'admin' | null>(null)
   const [inspectedNodeId, setInspectedNodeId] = useState<string | null>(null)
   const [sidebar, setSidebar] = useState(false)
   const [canvasPanelOpen, setCanvasPanelOpen] = useState(true)
@@ -1080,8 +1006,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     textModels: string[]
     imageModels: string[]
     videoModels: string[]
-    videoPoints: number
-  }>({ textModels: [], imageModels: [], videoModels: [], videoPoints: 24 })
+  }>({ textModels: [], imageModels: [], videoModels: [] })
   const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | 'deleted' | null>(null)
   const [historyVersion, setHistoryVersion] = useState(0)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
@@ -1163,10 +1088,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   }, [setUser])
   useEffect(() => {
     if (panel !== null) return
-    api<{ textModels: string[]; imageModels: string[]; videoModels: string[]; videoPoints: number }>('/config')
+    api<{ textModels: string[]; imageModels: string[]; videoModels: string[] }>('/config')
       .then((config) => setRelayConfig({
         textModels: config.textModels || [], imageModels: config.imageModels || [],
-        videoModels: config.videoModels || [], videoPoints: config.videoPoints || 24,
+        videoModels: config.videoModels || [],
       }))
       .catch((err) => setNotice({ type: 'error', text: err.message }))
   }, [panel])
@@ -1192,6 +1117,11 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setCanvasTitleDraft(current?.name || '')
     setCanvasTitleEditing(false)
   }, [current?.name])
+  const startCanvasTitleEditing = useCallback(() => {
+    if (!current) return
+    setCanvasTitleDraft(current.name)
+    setCanvasTitleEditing(true)
+  }, [current])
   const startCanvasPanelResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     const startX = event.clientX
@@ -1422,7 +1352,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       if (activeCanvasId.current === canvasId) { setNodeBusy(id, false); appendResultNode(id, { kind: 'text', title: `文字结果${model ? ` · ${model}` : ''}`, content: result.content }) }
       resolvedAIKeys.current.set(storageKey, revision.current)
       await refreshUser()
-      setNotice({ type: 'ok', text: result.cached ? '已恢复生成结果，本次未重复扣分' : `生成完成，消耗 ${result.charged} 积分` })
+      setNotice({ type: 'ok', text: result.cached ? '已恢复生成结果' : '生成完成' })
     } catch (err) {
       if (activeCanvasId.current === canvasId) setNodeBusy(id, false)
       setNotice({ type: 'error', text: (err as Error).message })
@@ -1481,8 +1411,8 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         setNodeBusy(id, false)
       }
       resolvedAIKeys.current.set(storageKey, revision.current)
-      const balanceRefreshed = await refreshUser().then(() => true).catch(() => false)
-      setNotice({ type: 'ok', text: (result.cached ? '已恢复视频结果，本次未重复扣分' : `视频生成完成，消耗 ${result.charged} 积分`) + (balanceRefreshed ? '' : '；积分余额稍后刷新') })
+      await refreshUser().catch(() => {})
+      setNotice({ type: 'ok', text: result.cached ? '已恢复视频结果' : '视频生成完成' })
     } catch (err) {
       if (activeCanvasId.current === canvasId) setNodeBusy(id, false)
       await refreshUser().catch(() => {})
@@ -1501,9 +1431,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     groupChildCount: node.data.kind === 'group' ? groupChildCounts.get(node.id) || 0 : undefined,
     referenceImages: node.data.kind === 'ai' && (node.data.mode === 'image' || node.data.mode === 'video') ? buildGenerationContext(node.id, node.data.prompt || '', nodes, edges).referenceImages : undefined,
     textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
-    videoModels: relayConfig.videoModels, videoPoints: relayConfig.videoPoints,
+    videoModels: relayConfig.videoModels,
     onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
-  } })), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, relayConfig.videoPoints, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
+  } })), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
   const selectedNodeIds = useMemo(() => new Set(nodes.filter((node) => node.selected).map((node) => node.id)), [nodes])
   const selectedNodeCount = selectedNodeIds.size
   const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', className: selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target) ? 'connected' : edge.className, data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges, selectedNodeIds])
@@ -1800,7 +1730,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         replaceAssistantMessages([...assistantMessagesRef.current, reply].slice(-50))
         markDirty()
         resolvedAIKeys.current.set(storageKey, revision.current)
-        setNotice({ type: 'ok', text: result.cached ? '已恢复助手回复，本次未重复扣分' : `助手回复完成，消耗 ${result.charged} 积分` })
+        setNotice({ type: 'ok', text: result.cached ? '已恢复助手回复' : '助手回复完成' })
       }
       await refreshUser()
     } catch (err) {
@@ -2162,7 +2092,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       <div className="sidebar-brand"><div className="brand-mark small">墨</div><strong>墨屿</strong><button className="icon-button sidebar-close" title="收起" aria-label="收起我的画布" onClick={() => setSidebar(false)}><ChevronLeft size={18} /></button></div>
       <button className="new-canvas" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button>
       <nav className="canvas-list" aria-label="我的画布">{canvases.map((canvas) => <div className={canvas.id === current?.id ? 'active' : ''} key={canvas.id}><button onClick={() => openCanvas(canvas.id)}><LayoutDashboard size={15} /><span>{canvas.name}</span></button><button className="canvas-delete" title="删除画布" onClick={() => deleteCanvas(canvas.id)}><Trash2 size={14} /></button></div>)}</nav>
-      <div className={'sidebar-account'}><button onClick={() => setPanel('account')}><div className={'avatar'}>{user.name.slice(0, 1)}</div><span><strong>{user.name}</strong><small>{user.balance} 积分</small></span></button><button className={'icon-button'} title={'退出登录'} onClick={() => void logout()}><LogOut size={17} /></button></div>
+      <div className={'sidebar-account'}><button onClick={() => setPanel('account')}><div className={'avatar'}>{user.name.slice(0, 1)}</div><span><strong>{user.name}</strong><small>账户安全与 API 密钥</small></span></button><button className={'icon-button'} title={'退出登录'} onClick={() => void logout()}><LogOut size={17} /></button></div>
     </aside>
     {sidebar && <button className="sidebar-backdrop" onClick={() => setSidebar(false)} aria-label="关闭侧栏" />}
     <section className="canvas-shell" style={{ '--canvas-panel-width': `${canvasPanelWidth}px`, '--canvas-panel-half': `${canvasPanelWidth / 2}px` } as CSSProperties}>
@@ -2172,14 +2102,14 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
           <button className="icon-button panel-toggle" title={canvasPanelOpen ? '收起节点面板' : '展开节点面板'} aria-label={canvasPanelOpen ? '收起节点面板' : '展开节点面板'} onClick={() => { setCanvasPanelOpen((value) => !value); setAssistantOpen(false) }}>{canvasPanelOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}</button>
           <div className="topbar-menu-wrap"><button className={`icon-button menu-button ${topbarMenuOpen ? 'active' : ''}`} title="画布菜单" aria-label="打开画布菜单" aria-expanded={topbarMenuOpen} onClick={() => setTopbarMenuOpen((value) => !value)}><Menu size={18} /></button>{topbarMenuOpen && <div className="topbar-menu" role="menu"><button role="menuitem" onClick={() => { setSidebar(true); setTopbarMenuOpen(false) }}><LayoutDashboard size={15} />我的画布</button><i /><button role="menuitem" onClick={() => { void createCanvas(); setTopbarMenuOpen(false) }}><Plus size={15} />新建画布</button><button role="menuitem" className="danger" disabled={!current} onClick={() => { if (current) void deleteCanvas(current.id); setTopbarMenuOpen(false) }}><Trash2 size={15} />删除当前画布</button><i /><button role="menuitem" disabled={!current} onClick={() => { chooseDraft(); setTopbarMenuOpen(false) }}><Upload size={15} />导入草稿</button><button role="menuitem" disabled={!current} onClick={() => { downloadDraft(); setTopbarMenuOpen(false) }}><Download size={15} />导出当前画布</button><i /><button role="menuitem" disabled={!undoStack.current.length} onClick={() => { undo(); setTopbarMenuOpen(false) }}><Undo2 size={15} />撤销<span>Ctrl Z</span></button><button role="menuitem" disabled={!redoStack.current.length} onClick={() => { redo(); setTopbarMenuOpen(false) }}><Redo2 size={15} />重做<span>Ctrl Shift Z</span></button></div>}</div>
           {current ? canvasTitleEditing
-            ? <input className="canvas-name canvas-name-input" autoFocus maxLength={80} value={canvasTitleDraft} onChange={(event) => setCanvasTitleDraft(event.target.value)} onBlur={finishCanvasTitleEditing} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); cancelCanvasTitleEditing() } }} aria-label="画布名称" />
-            : <button className="canvas-name canvas-name-label" title="双击修改画布名称" onDoubleClick={() => { setCanvasTitleDraft(current.name); setCanvasTitleEditing(true) }}>{current.name}</button>
+            ? <input className="canvas-name canvas-name-input" autoFocus maxLength={80} value={canvasTitleDraft} onChange={(event) => setCanvasTitleDraft(event.target.value)} onBlur={finishCanvasTitleEditing} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); finishCanvasTitleEditing() } if (event.key === 'Escape') { event.preventDefault(); cancelCanvasTitleEditing() } }} aria-label="画布名称" />
+            : <button className="canvas-name canvas-name-label" title="修改画布名称" onClick={startCanvasTitleEditing}><span>{current.name}</span><Pencil size={14} /></button>
             : <strong>我的画布</strong>}
           <span className={`save-state ${saveState}`}>{saveState === 'saving' ? '保存中' : saveState === 'dirty' ? '待保存' : saveState === 'error' ? '保存失败' : <><Check size={13} />已保存</>}</span>
         </div>
         <div className="top-actions">
           <button className={`agent-button ${assistantOpen ? 'active' : ''}`} title={assistantOpen ? '收起画布助手' : '打开画布助手'} disabled={!current} onClick={() => { setAssistantOpen((value) => !value); setCanvasPanelOpen(false); setAppearanceOpen(false) }}><Bot size={16} />Agent</button>
-          <button className="points-button" onClick={() => setPanel('wallet')}><CircleDollarSign size={16} />{user.balance}</button>
+          <button className="api-key-button" onClick={() => setPanel('account')}><KeyRound size={16} />API 密钥</button>
           {user.role === 'admin' && <button className="icon-button" title="运营管理" aria-label="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}
           <button className="icon-button import-button" title="导入草稿" aria-label="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button>
           <button className="icon-button" title="立即保存" aria-label="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button>
@@ -2237,8 +2167,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
     {panel === 'account' && <AccountDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
-    {panel === 'wallet' && <WalletDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
-    {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={refreshUser} />}
+    {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} />}
     {inspectedNodeId && nodes.find((node) => node.id === inspectedNodeId) && <NodeInfoDrawer node={nodes.find((node) => node.id === inspectedNodeId)!} nodes={nodes} edges={edges} close={() => setInspectedNodeId(null)} />}
     {imageToolDialog && nodes.find((node) => node.id === imageToolDialog.nodeId) && <ImageToolModal dialog={imageToolDialog} node={nodes.find((node) => node.id === imageToolDialog.nodeId)!} busy={imageToolBusy} onClose={() => { if (!imageToolBusy) setImageToolDialog(null) }} onApply={(options) => void applyImageTool(options)} />}
     {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'ok' ? <Check size={16} /> : <X size={16} />}{notice.text}</div>}
