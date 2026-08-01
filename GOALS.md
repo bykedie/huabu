@@ -39,7 +39,7 @@ When an idea has been accepted for implementation:
 | Implement three independent relay entries | complete | `deploy/manage.sh` now routes menu items 8/9/10 to text/image/video independently; image configuration preserves the fixed endpoint and user-owned-key contract |
 | Add documentation and deployment-contract tests | complete | README and focused tests cover menu labels/routing, image model persistence/rollback, fixed endpoint language and the absence of administrator image URL/key writes |
 | Synchronize recovery documents and run final local gates | complete | Read-only audit completed; trailing empty image-model entries were fixed; build, full 23/23 tests, focused 9/9 tests, four Bash and four Node syntax checks, secret-boundary scan and diff check passed |
-| Commit and push the accepted local change | in progress | Final diff is accepted and ready for precise staging |
+| Commit and push the accepted local change | complete | `80ba173` (`feat: split relay management entries`) was pushed normally to `origin/codex/infinite-canvas`; direct GitHub access failed, then the existing local proxy completed the non-force push |
 | Switch DNS and configure ECS Nginx/HTTPS | pending | High-impact production change requires explicit user confirmation immediately before execution; existing site state must be backed up and rollback retained |
 | Deploy and complete public acceptance | pending | Verify production SHA, validated backup, healthy container, new 17-item `h` menu, HTTP redirect, certificate hostname, HTTPS health and rendered application |
 

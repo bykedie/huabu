@@ -5,7 +5,7 @@
 - Active goal: restore `api.bkbk.baby`, split the `h` relay configuration into text/image/video entries, deploy safely and complete public acceptance without losing data, secrets or backups.
 - Confirmed public failure: `api.bkbk.baby` is a CNAME to `bkbk.baby`, which currently resolves to `64.83.20.132`; the actual ECS used for this deployment is `116.62.191.104`.
 - The correct ECS is not ready for this hostname yet: forcing HTTP to `116.62.191.104` returns `403 Forbidden` from `Server: Beaver`, while forced HTTPS resets. DNS correction alone will therefore not complete the repair; the ECS Nginx/HTTPS virtual host and certificate must also be corrected.
-- Local implementation is complete but uncommitted: `h` now exposes `8 配置文字中转`, `9 配置图片中转`, and `10 配置视频中转`; later menu items are numbered 11-17.
+- Local implementation is committed and pushed as `80ba173`: `h` now exposes `8 配置文字中转`, `9 配置图片中转`, and `10 配置视频中转`; later menu items are numbered 11-17.
 - Text/video continue through encrypted database maintenance. The image entry never accepts an administrator image URL or key, keeps `https://www.bkbk.baby/` fixed, and only validates and writes `AI_IMAGE_MODELS`; failed health checks restore the prior `.env` and attempt to restore the old service.
 - Modified implementation files are `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`; this status/goal/decision synchronization adds only recovery documentation.
 - One read-only `gpt-5.6-sol`/`Ultra` audit completed. It found one trailing-empty-model validation gap; the commander fixed it and added coverage. No remaining code or secret-boundary issue was reported.
@@ -36,9 +36,8 @@
 
 ## Next
 
-1. Commit and push the accepted three-entry implementation and synchronized recovery documents.
-2. Obtain explicit approval for the high-impact DNS and reverse-proxy switch, then change `api.bkbk.baby` to the actual ECS and configure the hostname/certificate through the safe production path.
-3. Fast-forward production through the validated backup workflow and verify the 17-item `h` menu, healthy container, preserved data/backups, HTTP-to-HTTPS redirect, matching certificate, HTTPS health endpoint and rendered application.
+1. Obtain explicit approval for the high-impact DNS and reverse-proxy switch, then change `api.bkbk.baby` to the actual ECS and configure the hostname/certificate through the safe production path.
+2. Fast-forward production through the validated backup workflow and verify the 17-item `h` menu, healthy container, preserved data/backups, HTTP-to-HTTPS redirect, matching certificate, HTTPS health endpoint and rendered application.
 
 ## Blockers
 
@@ -52,6 +51,7 @@
 - Forced-origin recheck: HTTP request to `116.62.191.104` with host `api.bkbk.baby` returned `403 Forbidden` and `Server: Beaver`; forced HTTPS reset the connection.
 - Current worktree before document synchronization contained only `README.md`, `deploy/manage.sh`, and `tests/production-config.test.mjs`, with 58 insertions and 11 deletions.
 - Fresh local gates for this goal: `npm.cmd run build` passed; full tests passed 23/23; focused production tests passed 9/9; four deployment Shell files and four server Node files passed syntax checks; `git diff --check` passed with line-ending warnings only; targeted scan found no administrator image URL/key write.
+- GitHub delivery: implementation and recovery documents were committed as `80ba173` and pushed without force to `origin/codex/infinite-canvas` (`ade00c3..80ba173`).
 
 - Production incident verification on 2026-08-01: old HEAD `56e29a7`; live database `/app/data/app.db` with WAL/SHM; the default `node` maintenance container could not traverse a `0700 root:root` backup bind, while `--user 0:0` could.
 - Delivery commit `e261aeb` pushed normally and deployed by the exact SHA-256-verified installer. The update created a validated backup before fast-forwarding `56e29a7..e261aeb`, rebuilt the image, and returned healthy.
