@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { createCipheriv, createHash, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { db, transaction } from './db.js'
 
@@ -7,6 +7,7 @@ const fail = (message) => { throw new Error(message) }
 const jwtSecret = process.env.JWT_SECRET || ''
 if (Buffer.byteLength(jwtSecret, 'utf8') < 32) fail('JWT_SECRET 必须至少包含 32 字节')
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
+const adminLoginKey = createHash('sha256').update(`admin-login:${jwtSecret}`).digest()
 
 function encryptSetting(value) {
   const iv = randomBytes(12)
@@ -79,13 +80,35 @@ function updateVideoPoints(raw) {
   db.prepare('UPDATE app_settings SET ai_video_points=?,updated_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=1').run(points)
 }
 
+function adminStatus() {
+  const admins = db.prepare("SELECT email,admin_password_encrypted FROM users WHERE role='admin' ORDER BY created_at,id").all()
+  if (!admins.length) {
+    return '管理员账号：尚未创建\n管理员密码：尚未设置；请在注册页填写密码，并使用第 17 项查看初始化令牌\n'
+  }
+  return admins.map((admin) => {
+    let password = '不可查看；旧账号需在账户安全中修改一次密码后同步'
+    if (admin.admin_password_encrypted) {
+      try {
+        const [iv, tag, encrypted] = admin.admin_password_encrypted.split('.').map((part) => Buffer.from(part, 'base64'))
+        const decipher = createDecipheriv('aes-256-gcm', adminLoginKey, iv)
+        decipher.setAuthTag(tag)
+        const value = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+        password = JSON.stringify(value)
+      } catch { password = '无法用当前 JWT_SECRET 解密；请修改一次密码后同步' }
+    }
+    return `管理员账号：${admin.email}\n管理员密码：${password}`
+  }).join('\n') + '\n'
+}
+
 try {
   const command = process.argv[2]
+  let output = '配置已更新。\n'
   if (command === 'relay') updateRelay(process.argv[3])
   else if (command === 'video-points') updateVideoPoints(process.argv[3] || '')
+  else if (command === 'admin-status') output = adminStatus()
   else fail('未知的维护命令')
   db.close()
-  process.stdout.write('配置已更新。\n')
+  process.stdout.write(output)
 } catch (error) {
   try { db.close() } catch {}
   process.stderr.write(`配置更新失败：${error.message}\n`)

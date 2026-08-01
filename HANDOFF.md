@@ -150,7 +150,7 @@ AI、线程和运行进程可能随时消失，文件会保留。任何宕机后
 - deploy/install.sh 在 Ubuntu/Debian systemd 服务器上执行首次安装或安全快进更新：保留现有 `.env` 和数据卷，更新前备份运行中的数据库，并配置 Nginx/可选 HTTPS。
 - deploy/install.sh 默认使用 0.0.0.0:3102 公网 IP+端口，不要求域名；提供域名时才安装/配置 Nginx，可选 Certbot HTTPS。
 - 首次部署默认 `MOYU_ACCESS_MODE=public` 和 `PUBLIC_BIND=0.0.0.0`，自动探测并展示公网 IPv4。`h` 可切换 `public`、`domain`、`both`、`private`；旧部署没有模式字段时按现有域名和监听地址迁移。应用仅信任回环 Nginx 的转发头。
-- 安装器会把 deploy/manage.sh 安装为 /usr/local/bin/h；sudo h 打开管理面板，sudo h status 输出模式、监听和地址。面板负责服务启停、安全快进更新、访问方式、端口、文字/图片/视频中转、商业配额、备份恢复、日志、诊断和管理员初始化码轮换/清除。
+- 安装器会把 deploy/manage.sh 安装为 /usr/local/bin/h；sudo h 打开管理面板，sudo h status 输出模式、监听、地址和管理员登录信息。按用户明确要求，管理员密码在保留 bcrypt 登录哈希的同时以 JWT_SECRET 派生密钥做 AES-256-GCM 加密，仅由服务器 root 状态命令解密显示，应用 API 不返回；旧管理员需修改一次密码后才能同步显示。面板负责服务启停、安全快进更新、访问方式、端口、文字/图片/视频中转、商业配额、备份恢复、日志、诊断和管理员初始化码轮换/清除。
 - `h` 中转配置使用隐藏输入；留空保留，`CLEAR` 显式清除。密钥经 NUL 分隔标准输入进入一次性维护进程，加密写入数据库，旧 `.env` 密钥清空并强制重建主容器。
 - deploy/backup.sh 停止应用、复制数据目录、校验数据库并恢复服务健康。
 - deploy/restore.sh 校验和迁移候选数据库、保留回滚快照、恢复后再次校验并检查健康。

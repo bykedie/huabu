@@ -17,7 +17,7 @@ try {
   const requiredSchema = {
     users: [
       'id', 'email', 'password_hash', 'name', 'role', 'balance',
-      ...(allowLegacy ? [] : ['image_api_key_encrypted', 'login_failures', 'login_failure_started_at', 'login_locked_until', 'session_version']),
+      ...(allowLegacy ? [] : ['admin_password_encrypted', 'image_api_key_encrypted', 'login_failures', 'login_failure_started_at', 'login_locked_until', 'session_version']),
     ],
     canvases: ['id', 'user_id', 'name', 'document', ...(allowLegacy ? [] : ['version'])],
     ...(!allowLegacy ? { assets: ['id', 'user_id', 'kind', 'title', 'content'] } : {}),
@@ -42,27 +42,29 @@ try {
   if (!allowLegacy) {
     const jwtSecret = process.env.JWT_SECRET || ''
     const settingsKey = jwtSecret ? createHash('sha256').update(`ai-settings:${jwtSecret}`).digest() : null
+    const adminLoginKey = jwtSecret ? createHash('sha256').update(`admin-login:${jwtSecret}`).digest() : null
     const encryptedColumns = [
-      ['app_settings', 'ai_api_key_encrypted'],
-      ['app_settings', 'ai_video_api_key_encrypted'],
-      ['users', 'image_api_key_encrypted'],
+      ['app_settings', 'ai_api_key_encrypted', settingsKey],
+      ['app_settings', 'ai_video_api_key_encrypted', settingsKey],
+      ['users', 'admin_password_encrypted', adminLoginKey],
+      ['users', 'image_api_key_encrypted', settingsKey],
     ]
-    const decrypt = (value) => {
+    const decrypt = (value, key) => {
       const parts = typeof value === 'string' ? value.split('.') : []
       if (parts.length !== 3 || parts.some((part) => !part)) throw new Error('invalid ciphertext')
       const [iv, tag, encrypted] = parts.map((part) => Buffer.from(part, 'base64'))
       if (iv.length !== 12 || tag.length !== 16 || !encrypted.length) throw new Error('invalid ciphertext')
-      const decipher = createDecipheriv('aes-256-gcm', settingsKey, iv)
+      const decipher = createDecipheriv('aes-256-gcm', key, iv)
       decipher.setAuthTag(tag)
       decipher.update(encrypted)
       decipher.final()
     }
-    for (const [table, column] of encryptedColumns) {
+    for (const [table, column, key] of encryptedColumns) {
       const values = db.prepare(`SELECT ${column} value FROM ${table} WHERE ${column} IS NOT NULL AND ${column} <> ''`).all()
       if (!values.length) continue
       if (!jwtSecret) throw new Error(`数据库包含加密密钥但 JWT_SECRET 未配置：${table}.${column}`)
       for (const row of values) {
-        try { decrypt(row.value) }
+        try { decrypt(row.value, key) }
         catch { throw new Error(`数据库加密密钥无法用当前 JWT_SECRET 解密：${table}.${column}`) }
       }
     }

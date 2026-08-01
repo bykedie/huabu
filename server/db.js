@@ -10,6 +10,7 @@ db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeou
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  admin_password_encrypted TEXT,
   name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', balance INTEGER NOT NULL DEFAULT 0,
   image_api_key_encrypted TEXT,
   login_failures INTEGER NOT NULL DEFAULT 0, login_failure_started_at TEXT, login_locked_until TEXT,
@@ -126,6 +127,9 @@ if (!canvasColumns.some((column) => column.name === 'version')) {
   db.exec('ALTER TABLE canvases ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
 }
 const userColumns = db.prepare('PRAGMA table_info(users)').all()
+if (!userColumns.some((column) => column.name === 'admin_password_encrypted')) {
+  db.exec('ALTER TABLE users ADD COLUMN admin_password_encrypted TEXT')
+}
 if (!userColumns.some((column) => column.name === 'image_api_key_encrypted')) {
   db.exec('ALTER TABLE users ADD COLUMN image_api_key_encrypted TEXT')
 }

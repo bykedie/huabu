@@ -100,6 +100,7 @@ const normalizeRelayBaseUrl = (value, label, status = 500) => {
 const imageRelayBaseUrl = normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站')
 const imageRelayEndpoint = imageRelayBaseUrl + '/'
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
+const adminLoginKey = createHash('sha256').update(`admin-login:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
   const iv = randomBytes(12)
   const cipher = createCipheriv('aes-256-gcm', settingsKey, iv)
@@ -111,6 +112,12 @@ const decryptSetting = (value) => {
   const decipher = createDecipheriv('aes-256-gcm', settingsKey, iv)
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+}
+const encryptAdminPassword = (value) => {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', adminLoginKey, iv)
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64')).join('.')
 }
 const relaySettings = (kind = 'text') => {
   const row = db.prepare('SELECT * FROM app_settings WHERE id=1').get()
@@ -520,8 +527,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     transaction(() => {
       const hasAdmin = Number(db.prepare("SELECT COUNT(*) count FROM users WHERE role='admin'").get().count) > 0
       role = !hasAdmin && (validSetupToken(body.setupToken) || (!adminSetupToken && !isProduction)) ? 'admin' : 'user'
-      db.prepare('INSERT INTO users (id,email,password_hash,name,role,balance) VALUES (?,?,?,?,?,0)')
-        .run(id, body.email, passwordHash, body.name, role)
+      db.prepare('INSERT INTO users (id,email,password_hash,admin_password_encrypted,name,role,balance) VALUES (?,?,?,?,?,?,0)')
+        .run(id, body.email, passwordHash, role === 'admin' ? encryptAdminPassword(body.password) : null, body.name, role)
       if (welcomePoints > 0) changeBalance(id, welcomePoints, 'welcome', id, '新用户赠送')
     })
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id)
@@ -570,12 +577,13 @@ app.post('/api/auth/password', auth, async (req, res, next) => {
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.sub)
     if (!(await bcrypt.compare(body.currentPassword, user.password_hash))) throw fail(400, '当前密码错误')
     const passwordHash = await bcrypt.hash(body.newPassword, 12)
+    const adminPasswordEncrypted = user.role === 'admin' ? encryptAdminPassword(body.newPassword) : null
     const updated = transaction(() => {
       const result = db.prepare(`
-        UPDATE users SET password_hash=?,session_version=session_version+1,
+        UPDATE users SET password_hash=?,admin_password_encrypted=?,session_version=session_version+1,
           login_failures=0,login_failure_started_at=NULL,login_locked_until=NULL
         WHERE id=? AND password_hash=?
-      `).run(passwordHash, user.id, user.password_hash)
+      `).run(passwordHash, adminPasswordEncrypted, user.id, user.password_hash)
       if (!result.changes) throw fail(409, '密码已在其他设备修改，请重新登录')
       return db.prepare('SELECT * FROM users WHERE id=?').get(user.id)
     })

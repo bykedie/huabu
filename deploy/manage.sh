@@ -161,7 +161,7 @@ restore_nginx_state() {
 
 print_status() {
   need_install
-  local bind=$(public_bind) port=$(current_port) ip=$(public_ip) domain=$(configured_domain) mode=$(access_mode)
+  local bind=$(public_bind) port=$(current_port) ip=$(public_ip) domain=$(configured_domain) mode=$(access_mode) admin_info
   printf '墨屿画布目录：%s\n访问方式：%s\n监听地址：%s:%s -> 容器端口：3102\n识别到的公网 IPv4：%s\n' "$INSTALL_DIR" "$(access_mode_label "$mode")" "$bind" "$port" "$ip"
   if [[ $mode == public || $mode == both ]]; then
     if valid_ipv4 "$ip"; then printf '公网地址：http://%s:%s/\n' "$ip" "$port"; else printf '公网地址：未能自动识别，请查看云主机控制台。\n'; fi
@@ -171,7 +171,10 @@ print_status() {
     if domain_tls_enabled; then printf '域名地址：https://%s/\n' "$domain"; else printf '域名地址：http://%s/（未启用 HTTPS）\n' "$domain"; fi
   fi
   if [[ $mode == private ]]; then printf '本机地址：http://127.0.0.1:%s/\n公网与域名入口均已关闭。\n' "$port"; fi
-  if command -v docker >/dev/null 2>&1; then compose ps || true; else printf 'Docker：未安装\n'; fi
+  if command -v docker >/dev/null 2>&1; then
+    if admin_info=$(compose run --rm -T --no-deps app node server/manage-config.js admin-status 2>/dev/null); then printf '%s\n' "$admin_info"; else printf '管理员登录信息：读取失败，请运行诊断。\n'; fi
+    compose ps || true
+  else printf 'Docker：未安装\n'; fi
 }
 
 service_action() { need_install; case $1 in start) compose up -d ;; stop) compose stop ;; restart) compose restart ;; esac; print_status; }

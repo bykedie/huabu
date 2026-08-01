@@ -200,6 +200,9 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /图片 API 密钥由每位用户在“账户安全”中自行保存/)
   assert.match(manager, /set_env_value AI_IMAGE_BASE_URL/)
   assert.match(manager, /set_env_value AI_IMAGE_MODELS/)
+  assert.match(manager, /server\/manage-config\.js admin-status/)
+  assert.match(managerConfig, /admin_password_encrypted/)
+  assert.match(managerConfig, /管理员密码/)
   assert.ok(manager.includes('[[ $models != ,* && $models != *, && $models != *,,* ]]'))
   assert.match(manager, /图片模型列表不能包含空项/)
   assert.match(manager, /cp -a -- "\$env_backup" "\$ENV_FILE"/)
@@ -359,7 +362,7 @@ test('database startup migrates existing generations without losing rows', () =>
     const userColumns = db.prepare('PRAGMA table_info(users)').all().map((column) => column.name)
     const settingsColumns = db.prepare('PRAGMA table_info(app_settings)').all().map((column) => column.name)
     const mediaColumns = db.prepare('PRAGMA table_info(media)').all().map((column) => column.name)
-    const user = db.prepare('SELECT id,image_api_key_encrypted,login_failures,login_failure_started_at,login_locked_until,session_version FROM users WHERE id=?').get('legacy-user')
+    const user = db.prepare('SELECT id,admin_password_encrypted,image_api_key_encrypted,login_failures,login_failure_started_at,login_locked_until,session_version FROM users WHERE id=?').get('legacy-user')
     const canvas = db.prepare('SELECT id,version FROM canvases WHERE id=?').get('legacy-canvas')
     const row = db.prepare('SELECT id,request_hash FROM generations WHERE id=?').get('legacy-id')
     process.stdout.write(JSON.stringify({ columns, canvasColumns, userColumns, settingsColumns, mediaColumns, user, canvas, row }))
@@ -373,6 +376,7 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.ok(migrated.columns.includes('kind'))
     assert.ok(migrated.canvasColumns.includes('version'))
     assert.ok(migrated.userColumns.includes('image_api_key_encrypted'))
+    assert.ok(migrated.userColumns.includes('admin_password_encrypted'))
     assert.ok(migrated.userColumns.includes('login_failures'))
     assert.ok(migrated.userColumns.includes('login_failure_started_at'))
     assert.ok(migrated.userColumns.includes('login_locked_until'))
@@ -380,7 +384,7 @@ test('database startup migrates existing generations without losing rows', () =>
     assert.ok(migrated.settingsColumns.includes('ai_image_points'))
     assert.ok(migrated.settingsColumns.includes('ai_video_points'))
     assert.ok(migrated.mediaColumns.includes('data'))
-    assert.deepEqual(migrated.user, { id: 'legacy-user', image_api_key_encrypted: null, login_failures: 0, login_failure_started_at: null, login_locked_until: null, session_version: 0 })
+    assert.deepEqual(migrated.user, { id: 'legacy-user', admin_password_encrypted: null, image_api_key_encrypted: null, login_failures: 0, login_failure_started_at: null, login_locked_until: null, session_version: 0 })
     assert.deepEqual(migrated.canvas, { id: 'legacy-canvas', version: 0 })
     assert.deepEqual(migrated.row, { id: 'legacy-id', request_hash: null })
   } finally {
@@ -400,7 +404,7 @@ test('database restore checker accepts only a complete, consistent canvas databa
     const legacyInitialized = runApp({ DB_PATH: legacyPath }, "const { db } = await import('./server/db.js'); db.close()", databaseDirectory)
     assert.equal(legacyInitialized.status, 0, legacyInitialized.stderr)
     const legacy = new DatabaseSync(legacyPath)
-    legacy.exec('ALTER TABLE users DROP COLUMN image_api_key_encrypted; ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE admin_audit; DROP TABLE app_settings; DROP TABLE health_probe')
+    legacy.exec('ALTER TABLE users DROP COLUMN admin_password_encrypted; ALTER TABLE users DROP COLUMN image_api_key_encrypted; ALTER TABLE users DROP COLUMN login_failures; ALTER TABLE users DROP COLUMN login_failure_started_at; ALTER TABLE users DROP COLUMN login_locked_until; ALTER TABLE users DROP COLUMN session_version; ALTER TABLE canvases DROP COLUMN version; ALTER TABLE generations DROP COLUMN request_hash; DROP TABLE admin_audit; DROP TABLE app_settings; DROP TABLE health_probe')
     legacy.close()
     assert.notEqual(runDatabaseCheck(legacyPath).status, 0)
     assert.equal(runDatabaseCheck(legacyPath, true).status, 0)
@@ -492,10 +496,11 @@ test('database restore checker validates encrypted relay settings without exposi
     const ciphertexts = [
       ...Object.values(database.prepare('SELECT ai_api_key_encrypted,ai_video_api_key_encrypted FROM app_settings WHERE id=1').get()),
       database.prepare('SELECT image_api_key_encrypted FROM users WHERE email=?').get('restore-owner@example.com').image_api_key_encrypted,
+      database.prepare('SELECT admin_password_encrypted FROM users WHERE email=?').get('restore-owner@example.com').admin_password_encrypted,
     ]
     database.close()
     assert.equal(ciphertexts.every((value) => typeof value === 'string' && value.split('.').length === 3), true)
-    for (const [ciphertext, plaintext] of ciphertexts.map((value, index) => [value, [textKey, videoKey, imageKey][index]])) {
+    for (const [ciphertext, plaintext] of ciphertexts.map((value, index) => [value, [textKey, videoKey, imageKey, 'password123'][index]])) {
       assert.equal(ciphertext.includes(plaintext), false)
     }
 
@@ -511,7 +516,7 @@ test('database restore checker validates encrypted relay settings without exposi
 
     for (const result of [accepted, rejectedWrong, rejectedMissing]) {
       const output = result.stdout + result.stderr
-      for (const sensitive of [...ciphertexts, textKey, videoKey, imageKey]) assert.equal(output.includes(sensitive), false)
+      for (const sensitive of [...ciphertexts, textKey, videoKey, imageKey, 'password123']) assert.equal(output.includes(sensitive), false)
     }
   } finally {
     rmSync(databaseDirectory, { recursive: true, force: true })
@@ -541,6 +546,45 @@ test('production setup token grants only its holder the first admin role', () =>
     assert.deepEqual(JSON.parse(result.stdout), { ordinary: 'user', owner: 'admin', later: 'user', balance: 0 })
     const restartWithoutSetupToken = runApp({ ADMIN_SETUP_TOKEN: '' }, undefined, databaseDirectory)
     assert.equal(restartWithoutSetupToken.status, 0, restartWithoutSetupToken.stderr)
+  } finally {
+    rmSync(databaseDirectory, { recursive: true, force: true })
+  }
+})
+
+test('root maintenance status displays encrypted administrator credentials only', () => {
+  const databaseDirectory = mkdtempSync(join(tmpdir(), 'ink-admin-status-'))
+  const databasePath = join(databaseDirectory, 'test.db')
+  const env = {
+    ...childEnvironment, NODE_ENV: 'production', DB_PATH: databasePath,
+    JWT_SECRET: secret, ADMIN_SETUP_TOKEN: setupToken,
+  }
+  const create = `
+    const { default: app } = await import('./server/app.js')
+    const { db } = await import('./server/db.js')
+    const server = app.listen(0, '127.0.0.1')
+    await new Promise((resolve) => server.once('listening', resolve))
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/auth/register', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Root Status', email: 'root-status@example.com', password: 'status-password-456', setupToken: process.env.ADMIN_SETUP_TOKEN }),
+    })
+    if (response.status !== 201) throw new Error(await response.text())
+    await new Promise((resolve) => server.close(resolve))
+    db.close()
+  `
+  try {
+    const created = spawnSync(process.execPath, ['--input-type=module', '--eval', create], { cwd: root, encoding: 'utf8', env })
+    assert.equal(created.status, 0, created.stderr)
+    const database = new DatabaseSync(databasePath)
+    const row = database.prepare('SELECT password_hash,admin_password_encrypted FROM users WHERE email=?').get('root-status@example.com')
+    database.close()
+    assert.equal(typeof row.admin_password_encrypted, 'string')
+    assert.equal(row.admin_password_encrypted.includes('status-password-456'), false)
+    const status = spawnSync(process.execPath, ['server/manage-config.js', 'admin-status'], { cwd: root, encoding: 'utf8', env })
+    assert.equal(status.status, 0, status.stderr)
+    assert.match(status.stdout, /root-status@example\.com/)
+    assert.match(status.stdout, /"status-password-456"/)
+    assert.equal(status.stdout.includes(row.password_hash), false)
+    assert.equal(status.stdout.includes(row.admin_password_encrypted), false)
   } finally {
     rmSync(databaseDirectory, { recursive: true, force: true })
   }

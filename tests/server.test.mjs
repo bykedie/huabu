@@ -560,6 +560,23 @@ test('changing password revokes old sessions and returns a replacement token', a
   })).status, 200)
 })
 
+test('admin passwords are encrypted for root status without leaking through APIs', async () => {
+  const admin = await register('Status Admin', 'status-admin@example.com')
+  db.prepare("UPDATE users SET role='admin' WHERE id=?").run(admin.user.id)
+  const before = await request('/auth/password', {
+    token: admin.token,
+    method: 'POST',
+    body: JSON.stringify({ currentPassword: 'password123', newPassword: 'status-password-456' }),
+  })
+  assert.equal(before.status, 200)
+  const row = db.prepare('SELECT password_hash,admin_password_encrypted FROM users WHERE id=?').get(admin.user.id)
+  assert.equal(typeof row.admin_password_encrypted, 'string')
+  assert.equal(row.admin_password_encrypted.split('.').length, 3)
+  assert.equal(row.admin_password_encrypted.includes('status-password-456'), false)
+  assert.equal(JSON.stringify(before.body).includes('status-password-456'), false)
+  assert.equal(JSON.stringify((await request('/me', { token: before.body.token })).body).includes('status-password-456'), false)
+})
+
 test('AI relay response size is bounded and reserved points are refunded', async () => {
   const member = await register('响应限制用户', 'response-limit@example.com')
   const relay = (await import('node:http')).createServer((_req, res) => {

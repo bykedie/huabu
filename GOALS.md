@@ -41,7 +41,7 @@ When an idea has been accepted for implementation:
 | Run local gates | complete | build passed; full tests 24/24; deployment tests 10/10; Shell/Node syntax and diff checks passed |
 | Synchronize recovery documents | complete | README, AGENTS, SPEC, PLAN, memory, handoff, decisions, goals and main status updated |
 | Commit and push delivery | complete | `5fa5804` pushed normally to `origin/codex/infinite-canvas`; local and remote full SHA match |
-| Update and accept production | in progress | `3f7b52d` deployed with healthy container and `public` mode active; browser acceptance exposed a CSP HTTP asset-upgrade blank page, fixed locally and awaiting follow-up deployment |
+| Update and accept production | in progress | `3f7b52d` deployed with healthy container and `public` mode active; public rendering is now visually confirmed, while the CSP/root-credential follow-up is locally verified and awaits final deployment |
 
 ### Recovery Instructions
 
