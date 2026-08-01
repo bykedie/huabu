@@ -15,6 +15,35 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
+## Active Goal: Chinese Operations Panel and Continuous Canvas Iteration
+
+- Status: active
+- Started: 2026-08-01
+- Commander thread: current main thread
+- Objective: fully localize the `h` server-management experience into Chinese, deploy and verify it without changing operational safety contracts, then continuously audit and improve the current canvas in bounded implementation/test/acceptance rounds until the user explicitly pauses.
+
+### Success Criteria
+
+- The `h` main menu, help, prompts, warnings, errors and operation-result messages are understandable Chinese; safety confirmation tokens such as `CLEAR`, `RESTORE` and `SHOW` remain stable and are explained in Chinese.
+- Menu numbering, command routing, secret handling, safe-update checks, backup/restore behavior, rollback behavior and deployment data remain unchanged.
+- Automated tests assert the Chinese menu contract and all build, full-test, focused deployment, Shell syntax and diff checks pass.
+- The accepted change is committed, pushed and fast-forwarded onto production; the production container remains healthy and the database/backups are preserved.
+- After localization, each canvas iteration starts from a verified issue, uses bounded file ownership, passes focused and full gates, and records the next checkpoint here and in `STATUS.md`.
+
+### Current Round
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Establish clean localization baseline | complete | Worktree restored clean; deployment-focused suite passed 9/9 |
+| Localize the `h` management experience | complete | Main menu, help, status, prompts, warnings, errors, results and relay-maintenance output are Chinese; safety tokens remain unchanged |
+| Run complete local verification | complete | Build passed; full tests 23/23; focused deployment tests 9/9; four Node and four Bash syntax checks plus diff check passed |
+| Commit, push and deploy localization | in progress | Must fast-forward production through the validated backup/update path without deleting data or backups |
+| Start the first post-localization canvas audit round | pending | Prioritize reproducible user-facing, data-safety or workflow defects |
+
+### Recovery Instructions
+
+Read `git status`, the current diff and `STATUS.md`. Finish the current row before starting another. Never delete `.env`, Docker volumes, databases or `/srv/canvas-backups`. Preserve the real browser draft. Continue iteration until the user explicitly says to pause.
+
 ## Completed Goal: Production Backup Permission Compatibility
 
 - Status: complete

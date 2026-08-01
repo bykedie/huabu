@@ -2,7 +2,9 @@
 
 ## Current
 
-- Active goal: none. The production backup permission incident is fixed, verified, committed as `e261aeb`, pushed to `origin/codex/infinite-canvas`, and deployed to the Ubuntu host.
+- Active goal: fully localize the `h` operations panel, deploy and verify it, then continuously audit and improve the canvas in bounded rounds until the user explicitly pauses.
+- Current round: the `h` main menu, help, status, prompts, warnings, errors, results and downstream relay-maintenance output are localized. `CLEAR`, `RESTORE`, `SHOW`, menu numbering, command routing and safety behavior remain unchanged. Local verification passed: build, full tests 23/23, focused deployment tests 9/9, four Node syntax checks, four Bash syntax checks and `git diff --check`.
+- Worker policy for this goal: the user permits up to 10 concurrent subagents. All 10 existing Infinite Canvas collaboration seats are active on bounded read-only audit tasks with `gpt-5.6-sol` and `Ultra`; none owns or may modify an implementation file in the current audit round. The commander alone owns integration edits.
 - Confirmed root cause: `docker compose cp` created the expected flat backup layout, but `umask 077` made the host backup directory `0700 root:root`; the default `node` validation container could not traverse the bind-mounted `/backup` directory and misreported the existing database as missing.
 - Accepted fix: bounded database maintenance containers in `deploy/install.sh`, `deploy/backup.sh`, and `deploy/restore.sh` run as `0:0`, while restore explicitly returns copied database files to the application runtime UID/GID. Private backup permissions remain `0700`.
 - Production now runs clean commit `e261aeb`; the app is `running/healthy`, binds `0.0.0.0:3102`, and returns a healthy response on the host endpoint.
@@ -39,13 +41,14 @@
 
 ## Next
 
-1. If public IP access still times out, add or verify an Alibaba Cloud security-group inbound rule for TCP `3102`; host UFW already allows it and Docker listens on `0.0.0.0:3102`.
-2. Configure a domain and HTTPS through `sudo h` before transmitting passwords or API keys over the public Internet.
-3. Begin the next user-confirmed goal from a fresh status check.
+1. Review and commit the localized management surface and its tests, then push normally.
+2. Fast-forward production through the validated backup/update path and verify Git state, localized `h --help`, container health and `/api/health` without deleting data or backups.
+3. Begin the first evidence-driven canvas audit round and continue iterating until the user pauses.
 
 ## Blockers
 
-- No blocker remains for the database backup or production update goal. Public-IP reachability may still depend on the Alibaba Cloud security group, which was not inspectable from the instance because no RAM role or Alibaba CLI was available.
+- No subagent scheduling blocker remains; 10 existing collaboration seats are running bounded read-only audits and have been instructed to return concise evidence before the next implementation round.
+- Public-IP reachability may still depend on the Alibaba Cloud security group, which was not inspectable from the instance because no RAM role or Alibaba CLI was available.
 - The real browser may still contain a valuable local canvas draft or version conflict; do not resolve it destructively as part of cleanup.
 
 ## Evidence

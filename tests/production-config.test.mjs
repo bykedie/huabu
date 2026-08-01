@@ -165,7 +165,15 @@ test('public-port deployment and h management preserve the production contract',
   }
   assert.match(manager, /read -r -s/)
   assert.match(manager, /server\/manage-config\.js relay/)
-  assert.match(manager, /blank keeps current, type CLEAR to clear/)
+  assert.match(manager, /留空保留当前值，输入 CLEAR 清除/)
+  for (const label of [
+    '查看状态与公网地址', '启动服务', '停止服务', '重启服务', '安全更新 Git 代码',
+    '配置公网监听与端口', '配置域名与 HTTPS', '配置文字/视频中转', '配置商业参数与配额',
+    '立即备份', '查看备份列表', '恢复备份', '查看日志', '运行诊断', '管理员初始化令牌',
+  ]) assert.match(manager, new RegExp(label), `${label} is missing from the localized h menu`)
+  assert.match(manager, /输入 RESTORE 确认替换数据库/)
+  assert.match(manager, /输入 SHOW 在当前 root 终端显示令牌/)
+  assert.doesNotMatch(manager, /Status and public URL|Start service|Safe Git update|Commercial and quota settings|Administrator initialization token/)
   assert.match(manager, /backup_root_path/)
   assert.match(manager, /git rev-parse FETCH_HEAD/)
   assert.match(manager, /git update-ref/)
@@ -177,6 +185,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(managerConfig, /createCipheriv\('aes-256-gcm'/)
   assert.match(managerConfig, /ai_api_key_encrypted/)
   assert.match(managerConfig, /ai_video_api_key_encrypted/)
+  assert.match(managerConfig, /配置已更新/)
+  assert.match(managerConfig, /配置更新失败/)
   assert.doesNotMatch(managerConfig, /console\.log\(.*key/i)
   assert.match(restore, /! -L \"\$backup_dir\/app\.db\"/)
   assert.match(readme, /curl -fsSL https:\/\/github\.com\/bykedie\/huabu\/raw\/refs\/heads\/codex\/infinite-canvas\/deploy\/install\.sh/)
@@ -234,7 +244,7 @@ test('terminal relay maintenance migrates, encrypts and clears keys without disc
       input: Buffer.from('https://user:password@relay.example/v1\0model-a\0keep\0\0'),
     })
     assert.notEqual(credentialUrl.status, 0)
-    assert.match(credentialUrl.stderr, /credentials/)
+    assert.match(credentialUrl.stderr, /用户名或密码/)
     assert.equal((credentialUrl.stdout + credentialUrl.stderr).includes('user:password'), false)
 
     const replaced = run('set', replacementKey)
