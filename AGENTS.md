@@ -55,4 +55,4 @@ The user-owned image-key migration completed on 2026-07-31. The following owners
 - Tests worker: `tests/server.test.mjs` only.
 - Main thread: coordination, `src/api.ts`, environment/deployment docs, project memory/status/decisions, integration, and final acceptance.
 
-Do not reopen or replace the accepted fixed-endpoint, user-owned-key, zero-site-charge image contract unless a new user request or a verified defect creates a new recoverable goal. New work must take its ownership boundaries from the current goal and status files.
+The fixed image endpoint portion of that historical contract was superseded by the user's 2026-08-01 request. The current contract keeps user-owned encrypted keys and zero site charges, while the server controls `AI_IMAGE_BASE_URL`. New work must take its ownership boundaries from the current goal and status files.

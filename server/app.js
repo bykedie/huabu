@@ -55,13 +55,11 @@ const envModels = (process.env.AI_MODELS || 'gpt-4o-mini').split(',').map((item)
 if (!envModels.length) throw new Error('AI_MODELS 至少需要一个模型')
 const imageModels = (process.env.AI_IMAGE_MODELS || 'GPT-image-2').split(',').map((item) => item.trim()).filter(Boolean)
 if (!imageModels.length) throw new Error('AI_IMAGE_MODELS 至少需要一个模型')
-const imageRelayEndpoint = 'https://www.bkbk.baby/'
-const imageRelayBaseUrl = imageRelayEndpoint + 'v1'
 recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs)
-// Public-port mode ignores client-supplied forwarding headers. Domain mode
-// trusts exactly the loopback Nginx hop.
-const proxyDomain = (process.env.MOYU_DOMAIN || process.env.PUBLIC_DOMAIN || '').trim()
-app.set('trust proxy', process.env.PUBLIC_BIND === '127.0.0.1' && proxyDomain ? 1 : false)
+// Trust only the local reverse proxy. Public clients cannot opt into forwarded
+// headers, while domain and dual-access modes still retain the real client IP.
+const loopbackProxyAddresses = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+app.set('trust proxy', (address) => loopbackProxyAddresses.has(address))
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -95,8 +93,11 @@ const normalizeRelayBaseUrl = (value, label, status = 500) => {
     throw fail(status, label + '地址必须使用 HTTPS')
   }
   if (url.username || url.password) throw fail(status, label + '地址不能包含用户名或密码')
+  if (url.search || url.hash) throw fail(status, label + '地址不能包含查询参数或片段')
   return url.toString().replace(/\/+$/, '')
 }
+const imageRelayBaseUrl = normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站')
+const imageRelayEndpoint = imageRelayBaseUrl + '/'
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
   const iv = randomBytes(12)
@@ -332,6 +333,29 @@ const validateVideoDownloadUrl = async (value, allowedOrigins) => {
     if ((loopback && isProduction) || (!loopback && unsafe)) {
       throw fail(502, '视频地址解析到不安全的网络地址')
     }
+  }
+  return url
+}
+const validateImageRelayUrl = async (value) => {
+  const url = allowedRelayUrl(value, '图片中转站')
+  if (url.username || url.password) throw fail(502, '图片中转站地址不能包含用户名或密码')
+  const hostname = url.hostname.replace(/^\[|\]$/g, '')
+  const literalFamily = isIP(hostname)
+  const checkAddress = (address, family) => {
+    const type = family === 4 ? 'ipv4' : family === 6 ? 'ipv6' : null
+    if (!type) throw fail(502, '图片中转站地址解析结果无效')
+    const loopback = videoLoopbackAddresses.check(address, type)
+    const unsafe = videoUnsafeAddresses.check(address, type)
+      || (type === 'ipv6' && !videoGlobalIpv6Addresses.check(address, type))
+    if ((loopback && isProduction) || (!loopback && unsafe)) throw fail(502, '图片中转站解析到不安全的网络地址')
+  }
+  if (literalFamily) checkAddress(hostname, literalFamily)
+  else if (isProduction) {
+    let addresses
+    try { addresses = await lookup(hostname, { all: true, verbatim: true }) }
+    catch { throw fail(502, '图片中转站地址无法解析') }
+    if (!addresses.length) throw fail(502, '图片中转站地址无法解析')
+    for (const item of addresses) checkAddress(String(item.address || '').split('%')[0], isIP(String(item.address || '').split('%')[0]))
   }
   return url
 }
@@ -587,8 +611,10 @@ app.post('/api/me/image-key/test', auth, async (req, res, next) => {
     const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 60000))
     let upstream
     try {
-      upstream = await fetch(imageRelayBaseUrl + '/images/generations', {
+      const url = await validateImageRelayUrl(imageRelayBaseUrl + '/images/generations')
+      upstream = await fetch(url, {
         method: 'POST',
+        redirect: 'manual',
         signal: controller.signal,
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model, prompt: 'A small solid white square on a black background.', size: '1024x1024', n: 1 }),
@@ -908,7 +934,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     if (cached?.status === 'pending') throw fail(409, '该请求正在处理中，请稍后重试')
     if (cached?.status === 'failed') db.prepare('DELETE FROM generations WHERE id=?').run(cached.id)
     const imageRoute = referenceImages.length ? '/images/edits' : '/images/generations'
-    const url = imageRelayBaseUrl + imageRoute
+    const url = await validateImageRelayUrl(imageRelayBaseUrl + imageRoute)
     generation = { id: randomUUID() }
     try {
       db.prepare('INSERT INTO generations (id,user_id,request_key,request_hash,kind,model,reserved,charged,status) VALUES (?,?,?,?,?,?,?,?,?)')
@@ -931,9 +957,9 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
         form.set('response_format', 'b64_json')
         form.set('output_format', 'png')
         referenceImages.forEach((image, index) => form.append('image', new Blob([image.bytes], { type: image.type }), `reference-${index + 1}.${image.extension}`))
-        upstream = await fetch(url, { method: 'POST', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}` }, body: form })
+        upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}` }, body: form })
       } else {
-        upstream = await fetch(url, { method: 'POST', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt: body.prompt, size: body.size, n: 1 }) })
+        upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt: body.prompt, size: body.size, n: 1 }) })
       }
     } catch (error) {
       throw fail(error?.name === 'AbortError' ? 504 : 502, error?.name === 'AbortError' ? '生图中转站响应超时' : '无法连接生图中转站')

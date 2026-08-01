@@ -700,7 +700,7 @@ function WalletDrawer({ user, refresh, close, notify }: { user: User; refresh: (
   </Drawer>
 }
 
-function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
+function AccountDrawer({ user, imageEndpoint, refresh, close, notify }: { user: User; imageEndpoint: string; refresh: () => Promise<void>; close: () => void; notify: (notice: Notice) => void }) {
   const [busy, setBusy] = useState(false)
   const [passwordError, setPasswordError] = useState('')
   const [imageApiKey, setImageApiKey] = useState('')
@@ -756,7 +756,7 @@ function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: 
   return <Drawer title={'账户安全'} onClose={close}>
     <section className={'drawer-section'}><h3>登录账号</h3><p className={'account-email'}>{user.email}</p></section>
     <section className={'drawer-section'}><h3>生图 API 密钥</h3>
-      <label>固定端点<input type={'url'} value={'https://www.bkbk.baby/'} readOnly /></label>
+      <label>当前端点<input type={'url'} value={imageEndpoint} readOnly /></label>
       <label>你的 API 密钥<input type={'password'} placeholder={user.imageApiKeyConfigured ? '已配置，输入新密钥可替换' : '请先输入自己的生图 API 密钥'} value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} autoComplete={'new-password'} disabled={busy} /></label>
       <p className={'muted'}>{user.imageApiKeyConfigured ? '已配置。密钥不会回显，只保存在服务端。' : '尚未配置。生成图片前，请先在此保存并测试你的密钥。'}</p>
       {imageKeyError && <div className={'form-error'} role={'alert'}>{imageKeyError}</div>}
@@ -1052,9 +1052,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [relayConfig, setRelayConfig] = useState<{
     textModels: string[]
     imageModels: string[]
+    imageEndpoint: string
     videoModels: string[]
     videoPoints: number
-  }>({ textModels: [], imageModels: [], videoModels: [], videoPoints: 24 })
+  }>({ textModels: [], imageModels: [], imageEndpoint: '', videoModels: [], videoPoints: 24 })
   const [blockedReason, setBlockedReason] = useState<'session' | 'conflict' | 'storage' | 'deleted' | null>(null)
   const [historyVersion, setHistoryVersion] = useState(0)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
@@ -1136,9 +1137,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   }, [setUser])
   useEffect(() => {
     if (panel !== null) return
-    api<{ textModels: string[]; imageModels: string[]; videoModels: string[]; videoPoints: number }>('/config')
+    api<{ textModels: string[]; imageModels: string[]; imageEndpoint: string; videoModels: string[]; videoPoints: number }>('/config')
       .then((config) => setRelayConfig({
         textModels: config.textModels || [], imageModels: config.imageModels || [],
+        imageEndpoint: config.imageEndpoint || '',
         videoModels: config.videoModels || [], videoPoints: config.videoPoints || 24,
       }))
       .catch((err) => setNotice({ type: 'error', text: err.message }))
@@ -2191,7 +2193,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         </div>
       </div> : <div className="empty-state"><div><FilePlus2 size={34} /><h2>从一张空白画布开始</h2><p>把文字、图片和 AI 对话放到同一个可延展空间。</p><button className="primary" onClick={createCanvas} disabled={creatingCanvas}><Plus size={17} />新建画布</button></div></div>}
     </section>
-    {panel === 'account' && <AccountDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
+    {panel === 'account' && <AccountDrawer user={user} imageEndpoint={relayConfig.imageEndpoint} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'wallet' && <WalletDrawer user={user} refresh={refreshUser} close={() => setPanel(null)} notify={setNotice} />}
     {panel === 'admin' && <AdminDrawer close={() => setPanel(null)} notify={setNotice} refresh={refreshUser} />}
     {inspectedNodeId && nodes.find((node) => node.id === inspectedNodeId) && <NodeInfoDrawer node={nodes.find((node) => node.id === inspectedNodeId)!} nodes={nodes} edges={edges} close={() => setInspectedNodeId(null)} />}

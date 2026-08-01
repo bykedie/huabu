@@ -13,6 +13,7 @@ domain_explicit=0
 preserve_domain_config=0
 public_port=3102
 public_bind=0.0.0.0
+access_mode=public
 port_explicit=0
 bind_explicit=0
 backup_explicit=0
@@ -135,8 +136,11 @@ done
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 sudo 或 root 运行"
 if [[ -n $domain ]]; then
+  access_mode=domain
   if [[ $bind_explicit -eq 0 ]]; then public_bind=127.0.0.1; fi
-  [[ $public_bind == 127.0.0.1 ]] || die "域名模式必须使用 --bind 127.0.0.1，避免绕过 Nginx/HTTPS 直连应用端口"
+  [[ $public_bind == 127.0.0.1 ]] || die "--domain 表示仅域名访问，必须使用 --bind 127.0.0.1；并存模式请在部署后通过 sudo h 选择"
+elif [[ $bind_explicit -eq 1 && $public_bind == 127.0.0.1 ]]; then
+  access_mode=private
 fi
 [[ $public_bind == 0.0.0.0 || $public_bind == 127.0.0.1 ]] || die "--bind 只能是 0.0.0.0 或 127.0.0.1"
 validate_port "$public_port"
@@ -220,6 +224,8 @@ read_env_value() {
 current_port=3102
 old_domain=
 old_tls=0
+old_mode=
+old_bind=0.0.0.0
 if [[ -f $install_dir/.env ]]; then
   old_port=$(read_env_value "$install_dir/.env" PUBLIC_PORT)
   if valid_port "$old_port"; then
@@ -237,18 +243,41 @@ if [[ -f $install_dir/.env ]]; then
   fi
   old_domain=$(read_env_value "$install_dir/.env" MOYU_DOMAIN)
   [[ -n $old_domain ]] || old_domain=$(read_env_value "$install_dir/.env" PUBLIC_DOMAIN)
+  old_bind=$(read_env_value "$install_dir/.env" PUBLIC_BIND)
+  [[ $old_bind == 127.0.0.1 ]] || old_bind=0.0.0.0
+  old_mode=$(read_env_value "$install_dir/.env" MOYU_ACCESS_MODE)
+  case $old_mode in public|domain|both|private) ;;
+    *)
+      if [[ -n $old_domain && $old_bind == 127.0.0.1 ]]; then old_mode=domain
+      elif [[ -n $old_domain ]]; then old_mode=both
+      elif [[ $old_bind == 127.0.0.1 ]]; then old_mode=private
+      else old_mode=public
+      fi
+      ;;
+  esac
   old_tls=$(read_env_value "$install_dir/.env" MOYU_TLS)
   [[ $old_tls == 1 ]] || old_tls=0
-  if [[ $domain_explicit -eq 0 && -n $old_domain ]]; then
-    validate_domain "$old_domain"
-    if [[ $bind_explicit -eq 1 && $public_bind != 127.0.0.1 ]]; then
-      die "已有域名部署必须使用 --bind 127.0.0.1；如需恢复公网 IP 模式，请使用 sudo h 关闭域名模式"
+  if [[ $domain_explicit -eq 0 ]]; then
+    if [[ $bind_explicit -eq 1 ]]; then
+      if [[ -n $old_domain && $public_bind == 0.0.0.0 ]]; then access_mode=both
+      elif [[ -n $old_domain ]]; then access_mode=domain
+      elif [[ $public_bind == 127.0.0.1 ]]; then access_mode=private
+      else access_mode=public
+      fi
+    else
+      access_mode=$old_mode
     fi
-    domain=$old_domain
-    public_bind=127.0.0.1
+    if [[ $access_mode == domain || $access_mode == both ]]; then
+      [[ -n $old_domain ]] || die "已有访问模式需要域名，但 .env 未配置 MOYU_DOMAIN"
+      validate_domain "$old_domain"
+      domain=$old_domain
+    fi
+    if [[ $access_mode == public || $access_mode == both ]]; then public_bind=0.0.0.0; else public_bind=127.0.0.1; fi
     enable_tls=$old_tls
-    preserve_domain_config=1
-    if ! command -v nginx >/dev/null 2>&1; then apt-get install -y nginx; fi
+    if [[ $access_mode == domain || $access_mode == both ]]; then
+      preserve_domain_config=1
+      if ! command -v nginx >/dev/null 2>&1; then apt-get install -y nginx; fi
+    fi
   fi
 fi
 
@@ -328,6 +357,7 @@ rollback_install() {
     elif [[ $public_fallback_ready -eq 1 && -f $install_dir/.env ]]; then
       cd "$install_dir" || true
       set_env_value PUBLIC_BIND 0.0.0.0 || rollback_ok=1
+      set_env_value MOYU_ACCESS_MODE public || rollback_ok=1
       set_env_value MOYU_DOMAIN '' || rollback_ok=1
       set_env_value PUBLIC_DOMAIN '' || rollback_ok=1
       set_env_value MOYU_TLS 0 || rollback_ok=1
@@ -478,27 +508,27 @@ if [[ $port_explicit -eq 0 ]]; then
     public_port=$((10#$old_port))
   fi
 fi
-if [[ $bind_explicit -eq 0 && -z $domain ]]; then
+if [[ $bind_explicit -eq 0 && $domain_explicit -eq 0 && -z $old_mode ]]; then
   old_bind=$(read_env_value .env PUBLIC_BIND)
   if [[ $old_bind == 0.0.0.0 || $old_bind == 127.0.0.1 ]]; then
     public_bind=$old_bind
   fi
 fi
-if [[ -n $domain ]]; then public_bind=127.0.0.1; fi
+if [[ $domain_explicit -eq 1 ]]; then public_bind=127.0.0.1; access_mode=domain; fi
 validate_port "$public_port"
 if [[ -n $domain && ($public_port -eq 80 || $public_port -eq 443) ]]; then
   die "域名模式的应用端口不能使用 Nginx 的 80 或 443，请改用其他 --port"
 fi
 set_env_value PUBLIC_BIND "$public_bind"
 set_env_value PUBLIC_PORT "$public_port"
+set_env_value MOYU_ACCESS_MODE "$access_mode"
 set_env_value MOYU_BACKUP_ROOT "$backup_root"
 if [[ -n $domain ]]; then
   set_env_value MOYU_DOMAIN "$domain"
   set_env_value PUBLIC_DOMAIN ''
   if [[ $enable_tls -eq 1 ]]; then set_env_value MOYU_TLS 1; else set_env_value MOYU_TLS 0; fi
 else
-  set_env_value MOYU_DOMAIN ''
-  set_env_value PUBLIC_DOMAIN ''
+  if [[ $created_env -eq 1 ]]; then set_env_value MOYU_DOMAIN ''; set_env_value PUBLIC_DOMAIN ''; fi
   set_env_value MOYU_TLS 0
 fi
 
@@ -518,6 +548,30 @@ fi
 check_h_path
 if [[ ! -e $h_path && ! -L $h_path ]]; then
   ln -s -- "$expected_manage_target" "$h_path"
+fi
+
+if [[ $access_mode == public || $access_mode == private ]]; then
+  rollback_site=/etc/nginx/sites-available/moyu-canvas
+  rollback_site_link=/etc/nginx/sites-enabled/moyu-canvas
+  if [[ -L $rollback_site_link ]]; then
+    rollback_link_existed=1
+    rollback_link_target=$(readlink -- "$rollback_site_link")
+    if [[ -f $rollback_site ]]; then
+      rollback_site_existed=1
+      rollback_site_backup=$(mktemp)
+      cp -a -- "$rollback_site" "$rollback_site_backup"
+      chmod 600 "$rollback_site_backup"
+    fi
+    rollback_site_captured=1
+    rollback_armed=1
+    rm -f -- "$rollback_site_link"
+    if command -v nginx >/dev/null 2>&1; then
+      nginx -t || die "关闭域名入口后的 Nginx 配置校验失败"
+      if systemctl is-active --quiet nginx; then systemctl reload nginx || die "关闭域名入口后 Nginx 重载失败"; fi
+    fi
+  elif [[ -e $rollback_site_link ]]; then
+    die "Nginx 启用路径已存在且不是符号链接：$rollback_site_link"
+  fi
 fi
 
 if [[ -n $domain ]]; then
@@ -582,7 +636,7 @@ is_ipv4() {
   done
 }
 
-if [[ -n $domain ]]; then
+if [[ $access_mode == domain || $access_mode == both ]]; then
   if [[ $enable_tls -eq 1 ]]; then
     echo "部署完成：https://${domain}/"
     echo "健康检查：https://${domain}/api/health"
@@ -591,6 +645,14 @@ if [[ -n $domain ]]; then
     echo "健康检查：http://${domain}/api/health"
     echo "警告：当前为 HTTP，公网传输未加密。"
   fi
+  if [[ $access_mode == both ]]; then
+    public_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true)
+    if is_ipv4 "$public_ipv4"; then echo "公网端口同时可用：http://${public_ipv4}:${public_port}/"; else echo "公网端口同时启用，但未能自动探测公网 IPv4。"; fi
+    echo "警告：公网端口使用未加密 HTTP。"
+  fi
+elif [[ $access_mode == private ]]; then
+  echo "部署完成：http://127.0.0.1:${public_port}/（仅服务器本机）"
+  echo "公网 IP + 端口和域名入口均未启用。"
 else
   public_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
   if is_ipv4 "$public_ipv4"; then

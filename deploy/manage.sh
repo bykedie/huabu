@@ -22,8 +22,8 @@ usage() {
   status       显示服务状态和公网访问地址
   -h, --help   显示此帮助
 
-交互式面板分别提供文字、图片和视频中转配置入口。图片中转地址固定为
-https://www.bkbk.baby/，API 密钥由每位用户在账户安全中自行保存。
+交互式面板分别提供文字、图片和视频中转配置入口。图片中转基础地址由服务器配置，
+API 密钥由每位用户在账户安全中自行保存。
 EOF
 }
 
@@ -112,11 +112,33 @@ configured_domain() {
   printf '%s' "$domain"
 }
 domain_tls_enabled() { [[ $(env_value MOYU_TLS 0) == 1 ]]; }
+access_mode() {
+  local mode domain bind
+  mode=$(env_value MOYU_ACCESS_MODE '')
+  case $mode in public|domain|both|private) printf '%s' "$mode"; return ;; esac
+  domain=$(configured_domain); bind=$(public_bind)
+  if [[ -n $domain && $bind == 127.0.0.1 ]]; then mode=domain
+  elif [[ -n $domain && $bind == 0.0.0.0 ]]; then mode=both
+  elif [[ $bind == 127.0.0.1 ]]; then mode=private
+  else mode=public
+  fi
+  printf '%s' "$mode"
+}
+access_mode_label() {
+  case $1 in
+    public) printf '仅公网 IP + 端口' ;;
+    domain) printf '仅域名 HTTPS' ;;
+    both) printf '公网 IP + 端口和域名 HTTPS 并存' ;;
+    private) printf '仅服务器本机' ;;
+  esac
+}
 public_ip() {
-  local ip
-  ip=$(curl -4fsS --max-time 4 https://api.ipify.org 2>/dev/null || true)
-  valid_ipv4 "$ip" || ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-  valid_ipv4 "$ip" && printf '%s' "$ip" || printf '%s' PUBLIC_IP
+  local ip endpoint
+  for endpoint in https://api.ipify.org https://checkip.amazonaws.com; do
+    ip=$(curl -4fsS --max-time 4 "$endpoint" 2>/dev/null | tr -d '[:space:]' || true)
+    if valid_ipv4 "$ip"; then printf '%s' "$ip"; return; fi
+  done
+  printf '%s' 未识别
 }
 wait_for_health() {
   local port=$1
@@ -139,9 +161,16 @@ restore_nginx_state() {
 
 print_status() {
   need_install
-  local bind=$(public_bind) port=$(current_port) ip=$(public_ip) domain=$(configured_domain)
-  printf '墨屿画布目录：%s\n监听地址：%s:%s -> 容器端口：3102\n' "$INSTALL_DIR" "$bind" "$port"
-  if [[ -n $domain ]] && domain_tls_enabled; then printf '访问地址：https://%s/\n' "$domain"; elif [[ -n $domain ]]; then printf '访问地址：http://%s/\n安全提示：HTTP 未加密，请先配置 HTTPS 再使用密码或 API 密钥。\n' "$domain"; else printf '访问地址：http://%s:%s/\n安全提示：HTTP 未加密，请先配置 HTTPS 再使用密码或 API 密钥。\n' "$ip" "$port"; fi
+  local bind=$(public_bind) port=$(current_port) ip=$(public_ip) domain=$(configured_domain) mode=$(access_mode)
+  printf '墨屿画布目录：%s\n访问方式：%s\n监听地址：%s:%s -> 容器端口：3102\n识别到的公网 IPv4：%s\n' "$INSTALL_DIR" "$(access_mode_label "$mode")" "$bind" "$port" "$ip"
+  if [[ $mode == public || $mode == both ]]; then
+    if valid_ipv4 "$ip"; then printf '公网地址：http://%s:%s/\n' "$ip" "$port"; else printf '公网地址：未能自动识别，请查看云主机控制台。\n'; fi
+    printf '安全提示：公网端口使用 HTTP，传输未加密。\n'
+  fi
+  if [[ $mode == domain || $mode == both ]]; then
+    if domain_tls_enabled; then printf '域名地址：https://%s/\n' "$domain"; else printf '域名地址：http://%s/（未启用 HTTPS）\n' "$domain"; fi
+  fi
+  if [[ $mode == private ]]; then printf '本机地址：http://127.0.0.1:%s/\n公网与域名入口均已关闭。\n' "$port"; fi
   if command -v docker >/dev/null 2>&1; then compose ps || true; else printf 'Docker：未安装\n'; fi
 }
 
@@ -174,17 +203,14 @@ safe_update() {
 
 configure_port() {
   need_install
-  local bind port old_bind old_port domain env_backup site_backup='' site link nginx_tmp=''
+  local bind port old_bind old_port domain mode env_backup site_backup='' site link nginx_tmp=''
   local site_existed=0 link_existed=0 link_target=''
-  old_bind=$(public_bind); old_port=$(current_port); domain=$(configured_domain)
+  old_bind=$(public_bind); old_port=$(current_port); domain=$(configured_domain); mode=$(access_mode); bind=$old_bind
   site=/etc/nginx/sites-available/moyu-canvas; link=/etc/nginx/sites-enabled/moyu-canvas
-  read -r -p "公网监听地址 [0.0.0.0/127.0.0.1]（当前：$old_bind）：" bind
-  bind=${bind:-$old_bind}; valid_bind "$bind" || die '监听地址必须是 0.0.0.0 或 127.0.0.1'
-  read -r -p "公网端口 1-65535（当前：$old_port）：" port
+  read -r -p "应用端口 1-65535（当前：$old_port）：" port
   port=${port:-$old_port}; valid_port "$port" || die '端口必须是 1-65535 之间的整数'
   port=$((10#$port))
-  if [[ -n $domain ]]; then
-    [[ $bind == 127.0.0.1 ]] || die '域名模式要求 PUBLIC_BIND=127.0.0.1'
+  if [[ $mode == domain || $mode == both ]]; then
     [[ $port -ne 80 && $port -ne 443 ]] || die '域名模式下应用端口不能使用 80 或 443'
     [[ -f "$INSTALL_DIR/deploy/nginx.conf" ]] || die '未找到 deploy/nginx.conf'
     if [[ -L $link ]]; then link_existed=1; link_target=$(readlink -- "$link"); elif [[ -e $link ]]; then die "Nginx 启用路径不是符号链接：$link"; fi
@@ -204,12 +230,12 @@ configure_port() {
   set_env_value PUBLIC_BIND "$bind"; set_env_value PUBLIC_PORT "$port"
   if ! compose up -d || ! wait_for_health "$port"; then
     cp -a -- "$env_backup" "$ENV_FILE"
-    if [[ -n $domain ]]; then restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; nginx -t && systemctl reload nginx || true; fi
+    if [[ $mode == domain || $mode == both ]]; then restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; nginx -t && systemctl reload nginx || true; fi
     compose up -d || true; wait_for_health "$old_port" || true
     remove_temp_files "$env_backup" "$site_backup" "$nginx_tmp"
     die '服务无法在新端口健康运行，已恢复原配置'
   fi
-  if [[ -n $domain ]] && ! systemctl reload nginx; then
+  if [[ $mode == domain || $mode == both ]] && ! systemctl reload nginx; then
     cp -a -- "$env_backup" "$ENV_FILE"; restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"
     compose up -d || true; wait_for_health "$old_port" || true; nginx -t && systemctl reload nginx || true
     remove_temp_files "$env_backup" "$site_backup"; die 'Nginx 重新加载失败，已恢复原配置'
@@ -218,15 +244,26 @@ configure_port() {
   remove_temp_files "$env_backup" "$site_backup"; print_status
 }
 
-configure_domain() {
+configure_access_mode() {
   need_install
-  local domain email='' port old_port env_backup site_backup='' nginx_tmp=''
+  local choice mode new_domain domain email='' bind port old_port env_backup site_backup='' nginx_tmp=''
   local site=/etc/nginx/sites-available/moyu-canvas link=/etc/nginx/sites-enabled/moyu-canvas
   local site_existed=0 link_existed=0 link_target=''
   local -a certbot_contact
-  read -r -p '域名（留空将关闭域名模式）：' domain
-  port=$(public_port); old_port=$port
-  if [[ -n $domain ]]; then
+  domain=$(configured_domain); port=$(public_port); old_port=$port
+  printf '当前：%s\n1) 仅公网 IP + 端口\n2) 仅域名 HTTPS\n3) 公网 IP + 端口和域名 HTTPS 并存\n4) 全部关闭，仅服务器本机\n' "$(access_mode_label "$(access_mode)")"
+  read -r -p '请选择访问方式：' choice
+  case $choice in
+    1) mode=public; bind=0.0.0.0 ;;
+    2) mode=domain; bind=127.0.0.1 ;;
+    3) mode=both; bind=0.0.0.0 ;;
+    4) mode=private; bind=127.0.0.1 ;;
+    *) die '未知访问方式' ;;
+  esac
+  if [[ $mode == domain || $mode == both ]]; then
+    read -r -p "域名（当前：${domain:-未配置}）：" new_domain
+    domain=${new_domain:-$domain}
+    [[ -n $domain ]] || die '域名访问方式必须填写域名'
     valid_domain "$domain" || die '域名格式无效'
     [[ $port -ne 80 && $port -ne 443 ]] || die '域名模式下应用端口不能使用 80 或 443'
     read -r -p "Let's Encrypt 通知邮箱（可留空）：" email
@@ -238,22 +275,22 @@ configure_domain() {
   if [[ -L $link ]]; then link_existed=1; link_target=$(readlink -- "$link"); elif [[ -e $link ]]; then die "Nginx 启用路径不是符号链接：$link"; fi
   if [[ -f $site ]]; then site_existed=1; site_backup=$(mktemp); cp -a -- "$site" "$site_backup"; fi
   env_backup=$(mktemp); cp -a -- "$ENV_FILE" "$env_backup"
-  if [[ -z $domain ]]; then
-    set_env_value MOYU_DOMAIN ''; set_env_value PUBLIC_DOMAIN ''; set_env_value MOYU_TLS 0; set_env_value PUBLIC_BIND 0.0.0.0
-    if ! compose up -d || ! wait_for_health "$port"; then cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; remove_temp_files "$env_backup" "$site_backup"; die '恢复公网 IP + 端口模式失败'; fi
-    rm -f -- "$link" "$site"
-    if command -v nginx >/dev/null 2>&1 && ! nginx -t; then restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; remove_temp_files "$env_backup" "$site_backup"; die 'Nginx 校验失败，未关闭域名模式' ; fi
-    if command -v nginx >/dev/null 2>&1 && ! systemctl reload nginx; then
+  if [[ $mode == public || $mode == private ]]; then
+    set_env_value MOYU_ACCESS_MODE "$mode"; set_env_value PUBLIC_BIND "$bind"; set_env_value MOYU_TLS 0
+    if ! compose up -d || ! wait_for_health "$port"; then cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; remove_temp_files "$env_backup" "$site_backup"; die '切换访问方式失败，已恢复原配置'; fi
+    rm -f -- "$link"
+    if (( link_existed )) && command -v nginx >/dev/null 2>&1 && ! nginx -t; then restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; remove_temp_files "$env_backup" "$site_backup"; die 'Nginx 校验失败，未关闭域名模式' ; fi
+    if (( link_existed )) && command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx && ! systemctl reload nginx; then
       restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"
       cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true
       nginx -t && systemctl reload nginx || true
       remove_temp_files "$env_backup" "$site_backup"; die 'Nginx 重新加载失败，未关闭域名模式'
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then ufw allow "${port}/tcp" comment 'Moyu Canvas public port' >/dev/null; fi
-    remove_temp_files "$env_backup" "$site_backup"; printf '已关闭域名模式，并恢复公网 IP + 端口访问。\n'; print_status; return
+    if [[ $mode == public ]] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then ufw allow "${port}/tcp" comment 'Moyu Canvas public port' >/dev/null; fi
+    remove_temp_files "$env_backup" "$site_backup"; printf '访问方式已更新。\n'; print_status; return
   fi
   nginx_tmp=$(mktemp); sed -e "s/__DOMAIN__/$domain/g" -e "s/__PUBLIC_PORT__/$port/g" "$INSTALL_DIR/deploy/nginx.conf" > "$nginx_tmp"; chmod 644 "$nginx_tmp"
-  set_env_value PUBLIC_BIND 127.0.0.1; set_env_value MOYU_DOMAIN "$domain"; set_env_value PUBLIC_DOMAIN ''; set_env_value MOYU_TLS 1
+  set_env_value MOYU_ACCESS_MODE "$mode"; set_env_value PUBLIC_BIND "$bind"; set_env_value MOYU_DOMAIN "$domain"; set_env_value PUBLIC_DOMAIN ''; set_env_value MOYU_TLS 1
   if ! compose up -d || ! wait_for_health "$port"; then cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; remove_temp_files "$env_backup" "$site_backup" "$nginx_tmp"; die '启用域名模式后应用未恢复健康，已恢复原配置'; fi
   mv -f -- "$nginx_tmp" "$site"; nginx_tmp=''; rm -f -- "$link"; ln -s -- "$site" "$link"
   if ! nginx -t || ! systemctl enable --now nginx || ! systemctl reload nginx; then
@@ -265,6 +302,11 @@ configure_domain() {
   if ! certbot --nginx --non-interactive --agree-tos --redirect "${certbot_contact[@]}" -d "$domain"; then
     restore_nginx_state "$site" "$site_existed" "$site_backup" "$link" "$link_existed" "$link_target"; cp -a -- "$env_backup" "$ENV_FILE"; compose up -d || true; wait_for_health "$old_port" || true; nginx -t && systemctl reload nginx || true
     remove_temp_files "$env_backup" "$site_backup"; die '证书申请失败，已恢复原域名和监听配置'
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    ufw allow 80/tcp comment 'Moyu Canvas HTTP' >/dev/null
+    ufw allow 443/tcp comment 'Moyu Canvas HTTPS' >/dev/null
+    if [[ $mode == both ]]; then ufw allow "${port}/tcp" comment 'Moyu Canvas public port' >/dev/null; fi
   fi
   remove_temp_files "$env_backup" "$site_backup"; printf '域名配置已完成。\n'; print_status
 }
@@ -291,11 +333,15 @@ configure_relay() {
 
 configure_image_relay() {
   need_install
-  local models current_models model normalized='' env_backup port
+  local base models current_base current_models model normalized='' env_backup port
   local -a image_models
   current_models=$(env_value AI_IMAGE_MODELS GPT-image-2)
-  printf '图片中转固定地址：https://www.bkbk.baby/（服务端实际使用 /v1）。\n'
+  current_base=$(env_value AI_IMAGE_BASE_URL https://www.bkbk.baby/v1)
   printf '图片 API 密钥由每位用户在“账户安全”中自行保存；此处不读取、不显示也不保存图片密钥。\n'
+  read -r -p "图片中转基础地址（HTTPS；当前：$current_base）：" base
+  base=${base:-$current_base}
+  [[ $base =~ ^https://[^[:space:]/?#]+(/[^[:space:]?#]*)?$ && $base != *'@'* ]] || die '图片中转地址必须是 HTTPS，且不能包含凭据、查询或片段'
+  base=${base%/}
   read -r -p "开放图片模型（多个模型用英文逗号分隔；当前：$current_models）：" models
   models=${models:-$current_models}
   [[ $models != *$'\n'* && $models != *$'\r'* ]] || die '图片模型配置不能包含换行符'
@@ -309,7 +355,7 @@ configure_image_relay() {
   done
   models=$normalized
   env_backup=$(mktemp); cp -a -- "$ENV_FILE" "$env_backup"; port=$(public_port)
-  set_env_value AI_IMAGE_MODELS "$models"
+  set_env_value AI_IMAGE_BASE_URL "$base"; set_env_value AI_IMAGE_MODELS "$models"
   if ! compose up -d --force-recreate app || ! wait_for_health "$port"; then
     cp -a -- "$env_backup" "$ENV_FILE"
     if compose up -d --force-recreate app && wait_for_health "$port"; then
@@ -320,7 +366,7 @@ configure_image_relay() {
     die '服务拒绝图片模型配置；原环境配置已恢复，但服务未恢复健康，请立即检查日志'
   fi
   remove_temp_files "$env_backup"
-  printf '图片开放模型已保存；固定地址和用户自有密钥契约未更改。\n'
+  printf '图片中转地址和开放模型已保存；用户自有密钥契约未更改。\n'
 }
 
 configure_commercial() {
@@ -375,9 +421,9 @@ admin_token_menu() {
 
 menu() {
   while true; do
-    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 配置公网监听与端口\n7 配置域名与 HTTPS\n8 配置文字中转\n9 配置图片中转\n10 配置视频中转\n11 配置商业参数与配额\n12 立即备份\n13 查看备份列表\n14 恢复备份\n15 查看日志\n16 运行诊断\n17 管理员初始化令牌\n0 退出\n'
+    printf '\n=== 墨屿画布 / h 运维面板 ===\n1 查看状态与公网地址\n2 启动服务\n3 停止服务\n4 重启服务\n5 安全更新 Git 代码\n6 管理访问方式\n7 修改应用端口\n8 配置文字中转\n9 配置图片中转\n10 配置视频中转\n11 配置商业参数与配额\n12 立即备份\n13 查看备份列表\n14 恢复备份\n15 查看日志\n16 运行诊断\n17 管理员初始化令牌\n0 退出\n'
     local choice; read -r -p '请选择：' choice || exit 0
-    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_port ;; 7) configure_domain ;; 8) configure_relay text ;; 9) configure_image_relay ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
+    case $choice in 1) print_status ;; 2) service_action start ;; 3) service_action stop ;; 4) service_action restart ;; 5) safe_update ;; 6) configure_access_mode ;; 7) configure_port ;; 8) configure_relay text ;; 9) configure_image_relay ;; 10) configure_relay video ;; 11) configure_commercial ;; 12) backup_now ;; 13) list_backups ;; 14) restore_backup ;; 15) show_logs ;; 16) diagnose ;; 17) admin_token_menu ;; 0) exit 0 ;; *) printf '未知选项。\n' ;; esac
   done
 }
 

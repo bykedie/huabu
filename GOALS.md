@@ -15,9 +15,41 @@ When an idea has been accepted for implementation:
 5. The commander reviews actual diffs, integrates cross-file contracts, and performs final acceptance.
 6. Mark a goal complete only after implementation, automated checks, security review, browser acceptance when relevant, and status/document updates are all complete.
 
-## Active Goal: Restore `api.bkbk.baby` and Split Relay Management
+## Active Goal: Four Access Modes and Server Image Relay
 
-- Status: active
+- Status: local implementation complete; delivery and production acceptance pending
+- Started: 2026-08-01
+- Commander thread: current main thread
+- Objective: default a fresh deployment to detected public IP plus port, let `h` select public/domain/both/private, make the image relay address server-configurable while retaining user-owned keys, and deliver the verified result through GitHub without losing deployment state.
+
+### Success Criteria
+
+- Fresh install writes `MOYU_ACCESS_MODE=public`, binds `0.0.0.0`, detects a public IPv4 and prints `http://IP:port`.
+- `h` displays and switches all four modes with health/Nginx rollback; repeat installs preserve explicit modes and infer old deployments safely.
+- `AI_IMAGE_BASE_URL` is an HTTPS server setting; users still save isolated encrypted image keys, image calls charge zero site points, and administrator image keys remain absent.
+- Build, full tests, focused deployment tests, four Shell and four Node syntax checks, diff check and secret review pass.
+- Accepted files are committed and normally pushed to `origin/codex/infinite-canvas`; production is then updated only through the validated backup path.
+
+### Current Round
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Implement access mode state and old-config migration | complete | `MOYU_ACCESS_MODE=public|domain|both|private`; bind and Nginx behavior mapped in installer/manager |
+| Detect and display public IPv4 | complete | installer and `h status` query public IPv4 services and avoid presenting a private address as public |
+| Make image relay server-configurable | complete | `AI_IMAGE_BASE_URL`, account display, HTTPS/credential/query/private-network checks and manual redirect policy implemented |
+| Preserve user-owned image-key and zero-charge contract | complete | complete tests cover encryption, isolation, routes, generation/edit calls, cache/retry and unchanged balances |
+| Run local gates | complete | build passed; full tests 24/24; deployment tests 10/10; Shell/Node syntax and diff checks passed |
+| Synchronize recovery documents | complete | README, AGENTS, SPEC, PLAN, memory, handoff, decisions, goals and main status updated |
+| Commit and push delivery | pending | Must review final diff and secret scan first |
+| Update and accept production | pending | Use MobaXterm and validated backup; do not alter existing Beaver/Nginx state without reversible inspection |
+
+### Recovery Instructions
+
+Start with `git status`, `git diff`, this goal and `STATUS.md`. Do not reconstruct from chat. Preserve `.env`, database, Docker volumes, relay keys and `/srv/canvas-backups`. Local completion is not production completion.
+
+## Historical Goal: Restore `api.bkbk.baby` and Split Relay Management
+
+- Status: superseded by the four-access-mode goal above; relay split and automatic HTTPS are complete, public host repair remains part of production acceptance
 - Started: 2026-08-01
 - Commander thread: current main thread
 - Objective: restore public access through `api.bkbk.baby`, split the `h` relay configuration into independent text, image and video entries, deploy the accepted code safely, and verify the public application while preserving data, secrets and every existing backup.
@@ -25,7 +57,7 @@ When an idea has been accepted for implementation:
 ### Success Criteria
 
 - `h` exposes separate `配置文字中转`, `配置图片中转` and `配置视频中转` menu entries with correct routing and Chinese prompts.
-- Text and video continue to use encrypted administrator configuration. The image entry only manages `AI_IMAGE_MODELS`; the endpoint remains fixed at `https://www.bkbk.baby/` and image keys remain user-owned, encrypted and never displayed or copied into `.env`.
+- Historical criterion at the time: text and video used encrypted administrator configuration, while the image entry managed only `AI_IMAGE_MODELS` and kept a fixed endpoint. The active four-mode goal supersedes only that fixed-endpoint portion; user-owned encrypted keys remain unchanged.
 - A rejected image-model change restores the previous `.env` and attempts to return the existing application to a healthy state. No database, Docker volume, `.env`, secret or backup is deleted or replaced.
 - Build, full tests, focused deployment tests, Shell/Node syntax and diff checks pass before delivery.
 - The accepted commits are pushed and production is updated only through the validated backup/fast-forward path.
@@ -103,6 +135,7 @@ This goal has no incomplete backup or update step. Future maintenance should use
 ## Completed Goal: User-Owned Image Relay Key
 
 - Status: complete
+- Historical note: this section records the accepted 2026-07-31 contract. The active 2026-08-01 goal supersedes its fixed-endpoint clauses with server-managed `AI_IMAGE_BASE_URL`; the user-owned-key and zero-site-charge clauses remain authoritative.
 - Started: 2026-07-31
 - Completed: 2026-07-31 17:58 +08:00
 - Commander thread: current main acceptance thread

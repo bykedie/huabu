@@ -9,7 +9,7 @@ The existing paid infinite-canvas product was brought materially closer to the e
 ## Current Product Constraints
 
 - Dark canvas is the default.
-- Text and video relay keep their existing administrator configuration and site-point billing. Image generation is locked to `https://www.bkbk.baby/`, uses each user's encrypted API key, and does not charge site points.
+- Text and video relay keep their existing administrator configuration and site-point billing. The server selects the image relay through `AI_IMAGE_BASE_URL`; each user supplies an encrypted API key, and image generation does not charge site points.
 - Image operations must remain functional: crop, split, upscale, replace, download, asset save, large preview, and ratio lock.
 - Existing login-page left content must remain unchanged.
 - Existing user data and drafts must remain compatible.

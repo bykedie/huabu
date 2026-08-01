@@ -22,7 +22,7 @@ delete process.env.AI_BASE_URL
 delete process.env.AI_API_KEY
 delete process.env.AI_VIDEO_MEDIA_ORIGINS
 delete process.env.PUBLIC_BIND
-process.env.AI_IMAGE_BASE_URL = 'https://forbidden-image-environment.example/v1'
+process.env.AI_IMAGE_BASE_URL = 'https://image-relay.example.test/v1'
 process.env.AI_IMAGE_API_KEY = 'forbidden-image-environment-key'
 
 const { default: app, estimatePromptTokens } = await import('../server/app.js')
@@ -55,7 +55,10 @@ test('AI prompt estimation includes per-message protocol overhead', () => {
 })
 
 test('health check verifies SQLite read and write access', async () => {
-  assert.equal(app.get('trust proxy'), false)
+  const trustProxy = app.get('trust proxy')
+  assert.equal(trustProxy('127.0.0.1'), true)
+  assert.equal(trustProxy('::1'), true)
+  assert.equal(trustProxy('203.0.113.10'), false)
   const before = Number(db.prepare('SELECT value FROM health_probe WHERE id=1').get().value)
   const health = await request('/health')
   assert.equal(health.status, 200)
@@ -758,7 +761,7 @@ test('video relay configuration and billing remain independent from user image k
     const config = await request('/config', { token: member.token })
     assert.deepEqual(config.body.videoModels, ['test-video-model'])
     assert.equal(config.body.videoPoints, 7)
-    assert.equal(config.body.imageEndpoint, 'https://www.bkbk.baby/')
+    assert.equal(config.body.imageEndpoint, 'https://image-relay.example.test/v1/')
     assert.equal(config.body.imageConfigured, true)
 
     const walletBefore = await request('/wallet', { token: member.token })
@@ -922,10 +925,10 @@ test('video relay configuration and billing remain independent from user image k
   }
 })
 
-test('user-owned image keys stay private, isolated, fixed-endpoint, and free of site charges', async () => {
+test('user-owned image keys stay private, isolated, server-routed, and free of site charges', async () => {
   const originalFetch = globalThis.fetch
-  const generationUrl = 'https://www.bkbk.baby/v1/images/generations'
-  const editUrl = 'https://www.bkbk.baby/v1/images/edits'
+  const generationUrl = 'https://image-relay.example.test/v1/images/generations'
+  const editUrl = 'https://image-relay.example.test/v1/images/edits'
   const calls = []
   let deniedAttempts = 0
   globalThis.fetch = async (input, init = {}) => {
@@ -937,7 +940,7 @@ test('user-owned image keys stay private, isolated, fixed-endpoint, and free of 
     }
     const headers = new Headers(init.headers)
     const authorization = headers.get('authorization')
-    const call = { url, authorization }
+    const call = { url, authorization, redirect: init.redirect }
     if (url === generationUrl) {
       const payload = JSON.parse(String(init.body))
       Object.assign(call, { model: payload.model, prompt: payload.prompt, size: payload.size })
@@ -994,7 +997,7 @@ test('user-owned image keys stay private, isolated, fixed-endpoint, and free of 
       token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: ownerKey }),
     })
     assert.deepEqual(savedOwner, {
-      status: 200, body: { configured: true, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+      status: 200, body: { configured: true, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
     })
     const ownerCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
     assert.equal(ownerCiphertext.split('.').length, 3)
@@ -1014,7 +1017,7 @@ test('user-owned image keys stay private, isolated, fixed-endpoint, and free of 
       token: owner.token, method: 'PUT', body: JSON.stringify({ apiKey: replacementKey }),
     })
     assert.deepEqual(replacedOwner, {
-      status: 200, body: { configured: true, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+      status: 200, body: { configured: true, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
     })
     const replacementCiphertext = db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted
     assert.notEqual(replacementCiphertext, ownerCiphertext)
@@ -1098,7 +1101,7 @@ test('user-owned image keys stay private, isolated, fixed-endpoint, and free of 
 
     const cleared = await request('/me/image-key', { token: owner.token, method: 'DELETE' })
     assert.deepEqual(cleared, {
-      status: 200, body: { configured: false, endpoint: 'https://www.bkbk.baby/', models: ['GPT-image-2'] },
+      status: 200, body: { configured: false, endpoint: 'https://image-relay.example.test/v1/', models: ['GPT-image-2'] },
     })
     assert.equal(db.prepare('SELECT image_api_key_encrypted FROM users WHERE id=?').get(owner.user.id).image_api_key_encrypted, null)
     assert.equal((await request('/me', { token: owner.token })).body.user.imageApiKeyConfigured, false)
@@ -1123,8 +1126,9 @@ test('user-owned image keys stay private, isolated, fixed-endpoint, and free of 
       { url: generationUrl, authorization: `Bearer ${replacementKey}` },
       { url: generationUrl, authorization: `Bearer ${replacementKey}` },
     ])
-    assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' })
-    assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024', imageName: 'reference-1.png' })
+    assert.equal(calls.every((call) => call.redirect === 'manual'), true)
+    assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' })
+    assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024', imageName: 'reference-1.png' })
     assert.deepEqual({ ...db.prepare('SELECT ai_image_base_url,ai_image_api_key_encrypted,ai_image_models,ai_image_points FROM app_settings WHERE id=1').get() }, {
       ai_image_base_url: 'https://forbidden-legacy-image.example/v1',
       ai_image_api_key_encrypted: legacySharedCiphertext,

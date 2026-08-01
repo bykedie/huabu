@@ -9,7 +9,7 @@
 - 便签、文本、图片、分组和 AI 创作节点，支持曲线连线、删除、对齐与分布
 - 服务端代理 OpenAI-compatible /v1/chat/completions，中转密钥不会进入浏览器
 - 文字 AI 请求先预占积分，成功后按 usage 结算并退回差额，失败全额退回
-- 图片生成固定使用 `https://www.bkbk.baby/v1`，每位用户在账户设置中保存自己的加密 API 密钥
+- 图片中转地址由服务器配置，每位用户在账户设置中保存自己的加密 API 密钥
 - 图片费用由中转站账户处理，不扣站内积分；相同请求标识重试可恢复缓存结果
 - 整数积分余额与不可变流水；兑换码哈希存储、限次核销
 - 用户提交充值申请，管理员审核后幂等到账
@@ -45,6 +45,7 @@ ADMIN_SETUP_TOKEN=使用另一个随机生成的长初始化码
 AI_BASE_URL=https://你的中转域名/v1
 AI_API_KEY=你的中转密钥
 AI_MODELS=gpt-4o-mini
+AI_IMAGE_BASE_URL=https://你的图片中转域名/v1
 AI_IMAGE_MODELS=GPT-image-2
 AI_VIDEO_BASE_URL=https://你的视频中转域名/v1
 AI_VIDEO_API_KEY=你的视频中转密钥
@@ -58,7 +59,7 @@ AI_VIDEO_MAX_RESPONSE_BYTES=67108864
 MAX_USER_MEDIA_BYTES=536870912
 ~~~
 
-文字会调用管理员配置的 `AI_BASE_URL/chat/completions`。图片生成固定调用 `https://www.bkbk.baby/v1/images/generations`，参考图编辑调用同一端点下的 `/images/edits`；每位用户从“账户安全”保存和测试自己的图片 API 密钥，密钥只在服务端加密保存且不会返回浏览器。视频会调用 `AI_VIDEO_BASE_URL/videos` 并按任务状态轮询，也可由管理员在运营管理中保存视频中转配置。`AI_IMAGE_MODELS` 与 `AI_VIDEO_MODELS` 都是服务端模型白名单，多个模型用英文逗号分隔。
+文字会调用管理员配置的 `AI_BASE_URL/chat/completions`。图片生成调用服务器 `AI_IMAGE_BASE_URL` 下的 `/images/generations`，参考图编辑调用 `/images/edits`；每位用户从“账户安全”保存和测试自己的图片 API 密钥，密钥只在服务端加密保存且不会返回浏览器。视频会调用 `AI_VIDEO_BASE_URL/videos` 并按任务状态轮询，也可由管理员在运营管理中保存视频中转配置。`AI_IMAGE_MODELS` 与 `AI_VIDEO_MODELS` 都是服务端模型白名单，多个模型用英文逗号分隔。
 
 视频结果默认只允许从 `AI_VIDEO_BASE_URL` 的精确 origin 下载。如果中转站返回独立媒体 CDN，可在 `AI_VIDEO_MEDIA_ORIGINS` 中填写逗号分隔的精确 origin，例如 `https://media.example.com`；不得包含路径、凭据、查询参数或片段。应用会逐跳检查重定向与解析地址，拒绝回环、私网、链路本地和保留地址，并且不会把视频中转 Authorization 发送给这些额外媒体来源。
 
@@ -68,7 +69,7 @@ MAX_USER_MEDIA_BYTES=536870912
 
 ## 服务器部署与公网访问
 
-一键脚本默认直接发布公网 IP 加端口，不要求域名或 Nginx。默认地址是 http://公网IP:3102；这是未加密的 HTTP，登录密码和 API 密钥不应在长期生产环境中通过该地址传输。正式使用请在安装后通过 h 配置域名和 HTTPS。
+一键脚本会自动探测公网 IPv4，首次部署默认启用公网 IP 加端口，不要求域名或 Nginx。默认地址是 `http://公网IP:3102`；这是未加密的 HTTP，登录密码和 API 密钥不应长期通过该地址传输。部署后可通过 `sudo h` 在“仅公网 IP + 端口”“仅域名 HTTPS”“两者并存”“仅服务器本机”四种访问方式间切换。
 
 ### 一键部署（Ubuntu / Debian）
 
@@ -78,15 +79,15 @@ MAX_USER_MEDIA_BYTES=536870912
 curl -fsSL https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh | sudo bash
 ~~~
 
-另一台 Ubuntu/Debian 服务器在域名已经指向它以后，可直接从 GitHub 拉取当前交付分支并自动配置 Nginx 与 HTTPS；通知邮箱可选，不提供时 Certbot 使用无邮箱注册：
+另一台 Ubuntu/Debian 服务器在域名已经指向它以后，可直接从 GitHub 拉取当前交付分支并自动配置 Nginx 与 HTTPS；通知邮箱可以留空，不提供时 Certbot 使用无邮箱注册：
 
 ~~~bash
 curl -fsSL https://github.com/bykedie/huabu/raw/refs/heads/codex/infinite-canvas/deploy/install.sh | sudo bash -s -- --domain api.bkbk.baby
 ~~~
 
-默认安装目录为 `/opt/moyu-canvas`，数据库使用 Docker 的 `canvas-data` volume，更新前备份写入 `/srv/canvas-backups`。同一命令可以重复执行：脚本保留已有 `.env` 和数据卷，拒绝脏仓库或非快进更新，检测到新版本时会先创建并校验备份；构建、健康检查或 Nginx 切换失败时会回退代码、环境、应用和已捕获的站点状态。旧域名部署重跑时会继续强制应用绑定 `127.0.0.1`，避免通过公网应用端口绕过 Nginx。可用 `--port 8080` 改宿主端口，`--bind 127.0.0.1` 改为仅本机访问；容器内部端口始终是 3102。首次域名或证书配置失败时，脚本会尽量保留可用应用并明确回退到公网 HTTP；该回退未加密，不能继续传输登录密码或 API 密钥。
+默认安装目录为 `/opt/moyu-canvas`，数据库使用 Docker 的 `canvas-data` volume，更新前备份写入 `/srv/canvas-backups`。同一命令可以重复执行：脚本保留已有 `.env`、访问方式和数据卷，拒绝脏仓库或非快进更新，检测到新版本时会先创建并校验备份；构建、健康检查或 Nginx 切换失败时会回退代码、环境、应用和已捕获的站点状态。旧部署没有 `MOYU_ACCESS_MODE` 时，会按现有域名与监听地址迁移为 `public`、`domain`、`both` 或 `private`。可用 `--port 8080` 改宿主端口，`--bind 127.0.0.1` 首次部署为仅本机访问；容器内部端口始终是 3102。
 
-安装器会创建 `/usr/local/bin/h`。若该路径已有不属于本项目的命令，脚本会拒绝覆盖。输入 `sudo h` 打开管理面板；`sudo h status` 查看服务状态和访问地址。面板可启动、停止、重启、执行带备份和健康回滚的安全快进更新、修改端口、配置域名/HTTPS，并提供“配置文字中转”“配置图片中转”“配置视频中转”三个独立入口，以及商业配额、备份恢复、日志、诊断及管理员初始化码。配置域名时会自动申请 HTTPS 证书；Let's Encrypt 通知邮箱可以留空，失败时恢复原站点和监听配置。文字和视频入口的 API 密钥使用隐藏输入且不会在状态中显示；留空表示保留，输入 `CLEAR` 表示显式清除。保存时密钥通过标准输入传给一次性维护进程，加密写入数据库，旧 `.env` 密钥随后清空，并强制重建主应用容器。中转 URL 不允许内嵌用户名或密码。图片入口固定显示 `https://www.bkbk.baby/`，只维护 `.env` 中的 `AI_IMAGE_MODELS` 开放模型列表；它不接受管理员图片密钥或可编辑地址，每位用户仍须在“账户安全”中保存自己的图片 API 密钥。图片模型保存会强制重建应用并进行健康检查，失败时恢复原 `.env` 和服务。
+安装器会创建 `/usr/local/bin/h`。若该路径已有不属于本项目的命令，脚本会拒绝覆盖。输入 `sudo h` 打开管理面板；`sudo h status` 查看识别到的公网 IPv4、当前访问方式和实际地址。面板可管理四种访问方式、修改应用端口，并提供“配置文字中转”“配置图片中转”“配置视频中转”三个独立入口，以及服务、更新、商业配额、备份恢复、日志、诊断及管理员初始化码操作。域名模式自动申请 HTTPS；并存模式同时保留公网端口和域名。图片入口维护服务器 `.env` 中的 `AI_IMAGE_BASE_URL` 与 `AI_IMAGE_MODELS`，基础地址必须使用 HTTPS，不能内嵌凭据、查询或片段；管理员不填写图片 API 密钥，每位用户仍须在“账户安全”中保存自己的密钥。图片请求禁止自动重定向，且生产环境拒绝解析到私网或保留地址。保存失败时恢复原 `.env` 并尝试恢复服务。
 
 首次部署不会把管理员初始化码打印到安装日志。需要创建首位管理员时，在服务器执行：
 
@@ -110,7 +111,7 @@ sudo sed -n 's/^ADMIN_SETUP_TOKEN=//p' /opt/moyu-canvas/.env
    docker compose up -d --build
    ~~~
 
-2. 如需手动域名代理，先在 `.env` 设置 `PUBLIC_BIND=127.0.0.1`、`MOYU_DOMAIN=你的域名`，并按是否已启用 HTTPS 设置 `MOYU_TLS=0` 或 `1`，然后重建容器。再将 `deploy/nginx.conf` 复制到服务器的 Nginx 站点目录，把 `__DOMAIN__` 和 `__PUBLIC_PORT__` 替换为真实值并启用配置。域名模式只信任回环 Nginx 的一个代理跳数；公网 IP 模式不信任客户端提交的转发头。
+2. 如需手动域名代理，设置 `MOYU_ACCESS_MODE=domain` 与 `PUBLIC_BIND=127.0.0.1`；并存时设置 `MOYU_ACCESS_MODE=both` 与 `PUBLIC_BIND=0.0.0.0`。同时填写 `MOYU_DOMAIN` 和 `MOYU_TLS`，再按 `deploy/nginx.conf` 配置反向代理。应用只信任来自回环地址的代理转发头；公网直连提交的伪造转发头不会被信任。
 
    ~~~bash
    sudo nginx -t
@@ -163,4 +164,4 @@ npm run build
 npm audit --audit-level=low
 ~~~
 
-测试覆盖生产密钥与计费配置、管理员初始化、账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等、用户图片密钥加密与隔离、固定图片端点、图片零站内扣费，以及文字和视频请求的积分完整性。
+测试覆盖生产密钥与计费配置、管理员初始化、账号角色、画布归属、保存读取、兑换码防重复、充值审批幂等、用户图片密钥加密与隔离、服务器图片端点、图片零站内扣费，以及文字和视频请求的积分完整性。

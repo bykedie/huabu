@@ -13,7 +13,7 @@ const clearedChildEnvironment = new Set([
   'JWT_SECRET', 'ADMIN_SETUP_TOKEN',
   'AI_BASE_URL', 'AI_API_KEY', 'AI_IMAGE_BASE_URL', 'AI_IMAGE_API_KEY',
   'AI_VIDEO_BASE_URL', 'AI_VIDEO_API_KEY', 'AI_VIDEO_MEDIA_ORIGINS',
-  'PUBLIC_BIND', 'MOYU_DOMAIN', 'PUBLIC_DOMAIN',
+  'PUBLIC_BIND', 'MOYU_ACCESS_MODE', 'MOYU_DOMAIN', 'PUBLIC_DOMAIN',
 ])
 const childEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !clearedChildEnvironment.has(key.toUpperCase())),
@@ -110,7 +110,15 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(installer, /--bind/)
   assert.match(installer, /0\.0\.0\.0.*127\.0\.0\.1/)
   assert.match(installer, /validate_port/)
-  assert.match(installer, /域名模式必须使用 --bind 127\.0\.0\.1/)
+  assert.match(installer, /--domain 表示仅域名访问，必须使用 --bind 127\.0\.0\.1/)
+  assert.match(installer, /access_mode=public/)
+  assert.match(installer, /public\|domain\|both\|private/)
+  assert.match(installer, /set_env_value MOYU_ACCESS_MODE/)
+  assert.match(installer, /old_domain.*old_bind == 127\.0\.0\.1.*old_mode=domain/s)
+  assert.match(installer, /old_domain.*old_mode=both/s)
+  assert.match(installer, /old_bind == 127\.0\.0\.1.*old_mode=private/s)
+  assert.match(installer, /access_mode == public \|\| \$access_mode == private/)
+  assert.match(installer, /rm -f -- "\$rollback_site_link"/)
   assert.match(installer, /if \[\[ -n \$domain \]\]/)
   assert.match(installer, /apt_packages=\(ca-certificates curl git openssl\)/)
   assert.match(installer, /certbot --nginx --non-interactive --agree-tos --redirect/)
@@ -139,6 +147,8 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(compose, /\$\{PUBLIC_BIND:-0\.0\.0\.0\}:\$\{PUBLIC_PORT:-3102\}:3102/)
   assert.match(envExample, /^PUBLIC_BIND=0\.0\.0\.0$/m)
   assert.match(envExample, /^PUBLIC_PORT=3102$/m)
+  assert.match(envExample, /^MOYU_ACCESS_MODE=public$/m)
+  assert.match(envExample, /^AI_IMAGE_BASE_URL=https:\/\/www\.bkbk\.baby\/v1$/m)
   assert.match(envExample, /^MOYU_DOMAIN=$/m)
   assert.match(envExample, /^MOYU_TLS=0$/m)
   assert.match(envExample, /^MOYU_BACKUP_ROOT=\/srv\/canvas-backups$/m)
@@ -162,7 +172,7 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(restore, /owner=\$\(stat -c "%u:%g" \/app\)/)
   assert.match(restore, /chown "\$owner" \/app\/data\/app\.db/)
 
-  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_domain', 'configure_relay', 'configure_image_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
+  for (const phrase of ['status', 'start', 'stop', 'restart', 'safe_update', 'configure_port', 'configure_access_mode', 'configure_relay', 'configure_image_relay', 'configure_commercial', 'backup_now', 'list_backups', 'restore_backup', 'show_logs', 'diagnose', 'admin_token_menu']) {
     assert.match(manager, new RegExp(phrase), phrase + ' is missing from h manager')
   }
   assert.match(manager, /read -r -s/)
@@ -170,7 +180,7 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /留空保留当前值，输入 CLEAR 清除/)
   for (const label of [
     '查看状态与公网地址', '启动服务', '停止服务', '重启服务', '安全更新 Git 代码',
-    '配置公网监听与端口', '配置域名与 HTTPS', '配置文字中转', '配置图片中转', '配置视频中转', '配置商业参数与配额',
+    '管理访问方式', '修改应用端口', '配置文字中转', '配置图片中转', '配置视频中转', '配置商业参数与配额',
     '立即备份', '查看备份列表', '恢复备份', '查看日志', '运行诊断', '管理员初始化令牌',
   ]) assert.match(manager, new RegExp(label), `${label} is missing from the localized h menu`)
   assert.match(manager, /输入 RESTORE 确认替换数据库/)
@@ -185,14 +195,25 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(manager, /9\) configure_image_relay/)
   assert.match(manager, /10\) configure_relay video/)
   assert.doesNotMatch(manager, /1\) 文字中转  2\) 视频中转/)
-  assert.match(manager, /图片中转固定地址：https:\/\/www\.bkbk\.baby\//)
+  assert.match(manager, /图片中转基础地址/)
+  assert.doesNotMatch(manager, /图片中转地址固定/)
   assert.match(manager, /图片 API 密钥由每位用户在“账户安全”中自行保存/)
+  assert.match(manager, /set_env_value AI_IMAGE_BASE_URL/)
   assert.match(manager, /set_env_value AI_IMAGE_MODELS/)
   assert.ok(manager.includes('[[ $models != ,* && $models != *, && $models != *,,* ]]'))
   assert.match(manager, /图片模型列表不能包含空项/)
   assert.match(manager, /cp -a -- "\$env_backup" "\$ENV_FILE"/)
   assert.match(manager, /compose up -d --force-recreate app/)
-  assert.doesNotMatch(manager, /set_env_value AI_IMAGE_(?:BASE_URL|API_KEY)/)
+  assert.doesNotMatch(manager, /set_env_value AI_IMAGE_API_KEY/)
+  for (const mapping of [
+    /1\) mode=public; bind=0\.0\.0\.0/,
+    /2\) mode=domain; bind=127\.0\.0\.1/,
+    /3\) mode=both; bind=0\.0\.0\.0/,
+    /4\) mode=private; bind=127\.0\.0\.1/,
+  ]) assert.match(manager, mapping)
+  assert.match(manager, /rm -f -- "\$link"/)
+  assert.doesNotMatch(manager, /rm -f -- "\$link" "\$site"/)
+  assert.match(manager, /systemctl is-active --quiet nginx/)
   assert.match(manager, /git rev-parse FETCH_HEAD/)
   assert.match(manager, /git update-ref/)
   assert.match(manager, /git read-tree --reset -u/)
@@ -287,12 +308,21 @@ test('terminal relay maintenance migrates, encrypts and clears keys without disc
   }
 })
 
-test('proxy trust is enabled only for loopback domain mode', () => {
-  const check = "const app=(await import('./server/app.js')).default; process.exit(app.get('trust proxy')===1?0:1)"
-  const domainMode = runApp({ PUBLIC_BIND: '127.0.0.1', MOYU_DOMAIN: 'canvas.example.com' }, check)
-  assert.equal(domainMode.status, 0, domainMode.stderr)
-  const loopbackWithoutDomain = runApp({ PUBLIC_BIND: '127.0.0.1' }, check)
-  assert.notEqual(loopbackWithoutDomain.status, 0)
+test('proxy trust accepts only loopback reverse proxies', () => {
+  const check = "const app=(await import('./server/app.js')).default; const trust=app.get('trust proxy'); process.exit(trust('127.0.0.1')&&trust('::1')&&trust('::ffff:127.0.0.1')&&!trust('203.0.113.10')?0:1)"
+  const result = runApp({}, check)
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test('production image relay requires a credential-free HTTPS base URL', () => {
+  for (const value of ['http://images.example.test/v1', 'https://user:password@images.example.test/v1', 'https://images.example.test/v1?target=other', 'https://images.example.test/v1#fragment']) {
+    const result = runApp({ AI_IMAGE_BASE_URL: value })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /图片中转站地址/)
+    assert.equal((result.stdout + result.stderr).includes('user:password'), false)
+  }
+  const valid = runApp({ AI_IMAGE_BASE_URL: 'https://images.example.test/v1/' })
+  assert.equal(valid.status, 0, valid.stderr)
 })
 
 test('database startup migrates existing generations without losing rows', () => {
