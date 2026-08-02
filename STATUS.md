@@ -2,8 +2,8 @@
 
 ## Current
 
-- The AI creation/context and canvas node-interaction goal is complete in the local worktree. All five screenshots were reviewed one original image per turn; no screenshot remains pending and no derived image was created or inspected.
-- Baseline was clean `codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`. The accepted local candidate is still unstaged, uncommitted, unpushed and undeployed; no reset or unrelated cleanup was performed.
+- The AI creation/context and canvas node-interaction goal is complete on GitHub. All five screenshots were reviewed one original image per turn; no screenshot remains pending and no derived image was created or inspected.
+- Baseline was clean `codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`. Feature commit `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` was pushed normally to `origin/codex/infinite-canvas`; production remains undeployed and no reset or unrelated cleanup was performed.
 - The implementation now includes typed recursive text/image context, a compact AI card, one system font stack, draft-or-image top import, hidden ready-image URLs, locked/free image rendering, eight-way resize, dedicated text/note/AI drag handles and a node-local clamped/self-scrolling image toolbar.
 - Final browser acceptance passed at desktop `1440x1000`, default `1280x720` and mobile `390x844`: typed note/image connections, pan, zoom, locked/free resize, drag surfaces, toolbar scrolling, settings geometry, low-height Dock avoidance, page overflow and console state were verified.
 - Final automated evidence is focused `10/10`, full `50/50`, build assets `index-BxkgO0oh.css` and `index-biUS_uuq.js`, plus `git diff --check` with line-ending warnings only.
@@ -77,8 +77,8 @@
 
 ## Next
 
-1. Review and commit/push the local candidate only when the user explicitly requests Git delivery.
-2. Keep production update and the DNS/Beaver 80/443 conflict outside this completed local goal unless the user separately requests them.
+1. Keep production update and the DNS/Beaver 80/443 conflict outside this completed GitHub delivery unless the user separately requests them.
+2. Preserve the accepted GitHub delivery and recovery evidence when starting any new canvas goal.
 3. For any future screenshot-review goal, retain the one-original-image-per-turn context limit without treating it as a repeated authorization requirement.
 
 ## Blockers
@@ -88,6 +88,7 @@
 
 ## Evidence
 
+- AI creation GitHub delivery evidence: feature commit `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` advanced `origin/codex/infinite-canvas` from `77e8cef` without force; production was not touched.
 - AI creation/node-interaction evidence: focused `10/10`; full `50/50`; build `index-BxkgO0oh.css` and `index-biUS_uuq.js`; `git diff --check` passed with line-ending warnings only.
 - Desktop/default browser evidence: settings inside the active canvas; node and toolbar shared the same `(-90, -60)` pan delta; zoom changed `114%` to `68%`; locked corner resize retained aspect ratio within `0.0001`; toolbar stayed clamped, and the low-height settings panel avoided the bottom Dock.
 - Mobile browser evidence: `390x844`, document `scrollWidth=clientWidth=390`, node-local toolbar `x≈8..386`, self-scroll reached `413/417`, settings remained fully visible, AI header drag moved the node about `(80, 67)`, and all eight image resize controls remained present.

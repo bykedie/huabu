@@ -7,7 +7,7 @@
 5. Complete: routed the top-right import control between one draft JSON and one or more images while rejecting mixed selections.
 6. Complete: kept the image toolbar node-local through pan/zoom/node movement, clamped it inside the active canvas, added self-scrolling tools, top-edge flipping, bottom-Dock avoidance and low-height settings scrolling.
 7. Complete: final focused `10/10`, full `50/50`, build, diff, desktop/default/mobile geometry, typed connections, drag, pan, zoom, resize, console and overflow acceptance passed.
-8. Complete: removed the isolated `3113` test instance, database, account/canvas data and browser tab; real `3102/5182` stayed healthy. The worktree remains unstaged, uncommitted, unpushed and undeployed.
+8. Complete: removed the isolated `3113` test instance, database, account/canvas data and browser tab; real `3102/5182` stayed healthy. Feature commit `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` was pushed normally to `origin/codex/infinite-canvas`; production remains undeployed.
 
 # Completed Web Relay Modernization Plan
 

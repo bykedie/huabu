@@ -6,7 +6,7 @@
 
 ## Completed Goal: AI Creation Context and Canvas Node Interaction
 
-- Status: complete locally; unstaged, uncommitted, unpushed, and undeployed
+- Status: GitHub delivery complete; production undeployed
 - Started: 2026-08-02 10:55 +08:00
 - Commander thread: current main thread
 - Baseline: local and `origin/codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`; worktree clean at start
@@ -35,10 +35,11 @@
 | Implement scoped canvas and style changes | complete | Typed context, unified fonts, image-aware top import, compact AI card, ready-image rendering, eight-way resize, dedicated drag handles and node-local clamped image tools are implemented |
 | Run automated and browser acceptance | complete | Full `50/50`, build, diff, desktop `1440x1000`, default `1280x720`, mobile `390x844`, typed connection, drag, pan, zoom, resize, toolbar-scroll and clean-console checks passed |
 | Synchronize recovery documents and delivery state | complete | Root and coordination documents record the final local evidence and distinguish local completion from GitHub delivery and production deployment |
+| Commit and push GitHub delivery | complete | Feature commit `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` was pushed normally to `origin/codex/infinite-canvas`; production was not touched |
 
 ### Recovery Instructions
 
-This goal is complete in the local worktree. Resume only from `STATUS.md`, `PLAN.md`, `coordination/STATUS-ai-creation.md`, the current Git diff and fresh tests; there are no pending screenshots for this goal. Preserve the real browser draft, `.env`, SQLite data, Docker volumes, relay keys and `/srv/canvas-backups`. The one-original-image-per-turn rule remains a context-size limit for future image-review goals, not an authorization gate. Commit, push and production deployment remain separate user-directed actions.
+This goal is complete on GitHub. Resume only from `STATUS.md`, `PLAN.md`, `coordination/STATUS-ai-creation.md`, the current Git state and fresh tests; there are no pending screenshots for this goal. Preserve the real browser draft, `.env`, SQLite data, Docker volumes, relay keys and `/srv/canvas-backups`. The one-original-image-per-turn rule remains a context-size limit for future image-review goals, not an authorization gate. Production deployment remains a separate user-directed action.
 
 ## Active Goal: Web-Only Relay Setup, Model Discovery, and No-Billing UX
 

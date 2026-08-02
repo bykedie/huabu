@@ -1,9 +1,9 @@
 # AI Creation and Node Interaction Status
 
-- Updated: 2026-08-02 15:58 +08:00
-- Status: complete locally; unstaged, uncommitted, unpushed and undeployed
+- Updated: 2026-08-02 16:25 +08:00
+- Status: GitHub delivery complete; production undeployed
 - Owner: commander/main thread; one worker at a time only
-- Baseline: `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`, clean and equal to the current local origin tracking ref
+- Baseline: `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`; delivered feature commit: `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb`
 
 ## Completed
 
@@ -40,11 +40,13 @@
 - Completed mobile `390x844` acceptance: the toolbar remained node-local and clamped near `8..386px`, its own scroller reached `413/417`, the settings panel stayed visible, the AI header drag moved the node about `(80, 67)`, and the page had no horizontal overflow.
 - Found and fixed a final `1280x720` defect where the bottom canvas Dock could cover the settings action. Settings placement now avoids the Dock and the panel scrolls internally in short viewports; fresh-build desktop and mobile acceptance passed.
 - Deleted isolated canvases, stopped port `3113`, removed its verified temporary database directory, reset the browser viewport and closed the isolated tab. Real `3102/5182` remained healthy.
+- Re-ran the complete `50/50` suite, production build and secret-pattern scan immediately before delivery; all passed, with zero sensitive-pattern matches.
+- Committed the accepted candidate as `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` and pushed it normally to `origin/codex/infinite-canvas` without touching production.
 
 ## Next
 
 1. No implementation or acceptance work remains for this goal.
-2. Commit, push or deploy only under a separate user instruction.
+2. Deploy only under a separate user instruction.
 
 ## Blockers
 
@@ -73,3 +75,4 @@
 - Mobile regression: at `390x844`, document width stayed `390`, the toolbar occupied approximately `x=8..386`, the settings panel remained fully visible, and all eight resize controls were present.
 - Cleanup check: `3113` had no listener and the verified temporary directory no longer existed; `3102` remained PID `28956` and `5182` remained PID `25148`, both returning HTTP 200.
 - No real relay key, administrator password, ciphertext, Authorization header, `.env` content, production database or browser draft was read or changed.
+- Delivery verification: `origin/codex/infinite-canvas` advanced from `77e8cef` to `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` without force.
