@@ -97,6 +97,186 @@
   height: 26px;
 }
 
+.node-drag-handle {
+  min-height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  color: #78716c;
+  border-bottom: 1px solid rgba(120, 113, 108, .18);
+  background: rgba(255, 255, 255, .28);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.node-drag-handle:active {
+  cursor: grabbing;
+}
+
+.react-flow__node.dragging .node-drag-handle {
+  cursor: grabbing;
+}
+
+.canvas-node.kind-note .node-drag-handle {
+  color: #8a6a22;
+  background: rgba(255, 255, 255, .24);
+}
+
+.canvas-node.kind-text .node-drag-handle {
+  color: #60788d;
+  background: rgba(255, 255, 255, .34);
+}
+
+.canvas-node.kind-ai .node-drag-handle {
+  color: #4f7f75;
+  background: rgba(255, 255, 255, .3);
+}
+
+.canvas-node.kind-ai .node-surface {
+  min-width: 300px;
+  min-height: 280px;
+}
+
+.canvas-node.kind-ai .ai-node-header {
+  min-height: 44px;
+  flex: 0 0 44px;
+  width: 100%;
+  padding: 0 8px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+}
+
+.ai-node-heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-node-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-node-heading .node-title {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+}
+
+.ai-node-header .generation-mode {
+  width: 166px;
+  height: 30px;
+  flex: 0 0 166px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 2px;
+  cursor: default;
+}
+
+.ai-node-header .generation-mode button {
+  gap: 3px;
+  font-size: 11px;
+}
+
+.canvas-node.kind-ai .ai-body {
+  min-height: 0;
+  flex: 1;
+  gap: 6px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.canvas-node.kind-ai .ai-prompt-section {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(79, 127, 117, .22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .42);
+}
+
+.ai-section-label {
+  min-height: 20px;
+  padding: 5px 8px 0;
+  color: #5f746f;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.canvas-node.kind-ai .ai-prompt-section textarea {
+  min-height: 48px;
+  flex: 1;
+  padding: 5px 8px 7px;
+  line-height: 1.45;
+}
+
+.canvas-node.kind-ai .ai-context-section,
+.canvas-node.kind-ai .ai-settings-section {
+  min-width: 0;
+  flex: 0 0 auto;
+  display: grid;
+  gap: 4px;
+}
+
+.ai-context-heading {
+  min-width: 0;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-context-heading .ai-section-label,
+.ai-settings-section > .ai-section-label {
+  min-height: 0;
+  padding: 0;
+}
+
+.ai-context-heading small {
+  overflow: hidden;
+  color: #7b8681;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-context-section .reference-strip {
+  min-height: 30px;
+  margin: 0;
+}
+
+.ai-context-section .reference-strip img {
+  width: 30px;
+  height: 30px;
+}
+
+.ai-settings-section .generator-settings {
+  margin: 0;
+}
+
+.ai-settings-section .generator-settings select {
+  height: 32px;
+}
+
+.canvas-node.kind-ai .ai-node-actions {
+  margin-top: auto;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
 .canvas-node > header {
   height: 36px;
   padding: 0 10px;
@@ -113,6 +293,40 @@
 .video-preview {
   position: relative;
   background: rgba(255, 255, 255, .52);
+}
+
+.canvas-node.kind-image .image-body {
+  min-height: 0;
+  flex: 1;
+}
+
+.canvas-node.kind-image .image-preview {
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.react-flow__node.dragging .canvas-node.kind-image .image-preview {
+  cursor: grabbing;
+}
+
+.canvas-node.kind-image .image-preview > img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
+.canvas-node.kind-image .image-preview.ratio-locked > img {
+  object-fit: contain;
+}
+
+.canvas-node.kind-image .image-preview.free-resize > img {
+  object-fit: fill;
 }
 
 .video-preview video {
@@ -157,11 +371,33 @@
 
 .node-toolbar {
   height: 44px;
-  padding: 0 4px;
+  max-width: calc(100% - 16px);
+  padding: 0;
+  overflow: visible;
   border-radius: 10px;
   border-color: #d6d3ca;
   background: rgba(250, 249, 246, .98);
   box-shadow: 0 12px 28px rgba(41, 37, 36, .16);
+  cursor: default;
+}
+
+.node-toolbar-scroll {
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 4px;
+  border-radius: inherit;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+.node-toolbar-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .node-toolbar button,
@@ -186,22 +422,8 @@
 
 .node-toolbar.image-node-toolbar {
   height: 44px;
-  max-width: min(1120px, calc(100vw - 24px));
-}
-
-@media (min-width: 781px) {
-  .node-toolbar.image-node-toolbar {
-    position: fixed !important;
-    top: 76px !important;
-    right: auto !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-  }
-
-  .flow-wrap.panel-open .node-toolbar.image-node-toolbar {
-    left: calc(50% + var(--canvas-panel-half)) !important;
-    max-width: min(1120px, calc(100vw - var(--canvas-panel-width) - 24px));
-  }
+  max-width: calc(100% - 16px);
+  overflow: visible;
 }
 
 .image-toolbar-settings {
@@ -314,6 +536,25 @@
   color: #d6d3d1;
 }
 
+.workspace.theme-dark .node-drag-handle {
+  color: #a8a29e;
+  border-bottom-color: rgba(214, 211, 209, .14);
+  background: rgba(255, 255, 255, .04);
+}
+
+.workspace.theme-dark .canvas-node.kind-ai .ai-prompt-section {
+  border-color: rgba(125, 211, 199, .2);
+  background: rgba(0, 0, 0, .12);
+}
+
+.workspace.theme-dark .ai-section-label {
+  color: #a8c8c1;
+}
+
+.workspace.theme-dark .ai-context-heading small {
+  color: #a8a29e;
+}
+
 .workspace.theme-dark .node-toolbar {
   border-color: #44403c;
   color: #d6d3d1;
@@ -353,13 +594,9 @@
 @media (max-width: 780px) {
   .node-toolbar,
   .node-toolbar.image-node-toolbar {
-    top: 70px !important;
-    left: 50% !important;
-    right: auto !important;
     width: max-content;
-    max-width: calc(100vw - 16px);
+    max-width: calc(100% - 16px);
     height: 42px;
-    transform: translateX(-50%) !important;
   }
 
   .node-toolbar button,
@@ -382,8 +619,5 @@
   }
 
   .node-toolbar,
-  .node-toolbar.image-node-toolbar {
-    top: 64px !important;
-    max-width: calc(100vw - 12px);
-  }
+  .node-toolbar.image-node-toolbar { max-width: calc(100% - 12px); }
 }

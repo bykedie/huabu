@@ -1,14 +1,18 @@
 # Current Delivery Plan
 
+1. Complete: reviewed all five user screenshots in separate turns and mapped the compact AI card, typography, node-local image toolbar, eight-way resize and dedicated drag behavior against the local AGPL reference.
+2. Complete: added `10/10` focused contracts for typed context, relay payloads, import classification, ready-image URL hiding, resize modes, AI structure, explicit drag handles, toolbar anchoring, dock avoidance and pointer isolation.
+3. Complete: implemented recursive typed generation context without changing saved document fields or relay ownership; only text/note enter prompts and at most four images remain typed references.
+4. Complete: implemented the compact AI creation card, unified system typography, ready-image containment/free-fill modes, eight-way resizing and clear `grab`/`grabbing` drag surfaces.
+5. Complete: routed the top-right import control between one draft JSON and one or more images while rejecting mixed selections.
+6. Complete: kept the image toolbar node-local through pan/zoom/node movement, clamped it inside the active canvas, added self-scrolling tools, top-edge flipping, bottom-Dock avoidance and low-height settings scrolling.
+7. Complete: final focused `10/10`, full `50/50`, build, diff, desktop/default/mobile geometry, typed connections, drag, pan, zoom, resize, console and overflow acceptance passed.
+8. Complete: removed the isolated `3113` test instance, database, account/canvas data and browser tab; real `3102/5182` stayed healthy. The worktree remains unstaged, uncommitted, unpushed and undeployed.
+
+# Completed Web Relay Modernization Plan
+
 1. Complete: added focused regressions for Responses-first text calls, restricted fallback, three relay model-discovery routes, empty model defaults, disabled site billing, hidden point/recharge UI, removed h relay entries, and click/touch/Enter canvas rename.
-2. Complete: implemented one shared text-relay helper used by relay tests and runtime, while preserving idempotency, secret-reflection guards, timeout limits, and failure recovery.
-3. Complete: generalized upstream model discovery to text/image/video using the administrator's corresponding saved user key; every new fetch replaces candidates and clears previous selections in Operations.
-4. Complete: defaulted site billing off, retained the future billing data/code path behind `SITE_BILLING_ENABLED=1`, charged new text/video calls zero points by default, and hid web wallet/redeem/top-up/admin point surfaces.
-5. Complete: replaced the top-right points button with the API-key/account entry and made canvas-name editing work by single click/touch, Enter, persistent save, and reload.
-6. Complete: removed h items for text/image/video relay configuration while preserving safe update as item 5 and the remaining operations.
-7. Complete: full `40/40`, build, four Node and four Shell syntax checks, diff/secret gates, desktop/mobile browser acceptance, cleanup, and durable-document synchronization passed.
-8. Complete: reviewed and committed the feature candidate as `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4`, pushed normally to `origin/codex/infinite-canvas`, fetched, and verified local/remote full SHA equality before the documentation-only closeout.
-9. Pending/user-operated: the user enters item 5 in the MobaXterm `h` panel; then verify deployed SHA, backup, database, health, model discovery, API-key entry, Agent/text/image/video generation, and rename persistence.
+2. Complete: implemented and delivered the web-only relay modernization as `99926be`, followed by documentation closeout `77e8cef`. Production remains a separate user-operated update.
 
 # Completed Visual Alignment Plan
 

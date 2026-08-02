@@ -2,6 +2,12 @@
 
 ## Current
 
+- The AI creation/context and canvas node-interaction goal is complete in the local worktree. All five screenshots were reviewed one original image per turn; no screenshot remains pending and no derived image was created or inspected.
+- Baseline was clean `codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`. The accepted local candidate is still unstaged, uncommitted, unpushed and undeployed; no reset or unrelated cleanup was performed.
+- The implementation now includes typed recursive text/image context, a compact AI card, one system font stack, draft-or-image top import, hidden ready-image URLs, locked/free image rendering, eight-way resize, dedicated text/note/AI drag handles and a node-local clamped/self-scrolling image toolbar.
+- Final browser acceptance passed at desktop `1440x1000`, default `1280x720` and mobile `390x844`: typed note/image connections, pan, zoom, locked/free resize, drag surfaces, toolbar scrolling, settings geometry, low-height Dock avoidance, page overflow and console state were verified.
+- Final automated evidence is focused `10/10`, full `50/50`, build assets `index-BxkgO0oh.css` and `index-biUS_uuq.js`, plus `git diff --check` with line-ending warnings only.
+- The isolated `3113` service, temporary database/account/canvases and browser tab were removed. Real API `3102` and Vite `5182` still return HTTP 200 and retain their original processes. Recovery evidence is in `coordination/STATUS-ai-creation.md`.
 - Active goal complete on GitHub: web-only relay configuration, three-kind upstream model discovery, Responses-first text compatibility, default-disabled site billing, top-right API-key access, hidden point/recharge surfaces, and canvas rename repair. Local implementation, automation, security review, desktop/mobile acceptance, cleanup, durable-document synchronization, commit, and normal push are complete.
 - Branch: `codex/infinite-canvas`. Feature delivery commit `99926be16bf561cfdb1ddfe4d51eb6ce4d7936e4` and its documentation-only delivery closeout are on `origin/codex/infinite-canvas`. Production remains undeployed for this round.
 - Current implementation removes h relay items, discovers text/image/video models with the administrator's corresponding user key, replaces candidates and clears old selections, calls Responses first with 404/405-only Chat Completions fallback, hides point/recharge surfaces, defaults text/video to zero site billing, and supports click/touch/Enter canvas renaming with persistence.
@@ -28,6 +34,15 @@
 
 ## Completed
 
+- Unified the application font stack with local SF Pro/Segoe UI/PingFang/Microsoft YaHei/Helvetica/Arial fallbacks and made native `select`/`option` controls inherit the same typography; no remote font dependency was added.
+- Added a pure typed generation-context builder: only connected text/note nodes enter visible prompts, connected images remain capped typed references, and video/AI/group fields, media URLs and `data:` payloads do not leak into prompt text.
+- Routed the top-right import action between one draft JSON and one or more images while preserving the existing JSON overwrite confirmation and image compression/node/autosave path.
+- Image nodes now hide the URL editor after a usable preview exists, including internal `data:` images; locked resize uses contained rendering, free resize fills the selected node bounds. Text and note nodes expose a 36px drag handle, while AI nodes use a 44px title/mode drag header; editable controls remain `nodrag`.
+- Restructured the existing `336x320` AI node into a compact title/mode header, elastic prompt section, typed connection summary, fixed settings section and bottom generation action. AI nodes enforce a safe `300x280` minimum, and old server/draft node sizes normalize before display and undo-history capture.
+- Expanded `tests/ai-creation-contract.test.mjs` to `10/10`; the complete suite passes `50/50`, build produces `index-BxkgO0oh.css` and `index-biUS_uuq.js`, and `git diff --check` passes with existing line-ending warnings only.
+- Replaced application-fixed image tools with a React Flow node-local toolbar that follows node movement and canvas transforms, clamps to the active canvas, scrolls its own contents and flips below the node when the top edge lacks room.
+- Kept the image settings panel above the bottom canvas Dock in short viewports and made it internally scrollable; accepted geometry passed at `1280x720` and `390x844`, and its final action remained clickable.
+- Browser acceptance confirmed typed `1 段文本 · 1 张图片` context, one visible reference image, eight resize controls, locked-aspect error below `0.0001`, free-width resize, AI/title dragging, zero page overflow and empty application warning/error logs.
 - Added Responses-first text relay handling with `output_text` and nested output parsing, and restricted Chat Completions fallback to upstream 404/405.
 - Added text/image/video upstream model discovery, empty fresh text/image model defaults, replacement candidate lists, and explicit administrator selection.
 - Added `SITE_BILLING_ENABLED`, defaulted it to `0`, retained the opt-in ledger path, and hid wallet, balance, redeem, recharge, recharge review, and point wording from the current web UI.
@@ -62,9 +77,9 @@
 
 ## Next
 
-1. The user enters item 5 in the MobaXterm `h` panel to update production from `3f7b52d` through the validated backup/fast-forward path.
-2. After the update, verify the deployed SHA, validated backup, database, health endpoint, rendered application, three model-discovery paths, API-key entry, generation flows, and rename persistence.
-3. Keep the separate DNS/Beaver 80/443 conflict outside this delivery unless the user gives explicit, reversible production approval.
+1. Review and commit/push the local candidate only when the user explicitly requests Git delivery.
+2. Keep production update and the DNS/Beaver 80/443 conflict outside this completed local goal unless the user separately requests them.
+3. For any future screenshot-review goal, retain the one-original-image-per-turn context limit without treating it as a repeated authorization requirement.
 
 ## Blockers
 
@@ -73,6 +88,11 @@
 
 ## Evidence
 
+- AI creation/node-interaction evidence: focused `10/10`; full `50/50`; build `index-BxkgO0oh.css` and `index-biUS_uuq.js`; `git diff --check` passed with line-ending warnings only.
+- Desktop/default browser evidence: settings inside the active canvas; node and toolbar shared the same `(-90, -60)` pan delta; zoom changed `114%` to `68%`; locked corner resize retained aspect ratio within `0.0001`; toolbar stayed clamped, and the low-height settings panel avoided the bottom Dock.
+- Mobile browser evidence: `390x844`, document `scrollWidth=clientWidth=390`, node-local toolbar `x≈8..386`, self-scroll reached `413/417`, settings remained fully visible, AI header drag moved the node about `(80, 67)`, and all eight image resize controls remained present.
+- Context/import evidence: real connections produced `1 段文本 · 1 张图片` with one reference thumbnail; the top import input accepts `application/json,.json,image/*` with `multiple`, while draft-only and image-only inputs retain their narrower contracts.
+- Cleanup/runtime evidence: port `3113` and its verified temporary directory were removed; the isolated tab closed and viewport reset; real `3102` returned `200 {"ok":true}` and `5182` returned HTTP 200 HTML.
 - Current-round automated evidence: server `19/19`; production configuration `12/12`; relay modernization `4/4`; web contract `4/4`; UUID `1/1`; complete suite `40/40`; build passed with `index-CuruJLMo.js` and `index-CUxjUyFM.css`; four Node and four Shell syntax checks, credential scan, and global diff check passed.
 - Current-round browser evidence: isolated ordinary HTTP application `127.0.0.1:3123` and synthetic relay `127.0.0.1:3124`; desktop `1440x1000` and mobile `390x844`; three keys, zero endpoints, zero billing surfaces, three model-discovery/save/selection paths, Responses text, candidate reset, rename persistence, sidebars, Dock reachability, zero page overflow, and empty browser warning/error logs.
 - Current-round cleanup: fixture ports `3123/3124` have zero listeners; temporary mock, database and logs were removed; viewport reset and isolated tab closed; no cleanup command targeted real `3102/5182`.

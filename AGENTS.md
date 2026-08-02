@@ -35,6 +35,13 @@ For each new multi-worker goal, define current file ownership before editing and
 
 Update the assigned status file immediately when starting, approximately every two minutes while actively working, and once more when complete. Each update must include time, completed work, next action, blockers, and verification evidence.
 
+## Screenshot Review Limit
+
+- Review at most one user-provided original screenshot per turn and call an image-viewing tool at most once in that turn. This is a context-size limit, not a per-image authorization gate.
+- Do not create or inspect crops, composites, enlargements, thumbnails, or other derived versions of the screenshot.
+- After completing the single screenshot analysis, end that turn without implementation, browser work, server startup, or inspection of another image.
+- The turn boundary exists only to keep image context bounded. If the active goal still has pending original screenshots, a later continuation turn may automatically review the next one; do not wait for a fixed phrase such as `看下一张` or treat repeated user permission as a prerequisite. Stop only when the user pauses, redirects the goal, or no screenshot remains pending.
+
 ## Verification
 
 Run focused checks during implementation. Before declaring completion, run:

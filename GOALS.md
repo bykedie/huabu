@@ -4,6 +4,42 @@
 > Last update: 2026-08-02, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
+## Completed Goal: AI Creation Context and Canvas Node Interaction
+
+- Status: complete locally; unstaged, uncommitted, unpushed, and undeployed
+- Started: 2026-08-02 10:55 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`; worktree clean at start
+- Concurrency: one worker at a time; no concurrent-worker exception has been approved for this goal
+- Objective: align the canvas `AI 创作` node with the local AGPL reference repository as a behavioral and visual benchmark, make connected text and image nodes supply correctly typed generation context, unify the product font, fix image toolbar and resize behavior, improve node dragging, and let the top-right import action accept images through the existing image-node persistence path.
+
+### Success Criteria
+
+- `AI 创作` has a compact, coherent configuration surface and interaction rhythm based on the reference behavior without copying its source. Text/image/video modes, prompt, model and media settings remain usable on desktop and mobile.
+- Incoming connected text or note nodes contribute readable prompt/context text. Incoming connected image nodes contribute image references. Internal URLs, `data:` payloads and unrelated node fields are never inserted into visible prompts.
+- Image and video generation receive the same typed context contract where applicable; text generation receives textual context without attempting to submit image payloads to the text relay.
+- The global UI uses one locally available system font stack with good Chinese and Latin rendering; no remote font dependency is introduced.
+- A generated or uploaded image node keeps its image inside the node during resize, preserves the configured aspect-ratio behavior, and never exposes an internal `data:` URL input.
+- The image quick toolbar is anchored above its own image node and cannot jump to the application top edge or overlap unrelated controls.
+- Text, note and AI creation nodes have an obvious, sufficiently large drag surface while form controls remain editable and do not accidentally drag the node.
+- The top-right import action accepts both canvas draft JSON and one or more images. Images use the existing compression, node creation, autosave and draft compatibility paths.
+- Focused regressions, `npm.cmd run build`, `npm.cmd test`, `git diff --check`, desktop/mobile browser acceptance, responsive checks and console/network inspection pass before completion.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Restore project state and record the goal | complete | Required documents, coordination files, Git state and current code inspected; baseline worktree is clean at `77e8cef` |
+| Inspect five user screenshots and the reference implementation one item at a time | complete | Screenshots 1-5 were reviewed one original image per turn; no derived image was created or inspected |
+| Add focused regression coverage | complete | `tests/ai-creation-contract.test.mjs` passes `10/10`, covering typography, typed context, relay payloads, import classification, ready-image URL hiding, resize modes, drag handles, AI hierarchy, toolbar anchoring, dock avoidance and pointer isolation |
+| Implement scoped canvas and style changes | complete | Typed context, unified fonts, image-aware top import, compact AI card, ready-image rendering, eight-way resize, dedicated drag handles and node-local clamped image tools are implemented |
+| Run automated and browser acceptance | complete | Full `50/50`, build, diff, desktop `1440x1000`, default `1280x720`, mobile `390x844`, typed connection, drag, pan, zoom, resize, toolbar-scroll and clean-console checks passed |
+| Synchronize recovery documents and delivery state | complete | Root and coordination documents record the final local evidence and distinguish local completion from GitHub delivery and production deployment |
+
+### Recovery Instructions
+
+This goal is complete in the local worktree. Resume only from `STATUS.md`, `PLAN.md`, `coordination/STATUS-ai-creation.md`, the current Git diff and fresh tests; there are no pending screenshots for this goal. Preserve the real browser draft, `.env`, SQLite data, Docker volumes, relay keys and `/srv/canvas-backups`. The one-original-image-per-turn rule remains a context-size limit for future image-review goals, not an authorization gate. Commit, push and production deployment remain separate user-directed actions.
+
 ## Active Goal: Web-Only Relay Setup, Model Discovery, and No-Billing UX
 
 - Status: complete; GitHub delivery complete, production update pending

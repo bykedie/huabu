@@ -6,11 +6,13 @@ import {
 } from '@xyflow/react'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceBetween, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceBetween, Group,
-  BookmarkPlus, Bot, Check, ChevronLeft, CircleDot, Compass, Copy, Download, Eraser, FilePlus2, Focus, Grid2X2, Hand, Image, Info, LayoutDashboard, Library,
+  BookmarkPlus, Bot, Check, ChevronLeft, CircleDot, Compass, Copy, Download, Eraser, FilePlus2, Focus, Grid2X2, GripHorizontal, Hand, Image, Info, LayoutDashboard, Library,
   Crop, HelpCircle, KeyRound, LocateFixed, Lock, LockOpen, LogOut, Maximize2, Menu, MessageSquare, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, Palette, Pencil, Plus, Redo2, Save, Search, Send, Settings, Sparkles, Square, StickyNote, Sun, Text, Trash2, Undo2, Video, X, ZoomIn,
   Upload,
 } from 'lucide-react'
 import { api, ApiError, session, User } from './api'
+import { classifyCanvasImportFiles } from './canvas-import'
+import { buildGenerationContext } from './generation-context'
 import { createUuid, shortRequestHash } from './uuid'
 
 type CanvasData = {
@@ -34,6 +36,7 @@ type CanvasData = {
   groupId?: string
   groupChildCount?: number
   referenceImages?: Array<{ id: string; title: string; imageUrl: string }>
+  contextSummary?: { textCount: number; imageCount: number }
   hovered?: boolean
   busy?: boolean
   onChange?: (id: string, patch: Partial<CanvasData>) => void
@@ -98,7 +101,12 @@ function readImageToolbarConfig(): ImageToolbarConfig {
 }
 const draftKey = (userId: string, canvasId: string) => `ink-draft:${userId}:${canvasId}`
 const nodeSize = (kind: CanvasData['kind']) => kind === 'group' ? { width: 760, height: 480 } : kind === 'ai' ? { width: 336, height: 320 } : kind === 'video' ? { width: 320, height: 292 } : kind === 'image' ? { width: 276, height: 260 } : { width: 276, height: 180 }
-const withNodeSize = (node: CanvasNode): CanvasNode => ({ ...node, width: node.width || nodeSize(node.data.kind).width, height: node.height || nodeSize(node.data.kind).height, ...(node.data.kind === 'group' && node.zIndex === undefined ? { zIndex: -1 } : {}) })
+const nodeMinimumSize = (kind: CanvasData['kind']) => kind === 'ai' ? { width: 300, height: 280 } : { width: 220, height: 120 }
+const withNodeSize = (node: CanvasNode): CanvasNode => {
+  const fallback = nodeSize(node.data.kind)
+  const minimum = nodeMinimumSize(node.data.kind)
+  return { ...node, width: Math.max(minimum.width, node.width || fallback.width), height: Math.max(minimum.height, node.height || fallback.height), ...(node.data.kind === 'group' && node.zIndex === undefined ? { zIndex: -1 } : {}) }
+}
 const nodeDimensions = (node: CanvasNode) => ({
   width: node.measured?.width || node.width || nodeSize(node.data.kind).width,
   height: node.measured?.height || node.height || nodeSize(node.data.kind).height,
@@ -179,8 +187,10 @@ function parseDraft(value: unknown): CanvasDraft | null {
     if (data.imageSize !== undefined && !['1024x1024', '1536x1024', '1024x1536'].includes(String(data.imageSize))) return null
     if (data.videoSize !== undefined && !['1280x720', '720x1280', '1024x1024'].includes(String(data.videoSize))) return null
     if (data.videoSeconds !== undefined && (!Number.isInteger(data.videoSeconds) || Number(data.videoSeconds) < 1 || Number(data.videoSeconds) > 20)) return null
-    const width = typeof node.width === 'number' && Number.isFinite(node.width) && node.width >= 220 && node.width <= 1600 ? node.width : nodeSize(data.kind as CanvasData['kind']).width
-    const height = typeof node.height === 'number' && Number.isFinite(node.height) && node.height >= 120 && node.height <= 1200 ? node.height : nodeSize(data.kind as CanvasData['kind']).height
+    const kind = data.kind as CanvasData['kind']
+    const minimum = nodeMinimumSize(kind)
+    const width = typeof node.width === 'number' && Number.isFinite(node.width) && node.width >= 220 && node.width <= 1600 ? Math.max(minimum.width, node.width) : nodeSize(kind).width
+    const height = typeof node.height === 'number' && Number.isFinite(node.height) && node.height >= 120 && node.height <= 1200 ? Math.max(minimum.height, node.height) : nodeSize(kind).height
     nodes.push({
       id: node.id,
       type: 'canvasNode',
@@ -189,7 +199,7 @@ function parseDraft(value: unknown): CanvasDraft | null {
       height,
       ...(data.kind === 'group' ? { zIndex: -1 } : {}),
       data: {
-        kind: data.kind as CanvasData['kind'],
+        kind,
         ...Object.fromEntries(textFields.filter((field) => typeof data[field] === 'string').map((field) => [field, data[field]])),
         ...(data.mode ? { mode: data.mode as CanvasData['mode'] } : {}),
         ...(data.imageSize ? { imageSize: data.imageSize as ImageSize } : {}),
@@ -330,36 +340,17 @@ async function upscaleImageUrl(imageUrl: string, scale: number) {
     return { imageUrl: await canvasToDataUrl(canvas), width, height }
   } finally { bitmap.close() }
 }
-function buildGenerationContext(id: string, prompt: string, nodes: CanvasNode[], edges: Edge[]) {
-  const textParts: string[] = []
-  const referenceImages: Array<{ id: string; title: string; imageUrl: string }> = []
-  const visited = new Set<string>([id])
-  const collect = (targetId: string) => {
-    edges.filter((edge) => edge.target === targetId).forEach((edge) => {
-      if (visited.has(edge.source)) return
-      visited.add(edge.source)
-      const node = nodes.find((item) => item.id === edge.source)
-      if (!node) return
-      collect(node.id)
-      if (node.data.kind === 'image' && node.data.imageUrl) {
-        if (referenceImages.length < 4) referenceImages.push({ id: node.id, title: node.data.title || `图片${referenceImages.length + 1}`, imageUrl: node.data.imageUrl })
-        return
-      }
-      const content = node.data.content?.trim() || node.data.prompt?.trim()
-      if (content) textParts.push(content)
-    })
-  }
-  collect(id)
-  textParts.push(prompt.trim())
-  return { prompt: textParts.filter(Boolean).join('\n\n'), referenceImages }
-}
-
 function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const [hovered, setHovered] = useState(false)
   const [titleEditing, setTitleEditing] = useState(false)
+  const [loadedImageUrl, setLoadedImageUrl] = useState<string | null>(null)
   const [imageToolbarConfig, setImageToolbarConfig] = useState<ImageToolbarConfig>(readImageToolbarConfig)
   const [imageToolbarSettingsOpen, setImageToolbarSettingsOpen] = useState(false)
   const hoverTimer = useRef<number | null>(null)
+  const toolbarContentRef = useRef<HTMLDivElement>(null)
+  const toolbarElementRef = useRef<HTMLElement | null>(null)
+  const toolbarShift = useRef({ x: 0, y: 0 })
+  const toolbarPlacementFrame = useRef<number | null>(null)
   const icon = data.kind === 'group' ? <Group size={15} /> : data.kind === 'ai' ? <Bot size={15} /> : data.kind === 'video' ? <Video size={15} /> : data.kind === 'image' ? <Image size={15} /> : data.kind === 'note' ? <StickyNote size={15} /> : <Text size={15} />
   const mode: NonNullable<CanvasData['mode']> = data.mode === 'image' || data.mode === 'video' ? data.mode : 'text'
   const models = mode === 'image' ? data.imageModels || [] : mode === 'video' ? data.videoModels || [] : data.textModels || []
@@ -378,6 +369,59 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current)
     hoverTimer.current = window.setTimeout(() => setHovered(false), 160)
   }
+  const syncNodeToolbarPlacement = useCallback(() => {
+    const toolbarContent = toolbarContentRef.current
+    const toolbar = toolbarContent?.parentElement
+    const renderer = toolbar?.closest<HTMLElement>('.react-flow__renderer')
+    if (!toolbar || !renderer) return
+    if (toolbarElementRef.current !== toolbar) {
+      toolbarElementRef.current = toolbar
+      toolbarShift.current = { x: 0, y: 0 }
+    }
+
+    const rendererRect = renderer.getBoundingClientRect()
+    const currentShift = toolbarShift.current
+    const floatingElements = [toolbar, toolbar.querySelector<HTMLElement>('.image-toolbar-settings')].filter((element): element is HTMLElement => Boolean(element))
+    const floatingRects = floatingElements.map((element) => element.getBoundingClientRect())
+    const baseLeft = Math.min(...floatingRects.map((rect) => rect.left - currentShift.x))
+    const baseRight = Math.max(...floatingRects.map((rect) => rect.right - currentShift.x))
+    const baseTop = Math.min(...floatingRects.map((rect) => rect.top - currentShift.y))
+    const baseBottom = Math.max(...floatingRects.map((rect) => rect.bottom - currentShift.y))
+    const workspace = renderer.closest<HTMLElement>('.workspace')
+    const topbarRect = workspace?.querySelector<HTMLElement>('.topbar')?.getBoundingClientRect()
+    const canvasDockRect = workspace?.querySelector<HTMLElement>('.canvas-dock')?.getBoundingClientRect()
+    const viewportLeft = rendererRect.left + 8
+    const viewportRight = rendererRect.right - 8
+    const preferredTop = Math.max(rendererRect.top + 8, (topbarRect?.bottom || rendererRect.top) + 8)
+    const viewportTop = preferredTop < rendererRect.bottom - 48 ? preferredTop : rendererRect.top + 8
+    const viewportBottom = imageToolbarSettingsOpen && canvasDockRect
+      ? Math.min(rendererRect.bottom - 8, canvasDockRect.top - 8)
+      : rendererRect.bottom - 8
+    const clampShift = (start: number, end: number, minimum: number, maximum: number, preferred = 0) => {
+      const minimumShift = minimum - start
+      const maximumShift = maximum - end
+      return minimumShift > maximumShift ? minimumShift : Math.min(Math.max(preferred, minimumShift), maximumShift)
+    }
+    const viewportShiftX = clampShift(baseLeft, baseRight, viewportLeft, viewportRight)
+    const toolbarNodeIds = (toolbar.dataset.id || '').split(/\s+/).filter(Boolean)
+    const toolbarNode = Array.from(renderer.querySelectorAll<HTMLElement>('.react-flow__node'))
+      .find((element) => toolbarNodeIds.includes(element.dataset.id || ''))
+    const nodeRect = toolbarNode?.getBoundingClientRect()
+    const belowShift = nodeRect ? nodeRect.bottom + 12 - baseTop : 0
+    const preferredShiftY = nodeRect && baseTop < viewportTop && baseBottom + belowShift <= viewportBottom ? belowShift : 0
+    const viewportShiftY = clampShift(baseTop, baseBottom, viewportTop, viewportBottom, preferredShiftY)
+
+    if (viewportShiftX !== currentShift.x) toolbar.style.marginLeft = `${viewportShiftX}px`
+    if (viewportShiftY !== currentShift.y) toolbar.style.marginTop = `${viewportShiftY}px`
+    toolbarShift.current = { x: viewportShiftX, y: viewportShiftY }
+  }, [imageToolbarSettingsOpen])
+  const scheduleNodeToolbarPlacement = useCallback(() => {
+    if (toolbarPlacementFrame.current !== null) window.cancelAnimationFrame(toolbarPlacementFrame.current)
+    toolbarPlacementFrame.current = window.requestAnimationFrame(() => {
+      toolbarPlacementFrame.current = null
+      syncNodeToolbarPlacement()
+    })
+  }, [syncNodeToolbarPlacement])
   useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current) }, [])
   useEffect(() => setImageToolbarSettingsOpen(false), [id])
   useEffect(() => {
@@ -398,27 +442,60 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const imageToolLabel = (label: string) => imageToolbarConfig.showLabels ? <span>{label}</span> : null
   const showNodeChrome = selected || Boolean(data.hovered) || hovered || titleEditing || imageToolbarSettingsOpen
   const imageReady = data.kind === 'image' && Boolean(data.imageUrl)
+  const imagePreviewReady = Boolean(data.imageUrl && (data.imageUrl.startsWith('data:image/') || loadedImageUrl === data.imageUrl))
+  const hasDragHandle = data.kind === 'text' || data.kind === 'note' || data.kind === 'ai'
+  const minimumSize = nodeMinimumSize(data.kind)
+  useLayoutEffect(() => {
+    if (!showNodeChrome) {
+      toolbarElementRef.current = null
+      toolbarShift.current = { x: 0, y: 0 }
+      return
+    }
+    scheduleNodeToolbarPlacement()
+    const toolbarContent = toolbarContentRef.current
+    const toolbar = toolbarContent?.parentElement
+    const renderer = toolbar?.closest<HTMLElement>('.react-flow__renderer')
+    if (!toolbar || !renderer) return
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleNodeToolbarPlacement)
+    resizeObserver?.observe(toolbarContent)
+    resizeObserver?.observe(renderer)
+    const settings = toolbar.querySelector<HTMLElement>('.image-toolbar-settings')
+    if (settings) resizeObserver?.observe(settings)
+    const mutationObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(scheduleNodeToolbarPlacement)
+    mutationObserver?.observe(toolbar, { attributes: true, attributeFilter: ['style'] })
+    window.addEventListener('resize', scheduleNodeToolbarPlacement)
+    return () => {
+      if (toolbarPlacementFrame.current !== null) window.cancelAnimationFrame(toolbarPlacementFrame.current)
+      toolbarPlacementFrame.current = null
+      resizeObserver?.disconnect()
+      mutationObserver?.disconnect()
+      window.removeEventListener('resize', scheduleNodeToolbarPlacement)
+    }
+  }, [data.freeResize, imageToolbarConfig, imageToolbarSettingsOpen, scheduleNodeToolbarPlacement, showNodeChrome])
   return (
     <article className={`canvas-node kind-${data.kind} ${selected ? 'selected' : ''} ${titleEditing ? 'title-editing' : ''}`} onMouseEnter={keepToolbar} onMouseLeave={leaveToolbar}>
-      <NodeResizer isVisible={selected} keepAspectRatio={data.kind === 'image' && !data.freeResize} minWidth={220} minHeight={120} maxWidth={1600} maxHeight={1200} lineClassName="node-resize-line" handleClassName="node-resize-handle" />
+      <NodeResizer isVisible={selected} keepAspectRatio={data.kind === 'image' && !data.freeResize} minWidth={minimumSize.width} minHeight={minimumSize.height} maxWidth={1600} maxHeight={1200} lineClassName="node-resize-line" handleClassName="node-resize-handle" />
       <NodeToolbar className={`node-toolbar ${imageReady ? 'image-node-toolbar' : ''} ${imageToolbarConfig.showLabels ? '' : 'labels-hidden'}`} isVisible={showNodeChrome} position={Position.Top} offset={48} onMouseEnter={keepToolbar} onMouseLeave={leaveToolbar} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-        {(!imageReady || imageToolVisible('info')) && <button title="节点信息" aria-label="节点信息" onClick={() => data.onInspect?.(id)}><Info size={15} />{imageReady ? imageToolLabel('信息') : <span>信息</span>}</button>}
-        {imageReady && imageToolVisible('delete') && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} />{imageToolLabel('删除')}</button>}
-        {(data.kind === 'text' || data.kind === 'note') && <button title="用这段内容继续创作" aria-label="用这段内容继续创作" onClick={() => data.onBranch?.(id)}><Sparkles size={15} /><span>生图</span></button>}
-        {((imageReady && imageToolVisible('download')) || (data.kind === 'video' && data.videoUrl)) && <button title={data.kind === 'video' ? '下载视频' : '下载图片'} onClick={() => data.onDownload?.(id)}><Download size={15} />{imageReady ? imageToolLabel('下载') : <span>下载</span>}</button>}
-        {((imageReady && imageToolVisible('saveAsset')) || (data.kind === 'video' && data.videoUrl) || ((data.kind === 'text' || data.kind === 'note') && data.content?.trim())) && <button title="收藏到资产库" aria-label="收藏到资产库" onClick={() => data.onSaveAsset?.(id)}><BookmarkPlus size={15} />{imageReady ? imageToolLabel('存资产') : <span>存资产</span>}</button>}
-        {imageReady && <>{imageToolVisible('edit') && <label className="node-toolbar-upload" title="编辑图片"><MessageSquare size={15} />{imageToolLabel('编辑')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('replace') && <label className="node-toolbar-upload" title="替换图片"><Upload size={15} />{imageToolLabel('替换')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('resize') && <button className={data.freeResize ? 'active' : ''} title={data.freeResize ? '切换为等比缩放' : '切换为自由缩放'} onClick={() => data.onToggleImageRatio?.(id)}>{data.freeResize ? <LockOpen size={15} /> : <Lock size={15} />}{imageToolLabel(data.freeResize ? '自由比例' : '锁比例')}</button>}{imageToolVisible('crop') && <button title="裁剪并生成新节点" onClick={() => data.onImageTool?.(id, 'crop')}><Crop size={15} />{imageToolLabel('裁剪')}</button>}{imageToolVisible('split') && <button title="按网格切分图片" onClick={() => data.onImageTool?.(id, 'split')}><Grid2X2 size={15} />{imageToolLabel('切图')}</button>}{imageToolVisible('upscale') && <button title="放大图片分辨率" onClick={() => data.onImageTool?.(id, 'upscale')}><ZoomIn size={15} />{imageToolLabel('放大')}</button>}{imageToolVisible('view') && <button title="查看大图" onClick={() => data.onImageTool?.(id, 'view')}><Maximize2 size={15} />{imageToolLabel('查看大图')}</button>}<button className={imageToolbarSettingsOpen ? 'active' : ''} title="配置快捷工具" onClick={() => setImageToolbarSettingsOpen((value) => !value)}><MoreHorizontal size={15} />{imageToolLabel('更多')}</button>{imageToolbarSettingsOpen && <div className="image-toolbar-settings nodrag nopan" role="dialog" aria-label="图片快捷工具设置" onPointerDown={(event) => event.stopPropagation()}><strong>快捷工具</strong><div>{imageToolbarToolIds.map((toolId) => <label key={toolId}><input type="checkbox" checked={imageToolbarConfig.ids.includes(toolId)} onChange={() => toggleImageToolbarTool(toolId)} /><span>{{ info: '信息', delete: '删除', saveAsset: '存资产', download: '下载', edit: '编辑', replace: '替换', resize: '比例锁定', crop: '裁剪', split: '切图', upscale: '放大', view: '查看大图' }[toolId]}</span></label>)}</div><label className="image-toolbar-label-switch"><input type="checkbox" checked={imageToolbarConfig.showLabels} onChange={(event) => saveImageToolbarConfig({ ...imageToolbarConfig, showLabels: event.target.checked })} /><span>显示文字标签</span></label><button className="image-toolbar-settings-done" onClick={() => setImageToolbarSettingsOpen(false)}>完成</button></div>}</>}
-        {!imageReady && <button title="复制节点" onClick={() => data.onDuplicate?.(id)}><Copy size={15} /><span>复制</span></button>}
-        {!imageReady && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} /><span>删除</span></button>}
+        <div ref={toolbarContentRef} className="node-toolbar-scroll nodrag nopan nowheel">
+          {(!imageReady || imageToolVisible('info')) && <button title="节点信息" aria-label="节点信息" onClick={() => data.onInspect?.(id)}><Info size={15} />{imageReady ? imageToolLabel('信息') : <span>信息</span>}</button>}
+          {imageReady && imageToolVisible('delete') && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} />{imageToolLabel('删除')}</button>}
+          {(data.kind === 'text' || data.kind === 'note') && <button title="用这段内容继续创作" aria-label="用这段内容继续创作" onClick={() => data.onBranch?.(id)}><Sparkles size={15} /><span>生图</span></button>}
+          {((imageReady && imageToolVisible('download')) || (data.kind === 'video' && data.videoUrl)) && <button title={data.kind === 'video' ? '下载视频' : '下载图片'} onClick={() => data.onDownload?.(id)}><Download size={15} />{imageReady ? imageToolLabel('下载') : <span>下载</span>}</button>}
+          {((imageReady && imageToolVisible('saveAsset')) || (data.kind === 'video' && data.videoUrl) || ((data.kind === 'text' || data.kind === 'note') && data.content?.trim())) && <button title="收藏到资产库" aria-label="收藏到资产库" onClick={() => data.onSaveAsset?.(id)}><BookmarkPlus size={15} />{imageReady ? imageToolLabel('存资产') : <span>存资产</span>}</button>}
+          {imageReady && <>{imageToolVisible('edit') && <label className="node-toolbar-upload" title="编辑图片"><MessageSquare size={15} />{imageToolLabel('编辑')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('replace') && <label className="node-toolbar-upload" title="替换图片"><Upload size={15} />{imageToolLabel('替换')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('resize') && <button className={data.freeResize ? 'active' : ''} title={data.freeResize ? '切换为等比缩放' : '切换为自由缩放'} onClick={() => data.onToggleImageRatio?.(id)}>{data.freeResize ? <LockOpen size={15} /> : <Lock size={15} />}{imageToolLabel(data.freeResize ? '自由比例' : '锁比例')}</button>}{imageToolVisible('crop') && <button title="裁剪并生成新节点" onClick={() => data.onImageTool?.(id, 'crop')}><Crop size={15} />{imageToolLabel('裁剪')}</button>}{imageToolVisible('split') && <button title="按网格切分图片" onClick={() => data.onImageTool?.(id, 'split')}><Grid2X2 size={15} />{imageToolLabel('切图')}</button>}{imageToolVisible('upscale') && <button title="放大图片分辨率" onClick={() => data.onImageTool?.(id, 'upscale')}><ZoomIn size={15} />{imageToolLabel('放大')}</button>}{imageToolVisible('view') && <button title="查看大图" onClick={() => data.onImageTool?.(id, 'view')}><Maximize2 size={15} />{imageToolLabel('查看大图')}</button>}<button className={imageToolbarSettingsOpen ? 'active' : ''} title="配置快捷工具" onClick={() => setImageToolbarSettingsOpen((value) => !value)}><MoreHorizontal size={15} />{imageToolLabel('更多')}</button></>}
+          {!imageReady && <button title="复制节点" onClick={() => data.onDuplicate?.(id)}><Copy size={15} /><span>复制</span></button>}
+          {!imageReady && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} /><span>删除</span></button>}
+        </div>
+        {imageReady && imageToolbarSettingsOpen && <div className="image-toolbar-settings nodrag nopan nowheel" role="dialog" aria-label="图片快捷工具设置" onPointerDown={(event) => event.stopPropagation()}><strong>快捷工具</strong><div>{imageToolbarToolIds.map((toolId) => <label key={toolId}><input type="checkbox" checked={imageToolbarConfig.ids.includes(toolId)} onChange={() => toggleImageToolbarTool(toolId)} /><span>{{ info: '信息', delete: '删除', saveAsset: '存资产', download: '下载', edit: '编辑', replace: '替换', resize: '比例锁定', crop: '裁剪', split: '切图', upscale: '放大', view: '查看大图' }[toolId]}</span></label>)}</div><label className="image-toolbar-label-switch"><input type="checkbox" checked={imageToolbarConfig.showLabels} onChange={(event) => saveImageToolbarConfig({ ...imageToolbarConfig, showLabels: event.target.checked })} /><span>显示文字标签</span></label><button className="image-toolbar-settings-done" onClick={() => setImageToolbarSettingsOpen(false)}>完成</button></div>}
       </NodeToolbar>
       {data.kind !== 'group' && <Handle type="target" position={Position.Left} />}
-      <div className={`node-floating-title nodrag ${showNodeChrome ? 'visible' : ''}`}>{icon}{titleEditing ? <input autoFocus className="node-title" aria-label="节点标题" maxLength={64} value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} onBlur={() => setTitleEditing(false)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTitleEditing(false) }} /> : <button title="双击修改节点名称" onDoubleClick={(event) => { event.stopPropagation(); setTitleEditing(true) }}>{data.title || '未命名节点'}</button>}{data.kind === 'group' && Boolean(data.groupChildCount) && <span className="group-count">{data.groupChildCount}</span>}</div>
-      <div className="node-surface">{data.kind === 'group' ? (
+      {data.kind !== 'ai' && <div className={`node-floating-title nodrag ${showNodeChrome ? 'visible' : ''}`}>{icon}{titleEditing ? <input autoFocus className="node-title" aria-label="节点标题" maxLength={64} value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} onBlur={() => setTitleEditing(false)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTitleEditing(false) }} /> : <button title="双击修改节点名称" onDoubleClick={(event) => { event.stopPropagation(); setTitleEditing(true) }}>{data.title || '未命名节点'}</button>}{data.kind === 'group' && Boolean(data.groupChildCount) && <span className="group-count">{data.groupChildCount}</span>}</div>}
+      <div className="node-surface">{data.kind === 'ai' ? <div className="node-drag-handle ai-node-header" title="拖动 AI 创作节点" aria-label="拖动 AI 创作节点"><div className="ai-node-heading"><GripHorizontal size={17} />{titleEditing ? <input autoFocus className="node-title nodrag" aria-label="节点标题" maxLength={64} value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} onBlur={() => setTitleEditing(false)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTitleEditing(false) }} /> : <span title="双击修改节点名称" onDoubleClick={(event) => { event.stopPropagation(); setTitleEditing(true) }}>{data.title || 'AI 创作'}</span>}</div><div className="generation-mode nodrag" role="group" aria-label="生成类型"><button className={mode === 'text' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'text' })}><Bot size={13} />文字</button><button className={mode === 'image' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'image' })}><Image size={13} />生图</button><button className={mode === 'video' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'video' })}><Video size={13} />视频</button></div></div> : hasDragHandle && <div className="node-drag-handle" title="拖动节点" aria-label="拖动节点"><GripHorizontal size={17} /></div>}{data.kind === 'group' ? (
         <div className="group-body" />
       ) : data.kind === 'image' ? (
         <div className="image-body">
-          {data.imageUrl ? <div className="image-preview"><img src={data.imageUrl} alt={data.title || '画布图片'} /><div className="image-actions"><label title="替换图片" aria-label="替换图片"><Upload size={14} /><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label><button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button></div></div> : <label className="image-drop nodrag"><Image size={24} /><span>上传图片或粘贴地址</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}
-          <input className="node-input nodrag" placeholder="图片地址" value={data.imageUrl || ''} onChange={(event) => data.onChange?.(id, { imageUrl: event.target.value })} />
+          {data.imageUrl ? <div className={`image-preview ${data.freeResize ? 'free-resize' : 'ratio-locked'}`}><img src={data.imageUrl} alt={data.title || '画布图片'} draggable={false} onLoad={() => setLoadedImageUrl(data.imageUrl || null)} onError={() => setLoadedImageUrl(null)} /><div className="image-actions nodrag nopan"><label title="替换图片" aria-label="替换图片"><Upload size={14} /><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label><button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button></div></div> : <label className="image-drop nodrag"><Image size={24} /><span>上传图片或粘贴地址</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}
+          {!imagePreviewReady && <input className="node-input nodrag" placeholder="图片地址" value={data.imageUrl || ''} onChange={(event) => data.onChange?.(id, { imageUrl: event.target.value })} />}
         </div>
       ) : data.kind === 'video' ? (
         <div className="video-body">
@@ -427,15 +504,15 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
         </div>
       ) : data.kind === 'ai' ? (
         <div className="ai-body">
-          <textarea className="nodrag nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} />
-          <div className="generation-mode nodrag" role="group" aria-label="生成类型" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}><button className={mode === 'text' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'text' })}><Bot size={14} />文字</button><button className={mode === 'image' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'image' })}><Image size={14} />生图</button><button className={mode === 'video' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'video' })}><Video size={14} />视频</button></div>
-          {mode !== 'text' && Boolean(data.referenceImages?.length) && <div className="reference-strip nodrag"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}
-          <div className="generator-settings nodrag">
-            <select aria-label={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} title={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : mode === 'video' ? { videoModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
-            {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
-            {mode === 'video' && <><select aria-label="视频尺寸" title="视频尺寸" value={videoSize} onChange={(event) => data.onChange?.(id, { videoSize: event.target.value as VideoSize })}><option value="1280x720">横向 16:9</option><option value="720x1280">竖向 9:16</option><option value="1024x1024">方形 1:1</option></select><select aria-label="视频时长" title="视频时长" value={videoSeconds} onChange={(event) => data.onChange?.(id, { videoSeconds: Number(event.target.value) })}>{Array.from({ length: 20 }, (_item, index) => index + 1).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></>}
+          <div className="ai-prompt-section nodrag"><span className="ai-section-label">提示词</span><textarea className="nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} /></div>
+          <div className="ai-context-section nodrag"><div className="ai-context-heading"><span className="ai-section-label">连接上下文</span><small>{data.contextSummary?.textCount || 0} 段文本{mode !== 'text' ? ` · ${data.contextSummary?.imageCount || 0} 张图片` : ''}</small></div>{mode !== 'text' && Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
+          <div className="ai-settings-section nodrag"><span className="ai-section-label">生成设置</span><div className="generator-settings">
+              <select aria-label={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} title={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : mode === 'video' ? { videoModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
+              {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
+              {mode === 'video' && <><select aria-label="视频尺寸" title="视频尺寸" value={videoSize} onChange={(event) => data.onChange?.(id, { videoSize: event.target.value as VideoSize })}><option value="1280x720">横向 16:9</option><option value="720x1280">竖向 9:16</option><option value="1024x1024">方形 1:1</option></select><select aria-label="视频时长" title="视频时长" value={videoSeconds} onChange={(event) => data.onChange?.(id, { videoSeconds: Number(event.target.value) })}>{Array.from({ length: 20 }, (_item, index) => index + 1).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></>}
+            </div>
           </div>
-          <div className="node-actions"><button
+          <div className="node-actions ai-node-actions"><button
             className={'node-run nodrag ' + (mode === 'image' ? 'image-run' : '')}
             disabled={data.busy || !data.prompt?.trim() || !model}
             onClick={() => mode === 'image' ? data.onRunImage?.(id, data.prompt || '', model, imageSize) : mode === 'video' ? data.onRunVideo?.(id, data.prompt || '', model, videoSize, videoSeconds) : data.onRun?.(id, data.prompt || '', model)}
@@ -1011,6 +1088,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [historyVersion, setHistoryVersion] = useState(0)
   const flow = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
+  const topImportInput = useRef<HTMLInputElement>(null)
   const imageImportInput = useRef<HTMLInputElement>(null)
   const aiInFlight = useRef(0)
   const aiNodesInFlight = useRef(new Set<string>())
@@ -1425,15 +1503,20 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     nodes.forEach((node) => { if (node.data.groupId) counts.set(node.data.groupId, (counts.get(node.data.groupId) || 0) + 1) })
     return counts
   }, [nodes])
-  const liveNodes = useMemo(() => nodes.map((node) => ({ ...node, data: {
-    ...node.data,
-    hovered: hoveredNodeId === node.id,
-    groupChildCount: node.data.kind === 'group' ? groupChildCounts.get(node.id) || 0 : undefined,
-    referenceImages: node.data.kind === 'ai' && (node.data.mode === 'image' || node.data.mode === 'video') ? buildGenerationContext(node.id, node.data.prompt || '', nodes, edges).referenceImages : undefined,
-    textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
-    videoModels: relayConfig.videoModels,
-    onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
-  } })), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
+  const liveNodes = useMemo(() => nodes.map((node) => {
+    const generationContext = node.data.kind === 'ai' ? buildGenerationContext(node.id, node.data.prompt || '', nodes, edges) : null
+    const hasDedicatedDragHandle = node.data.kind === 'text' || node.data.kind === 'note' || node.data.kind === 'ai'
+    return { ...node, dragHandle: hasDedicatedDragHandle ? '.node-drag-handle' : undefined, data: {
+      ...node.data,
+      hovered: hoveredNodeId === node.id,
+      groupChildCount: node.data.kind === 'group' ? groupChildCounts.get(node.id) || 0 : undefined,
+      referenceImages: generationContext && (node.data.mode === 'image' || node.data.mode === 'video') ? generationContext.referenceImages : undefined,
+      contextSummary: generationContext ? { textCount: generationContext.textInputs.length, imageCount: generationContext.referenceImages.length } : undefined,
+      textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
+      videoModels: relayConfig.videoModels,
+      onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
+    } }
+  }), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
   const selectedNodeIds = useMemo(() => new Set(nodes.filter((node) => node.selected).map((node) => node.id)), [nodes])
   const selectedNodeCount = selectedNodeIds.size
   const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', className: selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target) ? 'connected' : edge.className, data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges, selectedNodeIds])
@@ -1577,11 +1660,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       } else {
         revision.current = 0
         persistedRevision.current = 0
+        const loadedNodes = result.canvas.document.nodes.map(withNodeSize)
         setCurrent(result.canvas)
-        setNodes(result.canvas.document.nodes.map(withNodeSize))
+        setNodes(loadedNodes)
         setEdges(result.canvas.document.edges)
         replaceAssistantMessages(result.canvas.document.assistantMessages || [])
-        resetHistory(result.canvas.document.nodes, result.canvas.document.edges)
+        resetHistory(loadedNodes, result.canvas.document.edges)
         setSaveState('saved')
         setBlockedReason(null)
       }
@@ -1682,7 +1766,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
 
   function addNode(kind: CanvasData['kind'], screenPosition?: { x: number; y: number }, content = '', customTitle?: string) {
     const center = flow.current?.screenToFlowPosition(screenPosition || { x: window.innerWidth / 2, y: window.innerHeight / 2 }) || { x: 200, y: 150 }
-    const title = customTitle || (kind === 'group' ? '创作框架' : kind === 'ai' ? 'AI 灵感' : kind === 'video' ? '视频' : kind === 'image' ? '视觉参考' : kind === 'note' ? '便签' : '文本')
+    const title = customTitle || (kind === 'group' ? '创作框架' : kind === 'ai' ? 'AI 创作' : kind === 'video' ? '视频' : kind === 'image' ? '视觉参考' : kind === 'note' ? '便签' : '文本')
     setNodes((items) => {
       const data: CanvasData = kind === 'ai'
         ? { kind, title, prompt: content, mode: 'text', textModel: relayConfig.textModels[0], imageModel: relayConfig.imageModels[0], imageSize: '1024x1024', videoModel: relayConfig.videoModels[0], videoSize: '1280x720', videoSeconds: 6 }
@@ -2056,6 +2140,26 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     if (blockedReason === 'session') { setNotice({ type: 'error', text: '请重新登录后再导入草稿' }); return }
     importInput.current?.click()
   }, [blockedReason, current])
+  const chooseCanvasImport = useCallback(() => {
+    if (!current) return
+    if (blockedReason === 'session') { setNotice({ type: 'error', text: '请重新登录后再导入文件' }); return }
+    topImportInput.current?.click()
+  }, [blockedReason, current])
+  const importCanvasFiles = useCallback((files: File[]) => {
+    const selection = classifyCanvasImportFiles(files)
+    if (selection.kind === 'draft') { void importDraft(selection.file); return }
+    if (selection.kind === 'images') {
+      const center = flow.current?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) || { x: 200, y: 150 }
+      void insertImageFiles(selection.files, center, '导入')
+      return
+    }
+    const text = selection.reason === 'multiple-drafts'
+      ? '一次只能导入一份画布草稿'
+      : selection.reason === 'mixed'
+        ? '画布草稿和图片不能混合导入'
+        : '请选择画布草稿 JSON 或图片文件'
+    setNotice({ type: 'error', text })
+  }, [importDraft, insertImageFiles])
   const discardDraft = useCallback(() => {
     if (!current || !window.confirm('确定放弃本地草稿并加载服务器版本吗？此操作无法撤销。')) return
     localStorage.removeItem(draftKey(user.id, current.id))
@@ -2111,12 +2215,13 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
           <button className={`agent-button ${assistantOpen ? 'active' : ''}`} title={assistantOpen ? '收起画布助手' : '打开画布助手'} disabled={!current} onClick={() => { setAssistantOpen((value) => !value); setCanvasPanelOpen(false); setAppearanceOpen(false) }}><Bot size={16} />Agent</button>
           <button className="api-key-button" onClick={() => setPanel('account')}><KeyRound size={16} />API 密钥</button>
           {user.role === 'admin' && <button className="icon-button" title="运营管理" aria-label="运营管理" onClick={() => setPanel('admin')}><Settings size={18} /></button>}
-          <button className="icon-button import-button" title="导入草稿" aria-label="导入草稿" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseDraft}><Upload size={18} /></button>
+          <button className="icon-button import-button" title="导入草稿或图片" aria-label="导入草稿或图片" disabled={!current || blockedReason === 'session' || blockedReason === 'deleted'} onClick={chooseCanvasImport}><Upload size={18} /></button>
           <button className="icon-button" title="立即保存" aria-label="立即保存" disabled={blockedReason === 'session' || blockedReason === 'conflict' || blockedReason === 'deleted'} onClick={() => void flush()}><Save size={18} /></button>
         </div>
       </header>
       {topbarMenuOpen && <button className="topbar-menu-backdrop" aria-label="关闭画布菜单" onClick={() => setTopbarMenuOpen(false)} />}
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importDraft(file) }} />
+      <input ref={topImportInput} className="visually-hidden" type="file" accept="application/json,.json,image/*" multiple tabIndex={-1} onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) importCanvasFiles(files) }} />
       <input ref={imageImportInput} className="visually-hidden" type="file" accept="image/*" multiple tabIndex={-1} onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; const center = flow.current?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) || { x: 200, y: 150 }; if (files.length) void insertImageFiles(files, center, '导入') }} />
       {current ? <div className={`flow-wrap ${canvasPanelOpen ? 'panel-open' : ''}`} onMouseDown={(event) => { const target = event.target as HTMLElement; if (!target.closest('.react-flow__node, .canvas-context-menu, .canvas-assistant, .canvas-side-panel, .canvas-dock, .canvas-navigation, .selection-toolbar, .node-toolbar')) (document.activeElement as HTMLElement | null)?.blur() }} onClick={() => { setCanvasMenu(null); setAppearanceOpen(false) }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (target.closest('.react-flow__node, .canvas-context-menu, .canvas-assistant, .canvas-side-panel, .canvas-dock, .canvas-navigation, .selection-toolbar, .node-toolbar')) return; event.preventDefault(); setCanvasMenu({ type: 'canvas', x: event.clientX, y: event.clientY, screenX: event.clientX, screenY: event.clientY }) }} onDoubleClick={(event) => { const target = event.target as HTMLElement; if (target.closest('.react-flow__node, .react-flow__minimap, .tool-rail, .canvas-dock, .canvas-navigation, .selection-toolbar, .canvas-side-panel, .canvas-assistant, .canvas-context-menu')) return; addNode('text', { x: event.clientX, y: event.clientY }) }} onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) event.preventDefault() }} onDrop={(event) => void dropImage(event)}>
         {canvasPanelOpen && <CanvasSidePanel open width={canvasPanelWidth} tab={canvasPanelTab} query={canvasPanelQuery} nodes={nodes} assets={assets} assetsLoading={assetsLoading} selectedNodeIds={selectedNodeIds} onTab={(tab) => { setCanvasPanelTab(tab); if (tab === 'assets') void loadAssets() }} onQuery={setCanvasPanelQuery} onFocus={focusNode} onAdd={(kind, content, title) => addNode(kind, undefined, content, title)} onInsertAsset={insertAsset} onDeleteAsset={(id) => void deleteAsset(id)} onResizeStart={startCanvasPanelResize} />}
