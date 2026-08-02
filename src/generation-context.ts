@@ -9,7 +9,12 @@ export type GenerationContextNode = {
   }
 }
 
-export type GenerationContextEdge = { source: string; target: string }
+export type GenerationContextEdge = {
+  id?: string
+  source: string
+  target: string
+  data?: { relation?: 'context' | 'result' } | null
+}
 
 export type GenerationTextInput = { id: string; title: string; text: string }
 export type GenerationImageInput = { id: string; title: string; imageUrl: string }
@@ -23,9 +28,22 @@ export function buildGenerationContext(
   const nodesById = new Map(nodes.map((node) => [node.id, node]))
   const incomingByTarget = new Map<string, GenerationContextEdge[]>()
   for (const edge of edges) {
-    const incoming = incomingByTarget.get(edge.target) || []
-    incoming.push(edge)
-    incomingByTarget.set(edge.target, incoming)
+    const relation = edge.data?.relation
+    if (relation === 'result') continue
+
+    let source = edge.source
+    let target = edge.target
+    const sourceKind = nodesById.get(source)?.data.kind
+    const targetKind = nodesById.get(target)?.data.kind
+    const isManualContext = relation === 'context' || (!relation && edge.id?.startsWith('xy-edge__'))
+    if (isManualContext && sourceKind === 'ai' && targetKind !== 'ai') {
+      source = edge.target
+      target = edge.source
+    }
+
+    const incoming = incomingByTarget.get(target) || []
+    incoming.push({ ...edge, source, target })
+    incomingByTarget.set(target, incoming)
   }
 
   const textInputs: GenerationTextInput[] = []

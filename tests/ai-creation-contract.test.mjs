@@ -46,6 +46,66 @@ test('connected generation context keeps text and image inputs typed', () => {
   }
 })
 
+test('manual AI connections work in either drag direction while result edges stay excluded', () => {
+  const nodes = [
+    { id: 'target', data: { kind: 'ai', prompt: 'Create from references' } },
+    { id: 'legacy-reverse', data: { kind: 'image', title: 'Legacy reverse', imageUrl: 'data:image/png;base64,LEGACY' } },
+    { id: 'explicit-reverse', data: { kind: 'image', title: 'Explicit reverse', imageUrl: 'data:image/png;base64,EXPLICIT' } },
+    { id: 'generated-result', data: { kind: 'image', title: 'Generated result', imageUrl: 'data:image/png;base64,RESULT' } },
+    { id: 'brief', data: { kind: 'note', title: 'Brief', content: 'Keep the red accent' } },
+  ]
+  const edges = [
+    { id: 'xy-edge__target-legacy-reverse', source: 'target', target: 'legacy-reverse' },
+    { id: 'manual-reverse', source: 'target', target: 'explicit-reverse', data: { relation: 'context' } },
+    { id: 'generated-edge', source: 'generated-result', target: 'target', data: { relation: 'result' } },
+    { id: 'legacy-incoming', source: 'brief', target: 'target' },
+  ]
+
+  const context = buildGenerationContext('target', 'User prompt', nodes, edges)
+
+  assert.equal(context.prompt, 'User prompt\n\nKeep the red accent')
+  assert.deepEqual(context.referenceImages.map((item) => item.id), ['legacy-reverse', 'explicit-reverse'])
+  assert.equal(context.referenceImages.some((item) => item.id === 'generated-result'), false)
+})
+
+test('manual context and generated-result edge roles are created and persisted separately', () => {
+  const connectStart = appSource.indexOf('const connect = useCallback')
+  const changeNodesStart = appSource.indexOf('const changeNodes = useCallback', connectStart)
+  const connectSource = appSource.slice(connectStart, changeNodesStart)
+  const appendStart = appSource.indexOf('const appendResultNode = useCallback')
+  const duplicateStart = appSource.indexOf('const duplicateNode = useCallback', appendStart)
+  const appendSource = appSource.slice(appendStart, duplicateStart)
+
+  assert.match(connectSource, /addEdge\(\{[^}]*data:\s*\{\s*relation:\s*'context'\s*\}/s)
+  assert.match(appendSource, /relation:\s*'context'\s*\|\s*'result'/)
+  assert.match(appendSource, /data:\s*\{\s*relation\s*\}/)
+  assert.match(appSource, /appendResultNode\(id,\s*\{\s*kind:\s*'ai'[\s\S]*?\},\s*'context'\)/)
+  assert.match(appSource, /edgeRelationData\(edge\)[\s\S]*?relation/)
+  assert.match(appSource, /normalizeCanvasEdges\(result\.canvas\.document\.edges\)/)
+})
+
+test('testing a newly entered relay key saves it only after verification and refreshes configured state', () => {
+  const testStart = appSource.indexOf('async function testRelayKey')
+  const clearStart = appSource.indexOf('async function clearRelayKey', testStart)
+  const source = appSource.slice(testStart, clearStart)
+  const verifyCall = source.indexOf('/me/${kind}-key/test')
+  const saveCall = source.indexOf('/me/${kind}-key`', verifyCall + 1)
+  const refreshCall = source.indexOf('await refresh()')
+
+  assert.notEqual(testStart, -1)
+  assert.match(source, /if \(apiKey\) \{[\s\S]*method:\s*'PUT'/)
+  assert.ok(verifyCall >= 0 && saveCall > verifyCall && refreshCall > saveCall)
+  assert.match(source, /apiKey \? `\$\{label\} API 密钥测试成功并已安全保存` : `\$\{label\} API 密钥测试成功`/)
+  assert.match(appSource, /relayKeyValues\[kind\]\.trim\(\) \? \(configured \? '测试并替换' : '测试并保存'\) : '测试已保存密钥'/)
+})
+
+test('AI creation reports a missing administrator model instead of becoming a dead button', () => {
+  assert.match(appSource, /disabled=\{data\.busy \|\| !data\.prompt\?\.trim\(\)\}/)
+  assert.match(appSource, /if \(!model\) \{ data\.onMissingModel\?\.\(mode\); return \}/)
+  assert.match(appSource, /const notifyMissingModel = useCallback[\s\S]*?管理员尚未开放\$\{label\}模型/)
+  assert.match(appSource, /onMissingModel:\s*notifyMissingModel/)
+})
+
 test('text generation submits text context while image and video share typed references', () => {
   const textStart = appSource.indexOf('const runAI = useCallback')
   const imageStart = appSource.indexOf('const runImage = useCallback', textStart)
@@ -109,7 +169,7 @@ test('AI creation card has a compact drag header and stable prompt context setti
   assert.match(appSource, /const minimumSize = nodeMinimumSize\(data\.kind\)[\s\S]*?<NodeResizer[^>]*minWidth=\{minimumSize\.width\} minHeight=\{minimumSize\.height\}/)
   assert.match(appSource, /const nodeMinimumSize = \(kind: CanvasData\['kind'\]\) => kind === 'ai' \? \{ width: 300, height: 280 \} : \{ width: 220, height: 120 \}/)
   assert.match(appSource, /width: Math\.max\(minimum\.width, node\.width \|\| fallback\.width\), height: Math\.max\(minimum\.height, node\.height \|\| fallback\.height\)/)
-  assert.match(appSource, /const loadedNodes = result\.canvas\.document\.nodes\.map\(withNodeSize\)[\s\S]*?setNodes\(loadedNodes\)[\s\S]*?resetHistory\(loadedNodes, result\.canvas\.document\.edges\)/)
+  assert.match(appSource, /const loadedNodes = result\.canvas\.document\.nodes\.map\(withNodeSize\)[\s\S]*?const loadedEdges = normalizeCanvasEdges\(result\.canvas\.document\.edges\)[\s\S]*?setNodes\(loadedNodes\)[\s\S]*?resetHistory\(loadedNodes, loadedEdges\)/)
   assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-node-header\s*\{[^}]*min-height:\s*4[0-9]px;[^}]*cursor:\s*grab;/s)
   assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-prompt-section\s*\{[^}]*min-height:\s*0;[^}]*flex:\s*1;/s)
   assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-node-actions\s*\{[^}]*margin-top:\s*auto;[^}]*flex:\s*0 0 auto;/s)
@@ -138,4 +198,13 @@ test('dedicated drag handles and image resize controls do not compete with node 
   assert.match(appSource, /<NodeResizer[^>]*keepAspectRatio=\{data\.kind === 'image' && !data\.freeResize\}[^>]*handleClassName="node-resize-handle"/)
   assert.match(appSource, /<NodeToolbar[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/)
   assert.match(nodeStyles, /\.react-flow__node\.dragging \.node-drag-handle\s*\{[^}]*cursor:\s*grabbing;/s)
+})
+
+test('left and right connection handles are always-visible polished circles in both themes', () => {
+  assert.match(nodeStyles, /\.canvas-node \.react-flow__handle\s*\{[^}]*width:\s*1[3-5]px;[^}]*height:\s*1[3-5]px;[^}]*border-radius:\s*50%;[^}]*opacity:\s*1;/s)
+  assert.match(nodeStyles, /\.canvas-node \.react-flow__handle-left\s*\{[^}]*background:/s)
+  assert.match(nodeStyles, /\.canvas-node \.react-flow__handle-right\s*\{[^}]*background:/s)
+  assert.match(nodeStyles, /\.canvas-node \.react-flow__handle(?:\.connectingfrom|\.connectingto|\.valid)[\s\S]*box-shadow:/s)
+  assert.match(nodeStyles, /\.workspace\.theme-dark \.canvas-node \.react-flow__handle\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*opacity:\s*1;/s)
+  assert.match(nodeStyles, /\.workspace\.theme-dark \.canvas-node \.react-flow__handle-left[\s\S]*\.workspace\.theme-dark \.canvas-node \.react-flow__handle-right/s)
 })

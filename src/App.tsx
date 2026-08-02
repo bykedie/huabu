@@ -42,6 +42,7 @@ type CanvasData = {
   onChange?: (id: string, patch: Partial<CanvasData>) => void
   onRun?: (id: string, prompt: string, model?: string) => void
   onRunImage?: (id: string, prompt: string, model?: string, size?: ImageSize) => void
+  onMissingModel?: (mode: 'text' | 'image' | 'video') => void
   onInspect?: (id: string) => void
   onRunVideo?: (id: string, prompt: string, model?: string, size?: VideoSize, seconds?: number) => void
   onDuplicate?: (id: string) => void
@@ -75,6 +76,7 @@ type CanvasInfo = {
 type Notice = { type: 'ok' | 'error'; text: string } | null
 type CanvasDraft = { baseVersion: number; name: string; nodes: CanvasNode[]; edges: Edge[]; assistantMessages: AssistantMessage[] }
 type CanvasSnapshot = { nodes: CanvasNode[]; edges: Edge[] }
+type CanvasEdgeRelation = 'context' | 'result'
 type BackgroundMode = 'dots' | 'lines' | 'blank'
 type CanvasThemeMode = 'dark' | 'light'
 type CanvasPanelTab = 'canvas' | 'assets' | 'prompts'
@@ -110,6 +112,15 @@ const withNodeSize = (node: CanvasNode): CanvasNode => {
 const nodeDimensions = (node: CanvasNode) => ({
   width: node.measured?.width || node.width || nodeSize(node.data.kind).width,
   height: node.measured?.height || node.height || nodeSize(node.data.kind).height,
+})
+const edgeRelationData = (edge: Edge): { relation?: CanvasEdgeRelation } => {
+  const relation = (edge.data as { relation?: unknown } | undefined)?.relation
+  return relation === 'context' || relation === 'result' ? { relation } : {}
+}
+const normalizeCanvasEdges = (edges: Edge[]): Edge[] => edges.map((edge) => {
+  const relation = edgeRelationData(edge).relation || (edge.id.startsWith('xy-edge__') ? 'context' : undefined)
+  const { data: _data, ...rest } = edge
+  return relation ? { ...rest, data: { relation } } : rest
 })
 function openNodePosition(nodes: CanvasNode[], desired: { x: number; y: number }, kind: CanvasData['kind']) {
   const size = nodeSize(kind)
@@ -163,8 +174,9 @@ function makeDraft(baseVersion: number, name: string, nodes: CanvasNode[], edges
       } }
     }),
     edges: edges.map((edge) => {
-      const { selected: _selected, ...persistedEdge } = edge
-      return persistedEdge
+      const { selected: _selected, data: _data, ...persistedEdge } = edge
+      const relation = edgeRelationData(edge).relation
+      return relation ? { ...persistedEdge, data: { relation } } : persistedEdge
     }),
     assistantMessages: assistantMessages.slice(-50).map((message) => ({ id: message.id, role: message.role, content: message.content, createdAt: message.createdAt })),
   }
@@ -222,12 +234,14 @@ function parseDraft(value: unknown): CanvasDraft | null {
     if (typeof edge.id !== 'string' || !edge.id || edge.id.length > 200 || typeof edge.source !== 'string' || typeof edge.target !== 'string' || !nodeIds.has(edge.source) || !nodeIds.has(edge.target)) return null
     if (edgeIds.has(edge.id)) return null
     if ((edge.sourceHandle !== undefined && edge.sourceHandle !== null && typeof edge.sourceHandle !== 'string') || (edge.targetHandle !== undefined && edge.targetHandle !== null && typeof edge.targetHandle !== 'string')) return null
-    edges.push({ id: edge.id, source: edge.source, target: edge.target, type: 'bezier', sourceHandle: edge.sourceHandle as string | null | undefined, targetHandle: edge.targetHandle as string | null | undefined })
+    const data = edge.data as Record<string, unknown> | undefined
+    if (data !== undefined && (!data || typeof data !== 'object' || (data.relation !== undefined && data.relation !== 'context' && data.relation !== 'result'))) return null
+    edges.push({ id: edge.id, source: edge.source, target: edge.target, type: 'bezier', sourceHandle: edge.sourceHandle as string | null | undefined, targetHandle: edge.targetHandle as string | null | undefined, ...(data?.relation ? { data: { relation: data.relation } } : {}) })
     edgeIds.add(edge.id)
   }
   const assistantMessages = parseAssistantMessages(draft.assistantMessages)
   if (!assistantMessages) return null
-  return { baseVersion: draft.baseVersion as number, name: draft.name, nodes, edges, assistantMessages }
+  return { baseVersion: draft.baseVersion as number, name: draft.name, nodes, edges: normalizeCanvasEdges(edges), assistantMessages }
 }
 function readDraft(userId: string, canvasId: string): CanvasDraft | null {
   try {
@@ -514,8 +528,13 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
           </div>
           <div className="node-actions ai-node-actions"><button
             className={'node-run nodrag ' + (mode === 'image' ? 'image-run' : '')}
-            disabled={data.busy || !data.prompt?.trim() || !model}
-            onClick={() => mode === 'image' ? data.onRunImage?.(id, data.prompt || '', model, imageSize) : mode === 'video' ? data.onRunVideo?.(id, data.prompt || '', model, videoSize, videoSeconds) : data.onRun?.(id, data.prompt || '', model)}
+            disabled={data.busy || !data.prompt?.trim()}
+            onClick={() => {
+              if (!model) { data.onMissingModel?.(mode); return }
+              if (mode === 'image') data.onRunImage?.(id, data.prompt || '', model, imageSize)
+              else if (mode === 'video') data.onRunVideo?.(id, data.prompt || '', model, videoSize, videoSeconds)
+              else data.onRun?.(id, data.prompt || '', model)
+            }}
           >{data.busy ? '生成中…' : <><Sparkles size={14} />{mode === 'image' ? '生成图片' : mode === 'video' ? '生成视频' : '生成文字'}</>}</button></div>
         </div>
       ) : (
@@ -770,7 +789,11 @@ function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: 
     setRelayKeyError(kind, '')
     try {
       await api(`/me/${kind}-key/test`, { method: 'POST', body: JSON.stringify({ apiKey: apiKey || undefined }) })
-      notify({ type: 'ok', text: `${label} API 密钥测试成功` })
+      if (apiKey) {
+        await api(`/me/${kind}-key`, { method: 'PUT', body: JSON.stringify({ apiKey }) })
+        await refresh()
+      }
+      notify({ type: 'ok', text: apiKey ? `${label} API 密钥测试成功并已安全保存` : `${label} API 密钥测试成功` })
     } catch (err) { setRelayKeyError(kind, (err as Error).message) } finally { setRelayKeyValue(kind, ''); setBusy(false) }
   }
   async function clearRelayKey(kind: RelayKeyKind, label: string, configured: boolean) {
@@ -787,9 +810,9 @@ function AccountDrawer({ user, refresh, close, notify }: { user: User; refresh: 
     <section className={'drawer-section'}><h3>登录账号</h3><p className={'account-email'}>{user.email}</p></section>
     {relayKeys.map(({ kind, label, configured }) => <section className={'drawer-section relay-key-section'} key={kind}><h3>{label} API 密钥</h3>
       <label>你的 API 密钥<input type={'password'} placeholder={configured ? '已配置，输入新密钥可替换' : `输入你的${label} API 密钥`} value={relayKeyValues[kind]} onChange={(event) => setRelayKeyValue(kind, event.target.value)} autoComplete={'new-password'} disabled={busy} /></label>
-      <p className={'muted'}>{configured ? '已配置。密钥不会回显，只保存在服务端。' : `尚未配置。使用${label}生成前，请先保存并测试。`}</p>
+      <p className={'muted'}>{configured ? '已配置。密钥不会回显，只保存在服务端。' : `尚未配置。可直接保存，或测试通过后自动保存。`}</p>
       {relayKeyErrors[kind] && <div className={'form-error'} role={'alert'}>{relayKeyErrors[kind]}</div>}
-      <div className={'relay-actions'}><button className={'primary'} type={'button'} onClick={() => void saveRelayKey(kind, label)} disabled={busy || !relayKeyValues[kind].trim()}><KeyRound size={16} />{configured ? '替换密钥' : '保存密钥'}</button><button className={'secondary'} type={'button'} onClick={() => void testRelayKey(kind, label, configured)} disabled={busy || (!relayKeyValues[kind].trim() && !configured)}><Check size={16} />测试密钥</button>{configured && <button className={'secondary danger-text'} type={'button'} onClick={() => void clearRelayKey(kind, label, configured)} disabled={busy}>清除密钥</button>}</div>
+      <div className={'relay-actions'}><button className={'primary'} type={'button'} onClick={() => void saveRelayKey(kind, label)} disabled={busy || !relayKeyValues[kind].trim()}><KeyRound size={16} />{configured ? '替换密钥' : '保存密钥'}</button><button className={'secondary'} type={'button'} onClick={() => void testRelayKey(kind, label, configured)} disabled={busy || (!relayKeyValues[kind].trim() && !configured)}><Check size={16} />{relayKeyValues[kind].trim() ? (configured ? '测试并替换' : '测试并保存') : '测试已保存密钥'}</button>{configured && <button className={'secondary danger-text'} type={'button'} onClick={() => void clearRelayKey(kind, label, configured)} disabled={busy}>清除密钥</button>}</div>
     </section>)}
     <form className={'drawer-section'} onSubmit={changePassword}><h3>修改密码</h3>
       <label>当前密码<input name={'currentPassword'} type={'password'} minLength={8} maxLength={72} autoComplete={'current-password'} required /></label>
@@ -1136,7 +1159,11 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         videoModel: node.data.videoModel, videoSize: node.data.videoSize, videoSeconds: node.data.videoSeconds, groupId: node.data.groupId, freeResize: node.data.freeResize,
       } }))
     }),
-    edges: snapshot.edges.map((edge) => { const { selected: _selected, data: _data, ...rest } = edge; return JSON.parse(JSON.stringify({ ...rest, selected: false })) }),
+    edges: snapshot.edges.map((edge) => {
+      const { selected: _selected, data: _data, ...rest } = edge
+      const relation = edgeRelationData(edge).relation
+      return JSON.parse(JSON.stringify({ ...rest, selected: false, ...(relation ? { data: { relation } } : {}) }))
+    }),
   }), [])
   const resetHistory = useCallback((nextNodes: CanvasNode[], nextEdges: Edge[]) => { undoStack.current = []; redoStack.current = []; lastSnapshot.current = cloneSnapshot({ nodes: nextNodes, edges: nextEdges }); setHistoryVersion((value) => value + 1) }, [cloneSnapshot])
   useEffect(() => {
@@ -1224,7 +1251,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const setNodeBusy = useCallback((id: string, busy: boolean) => {
     setNodes((items) => items.map((node) => node.id === id ? { ...node, data: { ...node.data, busy } } : node))
   }, [setNodes])
-  const appendResultNode = useCallback((sourceId: string, data: CanvasData) => {
+  const appendResultNode = useCallback((sourceId: string, data: CanvasData, relation: 'context' | 'result' = 'result') => {
     const source = nodesRef.current.find((node) => node.id === sourceId)
     if (!source) return ''
     const id = uid()
@@ -1232,7 +1259,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const siblingCount = edgesRef.current.filter((edge) => edge.source === sourceId).length
     const position = { x: source.position.x + sourceWidth + 96, y: source.position.y + siblingCount * 196 }
     setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), withNodeSize({ id, type: 'canvasNode', position, selected: true, data })])
-    setEdges((items) => addEdge({ id: `edge-${sourceId}-${id}`, source: sourceId, target: id, type: 'bezier' }, items))
+    setEdges((items) => addEdge({ id: `edge-${sourceId}-${id}`, source: sourceId, target: id, type: 'bezier', data: { relation } }, items))
     markDirty()
     window.setTimeout(() => flow.current?.fitView({ nodes: [{ id: sourceId }, { id }], padding: 0.3, duration: 320, maxZoom: 1.2 }), 30)
     return id
@@ -1258,7 +1285,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const source = nodesRef.current.find((node) => node.id === id)
     const prompt = source?.data.content?.trim() || source?.data.prompt?.trim()
     if (!source || !prompt) { setNotice({ type: 'error', text: '先在节点里写下内容，再继续创作' }); return }
-    appendResultNode(id, { kind: 'ai', title: 'AI 创作', prompt, mode: 'text', textModel: relayConfig.textModels[0] })
+    appendResultNode(id, { kind: 'ai', title: 'AI 创作', prompt, mode: 'text', textModel: relayConfig.textModels[0] }, 'context')
   }, [appendResultNode, relayConfig.textModels])
   const uploadNodeMedia = useCallback(async (id: string, file: File) => {
     const node = nodesRef.current.find((item) => item.id === id)
@@ -1498,6 +1525,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     } finally { aiNodesInFlight.current.delete(id); aiInFlight.current = Math.max(0, aiInFlight.current - 1) }
   }, [appendResultNode, refreshUser, setNodeBusy, user.videoApiKeyConfigured])
   const deleteEdge = useCallback((id: string) => { setEdges((items) => items.filter((edge) => edge.id !== id)); markDirty() }, [markDirty, setEdges])
+  const notifyMissingModel = useCallback((mode: 'text' | 'image' | 'video') => {
+    const label = mode === 'image' ? '生图' : mode === 'video' ? '视频' : '文字'
+    setNotice({ type: 'error', text: `管理员尚未开放${label}模型` })
+  }, [])
   const groupChildCounts = useMemo(() => {
     const counts = new Map<string, number>()
     nodes.forEach((node) => { if (node.data.groupId) counts.set(node.data.groupId, (counts.get(node.data.groupId) || 0) + 1) })
@@ -1514,9 +1545,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       contextSummary: generationContext ? { textCount: generationContext.textInputs.length, imageCount: generationContext.referenceImages.length } : undefined,
       textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
       videoModels: relayConfig.videoModels,
-      onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
+      onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onMissingModel: notifyMissingModel, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
     } }
-  }), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
+  }), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, notifyMissingModel, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
   const selectedNodeIds = useMemo(() => new Set(nodes.filter((node) => node.selected).map((node) => node.id)), [nodes])
   const selectedNodeCount = selectedNodeIds.size
   const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', className: selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target) ? 'connected' : edge.className, data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges, selectedNodeIds])
@@ -1661,11 +1692,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
         revision.current = 0
         persistedRevision.current = 0
         const loadedNodes = result.canvas.document.nodes.map(withNodeSize)
+        const loadedEdges = normalizeCanvasEdges(result.canvas.document.edges)
         setCurrent(result.canvas)
         setNodes(loadedNodes)
-        setEdges(result.canvas.document.edges)
+        setEdges(loadedEdges)
         replaceAssistantMessages(result.canvas.document.assistantMessages || [])
-        resetHistory(loadedNodes, result.canvas.document.edges)
+        resetHistory(loadedNodes, loadedEdges)
         setSaveState('saved')
         setBlockedReason(null)
       }
@@ -1870,7 +1902,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     if (state.fromNode && !state.toNode && state.to) createNodeFromConnection(state.fromNode.id, state.to)
   }, [createNodeFromConnection])
   const connect = useCallback((connection: Connection) => {
-    setEdges((items) => addEdge({ ...connection, type: 'bezier' }, items))
+    setEdges((items) => addEdge({ ...connection, type: 'bezier', data: { relation: 'context' } }, items))
     markDirty()
   }, [markDirty, setEdges])
   const changeNodes = useCallback((changes: NodeChange<CanvasNode>[]) => {

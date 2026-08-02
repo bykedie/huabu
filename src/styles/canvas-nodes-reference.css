@@ -444,17 +444,32 @@
   background: var(--canvas-node-selected) !important;
 }
 
-.react-flow__handle {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #faf9f6;
-  background: var(--canvas-node-handle);
-  box-shadow: 0 1px 4px rgba(41, 37, 36, .2);
+.canvas-node .react-flow__handle {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  opacity: 1;
+  box-shadow: 0 0 0 1px rgba(41, 37, 36, .2), 0 2px 7px rgba(41, 37, 36, .24);
+  transition: border-color .14s ease, background-color .14s ease, box-shadow .14s ease;
 }
 
-.react-flow__handle:hover,
-.react-flow__handle-connecting {
-  background: var(--canvas-node-selected);
+.canvas-node .react-flow__handle-left {
+  background: #0f766e;
+}
+
+.canvas-node .react-flow__handle-right {
+  background: #2563eb;
+}
+
+.canvas-node .react-flow__handle:hover,
+.canvas-node .react-flow__handle:focus-visible,
+.canvas-node .react-flow__handle.connectingfrom,
+.canvas-node .react-flow__handle.connectingto,
+.canvas-node .react-flow__handle.valid {
+  border-color: #f8fafc;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .22), 0 3px 10px rgba(41, 37, 36, .3);
 }
 
 .react-flow__edge-path {
@@ -577,6 +592,25 @@
 .workspace.theme-dark .node-resize-handle,
 .workspace.theme-dark .react-flow__handle {
   border-color: #181715;
+}
+
+.workspace.theme-dark .canvas-node .react-flow__handle {
+  width: 14px;
+  height: 14px;
+  border-width: 3px;
+  opacity: 1;
+}
+
+.workspace.theme-dark .canvas-node .react-flow__handle-left {
+  border-color: #181715;
+  background: #2dd4bf;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .32), 0 2px 8px rgba(0, 0, 0, .52);
+}
+
+.workspace.theme-dark .canvas-node .react-flow__handle-right {
+  border-color: #181715;
+  background: #60a5fa;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .32), 0 2px 8px rgba(0, 0, 0, .52);
 }
 
 .workspace.theme-dark .edge-delete {
