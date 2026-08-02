@@ -4,6 +4,109 @@
 > Last update: 2026-08-02, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
+## Active Goal: AI Runtime GitHub Delivery
+
+- Status: active; product commit pushed and remotely verified; documentation closeout pending
+- Started: 2026-08-02 22:30 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` at `3995f17d98fa1718d4084720674693e603757cb7`
+- Objective: review, normally commit and push the accepted AI runtime repair plus completed handoff/checkpoint documentation, then fetch and verify the remote full SHA without deploying production.
+- Current evidence: product commit `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098` was normally pushed and matched local HEAD, `origin/codex/infinite-canvas`, and GitHub `ls-remote` after fetch. Full tests `58/58`, production build, server syntax, diff, secret/NUL/artifact scans and real `3102/5182` health checks passed. Documentation closeout remains; detailed recovery is in `coordination/STATUS-ai-runtime-delivery.md`.
+
+## Completed Goal: AI Creation Runtime, Reference Context, and IME Input
+
+- Status: product implementation committed and pushed as `90e091a`; documentation closeout pending; production undeployed
+- Started: 2026-08-02 20:09 +08:00
+- Completed: 2026-08-02 22:00 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` at `3995f17d98fa1718d4084720674693e603757cb7`; existing documentation-only handoff changes are intentionally preserved; real `3102/5182` are already running
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: fix AI creation requests that time out while Canvas Assistant succeeds, make a visibly connected image count as a reference in real/legacy canvas data, and prevent Chinese punctuation or submission from being duplicated during IME composition.
+
+### Success Criteria
+
+- AI creation and Canvas Assistant use a compatible non-streaming text-relay contract, with focused Responses and Chat Completions regressions and no loss of idempotency, billing, or secret guards.
+- A manual image connection visible between an image node and an AI node remains typed reference context independent of direction; text mode displays the image count/preview and sends at most four validated references while result edges remain excluded.
+- Canvas Assistant leaves the in-progress value DOM-owned during IME composition, synchronizes it after composition, ignores composition/Windows `keyCode 229` Enter events, preserves Shift+Enter, and submits exactly once on an ordinary Enter without character-level deduplication.
+- Focused tests, production build, full tests, `git diff --check`, and isolated browser acceptance cover all three user-visible defects.
+- The real browser draft, real database, `.env`, user keys and existing `3102/5182` services remain untouched.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Analyze the one user screenshot | complete | Screenshot shows AI text generation timing out, a visible image-to-AI connection with `0 段文本`, and repeated punctuation/message behavior; no second image was opened |
+| Restore repository state and inspect actual paths | complete | Required recovery files, coordination statuses, Git, ports and text/context/input hotspots were inspected without reading real keys, `.env`, database contents or the real browser draft |
+| Add focused regressions and implement minimal fixes | complete | Text mode now exposes/sends references; Responses and Chat payloads are explicitly non-streaming and multimodal; composition values remain DOM-owned until completion and IME Enter handling is centralized in `src/ime.ts` |
+| Run automated and isolated browser acceptance | complete | Focused `17/17`, relay `5/5`, server `19/19`, full `58/58`, build, syntax and diff gates passed; one/two punctuation characters, one send/reply/relay call and fixture cleanup were accepted |
+| Synchronize final continuous handoff checkpoint | complete | Final seven-field checkpoint and durable product contracts are synchronized before goal completion |
+
+### Recovery Instructions
+
+The product repair is delivered to GitHub as `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098`; only the documentation closeout for the current delivery remains. Resume from `coordination/STATUS-ai-runtime-delivery.md`, `coordination/STATUS-ai-runtime.md`, this goal and the actual Git state. Isolated acceptance used ports `3143/3144`, a temporary SQLite database, a fictitious account/key and one synthetic 1x1 data URL; all were removed and the browser tab was closed. The browser verified punctuation value length and single submission but cannot fully emulate a real Windows Chinese IME candidate session, which remains a deployment-time spot check. Real `3102/5182` remained healthy and were not opened with a browser. Production deployment remains a separate user-directed goal.
+
+## Completed Goal: Continuous Handoff Checkpoint Protocol
+
+- Status: complete locally; included in the active documentation closeout
+- Started: 2026-08-02 19:24 +08:00
+- Completed: 2026-08-02 19:29 +08:00
+- Commander thread: current main thread
+- Baseline: documentation-only dirty worktree from the completed new-session handoff goal; no product code is in scope
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: turn handoff persistence into a mandatory continuous checkpoint protocol that runs after every completed goal and before any phase likely to exceed the current context.
+
+### Success Criteria
+
+- `HANDOFF.md` and `AGENTS.md` define both checkpoint triggers as mandatory and state that chat/tool state is not a durable substitute.
+- Every checkpoint has the fixed fields: current goal, completed, unfinished, latest verification, modified files, next action, and recovery commands.
+- The canonical storage location and synchronization responsibilities for coordination status, goal, plan, main status, memory and decisions are unambiguous.
+- A concrete checkpoint template and secret-free, read-only-first recovery-command template are available to replacement sessions.
+- Documentation consistency, encoding, historical-thread-ID, secret-boundary and diff checks pass; project build and full tests remain green.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Inspect existing checkpoint and recovery wording | complete | Existing files required status synchronization but lacked mandatory context-risk triggers and a fixed checkpoint schema |
+| Add the mandatory protocol and template | complete | `HANDOFF.md` and `AGENTS.md` define both triggers, canonical storage, the seven fixed fields and read-only-first recovery commands |
+| Synchronize durable preference, decision, goal, plan and statuses | complete | `PROJECT_MEMORY.md`, `DECISIONS.md`, this ledger, `PLAN.md`, `STATUS.md` and coordination status describe the same contract |
+| Run final documentation and project gates | complete | Build passed; full tests passed `55/55`; diff, encoding/NUL, historical-thread-ID, secret-signature and seven-field template checks passed |
+
+### Recovery Instructions
+
+This protocol is complete and is being delivered in the active documentation closeout. Future goals must follow `HANDOFF.md` section 1.4 and `AGENTS.md`: write a mid-goal checkpoint before context-risk work and a final checkpoint before completion.
+
+## Completed Goal: New Session Handoff and User Preferences
+
+- Status: complete locally; included in the active documentation closeout
+- Started: 2026-08-02 19:06 +08:00
+- Completed: 2026-08-02 19:19 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` at `3995f17d98fa1718d4084720674693e603757cb7`; worktree clean; real `3102/5182` already running
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: make a completely new Codex session able to take over the project from repository documents alone, including the current Git/product/deployment state, the user's goal-mode preference, the one-image context rule, security/data boundaries, and the operational pitfalls already encountered.
+
+### Success Criteria
+
+- `HANDOFF.md` begins with an explicit new-session takeover protocol and does not require or encourage reading historical thread IDs.
+- A takeover statement is recorded as explicit authorization to create a read-only Codex takeover-audit goal; non-trivial later tasks default to goal mode with recoverable plans and evidence.
+- User preferences, worker limits, screenshot rules, push/deployment distinctions, current HEAD, latest AI usability behavior, asset storage, production boundary, and known operational pitfalls are recorded consistently across mandatory project documents.
+- The handoff distinguishes authoritative current state from archived historical evidence and warns that actual worktree/code/tests override documentation.
+- Documentation consistency, historical-thread-ID removal, secret-boundary scanning, build, full tests, and `git diff --check` pass before completion.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Audit all recovery documents, coordination status, Git and running services | complete | Read the required documents and every coordination status; confirmed clean `3995f17` baseline and only real `3102/5182` listeners |
+| Rewrite the authoritative handoff entry | complete | New takeover protocol, goal-mode workflow, current checkpoint, preferences, data ownership, pitfalls, verification and report template are in `HANDOFF.md` |
+| Synchronize mandatory rules, memory, decisions, spec and status | complete | `AGENTS.md`, `PROJECT_MEMORY.md`, `DECISIONS.md`, `SPEC.md`, plan/status, coordination status and this goal are aligned |
+| Run final documentation and project gates | complete | Build passed; full tests passed `55/55`; `git diff --check`, UTF-8/NUL, historical-thread-ID and secret-boundary scans passed |
+
+### Recovery Instructions
+
+The handoff goal is complete and is being delivered in the active documentation closeout. A replacement session starts from `HANDOFF.md`, the mandatory recovery documents, and the actual Git state; it must not read, fork or restore historical thread IDs. Preserve the running real `3102/5182` processes and all existing data/secrets.
+
 ## Completed Goal: AI Creation Usability and Connection Handles
 
 - Status: GitHub delivery complete; production deployment pending
@@ -451,7 +554,7 @@ This goal is complete. Start the next accepted idea as a new recoverable goal, i
 - Status: complete
 - Started: 2026-07-31
 - Completed: 2026-07-31
-- Commander thread: `019fb394-3b22-7111-87ad-f4ae56f97411`
+- Commander thread: historical main acceptance thread; exact thread ID intentionally omitted from the recovery path
 - Objective: harden repeat installs, `h` operations, relay-secret migration, proxy trust, backup/restore boundaries and failure rollback, then verify, commit and push the current branch.
 
 ### Success Criteria

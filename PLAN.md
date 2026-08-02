@@ -1,5 +1,34 @@
 # Current Delivery Plan
 
+# Active AI Runtime GitHub Delivery Plan
+
+1. Complete: reviewed the complete worktree, existing handoff changes, remote, branch and baseline; no unrelated or temporary files are in scope.
+2. Complete: full `58/58`, build, server syntax, diff, secret/NUL/artifact and real-service health gates passed.
+3. In progress: product commit `90e091a` was normally pushed and remotely verified; create and push the reviewed documentation closeout with synchronized checkpoints.
+4. Pending: fetch and verify the final documentation HEAD, write the final delivery checkpoint and leave the worktree clean. Production deployment remains separate.
+
+# Completed AI Runtime Repair Plan
+
+1. Complete: analyzed the single user screenshot and separated the three observable failures from unproven root-cause assumptions.
+2. Complete: restored actual Git/runtime state and traced AI text requests, reference visibility/serialization, and IME/submit events.
+3. Complete: added failing focused regressions, then implemented explicit non-streaming relay requests, text-mode multimodal references, DOM-owned composition values and IME-safe Enter submission.
+4. Complete: focused/full automation and isolated browser acceptance passed, including one/two punctuation lengths and exactly one send/reply/relay call, without opening the real draft or reading real credentials; fixture ports and files were removed.
+5. Complete: synchronized the final seven-field checkpoint and durable handoff contracts before completing the goal.
+
+# Completed Continuous Handoff Checkpoint Plan
+
+1. Complete: inspected the existing handoff, goal workflow, memory and status rules; confirmed they lacked explicit context-risk triggers and the user's seven-field checkpoint schema.
+2. Complete: added the mandatory continuous checkpoint protocol, canonical storage rules, seven-field template and secret-free read-only-first recovery-command requirements.
+3. Complete: synchronized the durable user preference, project decision, goal, plan, main status and coordination checkpoint.
+4. Complete: build passed; full tests passed `55/55`; diff, encoding/NUL, historical-thread-ID, secret-signature and template-field checks passed; the final checkpoint was written before goal completion.
+
+# Completed New Session Handoff Plan
+
+1. Complete: read all mandatory recovery files and coordination statuses; verified the clean `3995f17` baseline and existing `3102/5182` services without opening images, browsers, secrets, databases or user drafts.
+2. Complete: replaced the stale handoff snapshot with an authoritative new-session takeover protocol, current Git/product/deployment checkpoint, user preferences, goal-mode workflow, data ownership, pitfalls and verification template.
+3. Complete: synchronized `AGENTS.md`, project memory, accepted baseline, durable decisions, goal ledger, main status and coordination status.
+4. Complete: historical-thread-ID, UTF-8/NUL and secret-boundary scans passed; build passed; full tests passed `55/55`; `git diff --check` passed with line-ending warnings only. The documentation changes remain local and uncommitted until the user requests delivery.
+
 # Completed AI Creation Usability Plan
 
 1. Complete: restored the clean `6f33bb3` baseline, read the required recovery documents and coordination files, inspected the relevant key/context/handle code, and passed the full `50/50` suite without reading images or secrets.

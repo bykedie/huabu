@@ -4,6 +4,22 @@
 
 Before editing, read `HANDOFF.md`, `GOALS.md`, `PROJECT_MEMORY.md`, `SPEC.md`, `PLAN.md`, `STATUS.md`, and `DECISIONS.md`. Then inspect the actual code, `git status`, and current test results. Documentation may lag behind code.
 
+## Goal Mode and New Session Takeover
+
+- The user prefers Codex goal mode for non-trivial project execution. Before editing, get the current goal and create or resume a recoverable goal with observable success criteria, bounded steps, blockers, and verification evidence.
+- A user statement such as `你去看一下项目的交接文档` or `现在这个项目由你来接管` is explicit authorization to create a project-takeover audit goal.
+- A new session restores state from this repository, the actual worktree, fresh tests, and running services. Do not read, fork, or recover old Codex thread IDs unless the user explicitly asks for that exact operation.
+- If the user requests takeover without a concrete implementation task, the first turn is read-only project intake: read the recovery documents, inspect Git/code/tests/ports, report the current state, and wait for the next task. Do not inspect images, open a browser, start servers, or implement features in that intake turn.
+- Keep `GOALS.md`, `PLAN.md`, `STATUS.md`, and the relevant coordination status synchronized during long tasks. Mark a goal complete only after all required implementation, verification, browser acceptance, documentation, and fixture cleanup are actually complete.
+
+## Continuous Handoff Checkpoint Protocol
+
+- An on-disk handoff checkpoint is mandatory in two cases: after every goal reaches completion, before reporting or marking it complete; and before continuing into any task or next phase that may exceed the current context window. If there is reasonable doubt that the next phase fits, write the checkpoint first.
+- Chat messages, tool goal state, and an in-memory plan do not replace the checkpoint. A replacement session must be able to resume from repository files without the preceding conversation.
+- Write the canonical live checkpoint to the relevant `coordination/STATUS-<goal>.md`, then synchronize the current summary in `GOALS.md`, `PLAN.md`, and `STATUS.md`. Update `HANDOFF.md`, `PROJECT_MEMORY.md`, or `DECISIONS.md` when the authoritative project state, a durable preference, or a durable decision changed.
+- Every checkpoint must explicitly record: current goal, completed work, unfinished work, latest verification results, modified files, exact next action, and concrete recovery commands. Recovery commands must include the workspace path and read-only state inspection before any mutation; never include secrets or destructive commands.
+- A mid-goal context checkpoint leaves the goal active and describes unfinished work precisely. A final checkpoint records all gates and cleanup, and must exist before the goal is marked complete or the final response is sent.
+
 ## Shared Workspace
 
 - The accepted delivery baseline is committed on `codex/infinite-canvas`. The worktree may become dirty during later tasks; never reset, checkout, or revert unrelated changes.
@@ -56,7 +72,7 @@ The main acceptance thread owns final browser screenshots, responsive checks, co
 
 ## Completed Three-Key Relay Contract
 
-The local three-user-key migration and commander browser acceptance completed on 2026-08-01. At this checkpoint the work is still unstaged, uncommitted, unpushed, and undeployed.
+The three-user-key migration and commander browser acceptance completed on 2026-08-01 and were later delivered to GitHub. This section preserves the current relay contract, not the latest Git or production deployment state; use `HANDOFF.md`, `STATUS.md`, and the actual Git state for that.
 
 - Text, image, and video runtime authentication uses the authenticated user's own encrypted key for that relay kind.
 - The server and administrator manage three independent relay addresses and open-model lists; they do not manage shared runtime keys.
