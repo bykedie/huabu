@@ -4,6 +4,37 @@
 > Last update: 2026-08-02, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
+## Completed Goal: AI Creation Usability and Connection Handles
+
+- Status: GitHub delivery complete; production deployment pending
+- Started: 2026-08-02 17:20 +08:00
+- Commander thread: current main thread
+- Baseline: local and `origin/codex/infinite-canvas` at `6f33bb30bfb49996eef6eb5601d985c10a02ec67`; worktree clean; full test suite `50/50` passed
+- Concurrency: one worker; no concurrent-worker exception has been approved for this goal
+- Objective: make node connection handles clearly visible, make a successful new-key test also leave the corresponding user relay key configured, and make a manually connected image become typed AI image/video reference context regardless of which endpoint the user starts dragging from.
+
+### Success Criteria
+
+- Left and right React Flow handles are always visible, circular, high contrast in light and dark themes, and have distinct input/output styling without changing node geometry or connection hit areas.
+- Testing a newly entered text, image, or video key first verifies it, then securely saves it and refreshes the public configured-state flags; a failed test never saves the key. Testing an already saved key remains a test-only action.
+- A manual connection between an AI node and an image/text/note node is normalized as context input independent of drag direction, while automatic `AI -> generated result` edges never flow back into generation context.
+- Existing encrypted per-user key isolation, relay ownership, canvas persistence compatibility, generation idempotency, and secret-reflection protections remain unchanged.
+- Focused regressions, `npm.cmd run build`, `npm.cmd test`, `git diff --check`, and isolated desktop/mobile browser acceptance pass before completion.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Restore state and record the active goal | complete | Required project documents, coordination status, current code, Git state and baseline `50/50` tests inspected; no image or real secret was read |
+| Add focused regressions | complete | Contract coverage now verifies test-then-save ordering, failure non-persistence, bidirectional manual context, generated-result exclusion, missing-model feedback, edge-role persistence and handle styling |
+| Implement scoped fixes | complete | `src/App.tsx`, `src/generation-context.ts` and the node reference CSS now implement the accepted behavior without changing relay ownership or secret handling |
+| Run automated and isolated browser acceptance | complete | Full `55/55`, build assets `index-Bo6TNF-x.css` and `index-DyRkLtAY.js`, and `git diff --check` passed; isolated desktop/mobile light/dark acceptance passed |
+| Synchronize recovery documents | complete | Final behavior, browser evidence, cleanup boundary and pending delivery state are recorded here and in the status files |
+
+### Recovery Instructions
+
+The accepted implementation is delivered in feature commit `7c774c1` on `origin/codex/infinite-canvas`; production remains undeployed. Resume from `coordination/STATUS-ai-usability.md`, this goal, `STATUS.md`, the actual Git state and fresh tests before any later production work. Browser acceptance used only an isolated database, synthetic account, fictitious key and local mock relay: a reverse `AI -> image` manual edge showed `1 张参考图`, generation called multipart `POST /v1/images/edits` with an `image` field, a result node was added, and an empty model list produced `管理员尚未开放生图模型`. The isolated tab was closed, its viewport override reset, ports `3133/3134` stopped, and the temporary fixture directory removed; real `3102/5182` were not targeted. Do not inspect real keys, `.env`, the production database or the real browser draft. The one-original-image-per-turn rule is a context-size limit, not a repeated authorization gate; this goal required no image review.
+
 ## Completed Goal: AI Creation Context and Canvas Node Interaction
 
 - Status: GitHub delivery complete; production undeployed

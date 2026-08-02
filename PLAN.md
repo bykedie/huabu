@@ -1,5 +1,16 @@
 # Current Delivery Plan
 
+# Completed AI Creation Usability Plan
+
+1. Complete: restored the clean `6f33bb3` baseline, read the required recovery documents and coordination files, inspected the relevant key/context/handle code, and passed the full `50/50` suite without reading images or secrets.
+2. Complete: added focused regressions for successful test-and-save behavior, test-failure non-persistence, drag-direction-independent manual context edges, generated-result exclusion, missing-model feedback, edge-role persistence, and visible circular handles.
+3. Complete: implemented scoped account-key, edge normalization/context collection, generated-result role and final node-handle CSS changes.
+4. Complete: final full tests passed `55/55`; production build emitted `index-Bo6TNF-x.css` and `index-DyRkLtAY.js`; `git diff --check` passed with line-ending warnings only.
+5. Complete: isolated desktop/mobile light/dark acceptance confirmed persistent circular handles, immediate configured-key state, reverse-edge reference recognition, multipart image editing with a reference field, generated result-node insertion, missing-model feedback, zero overflow and empty warning/error logs.
+6. Complete: isolated browser state and fixtures were removed; feature commit `7c774c1` and this delivery closeout were pushed normally to `origin/codex/infinite-canvas`. Production remains undeployed.
+
+# Completed AI Creation Context Plan
+
 1. Complete: reviewed all five user screenshots in separate turns and mapped the compact AI card, typography, node-local image toolbar, eight-way resize and dedicated drag behavior against the local AGPL reference.
 2. Complete: added `10/10` focused contracts for typed context, relay payloads, import classification, ready-image URL hiding, resize modes, AI structure, explicit drag handles, toolbar anchoring, dock avoidance and pointer isolation.
 3. Complete: implemented recursive typed generation context without changing saved document fields or relay ownership; only text/note enter prompts and at most four images remain typed references.

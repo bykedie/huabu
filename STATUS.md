@@ -2,6 +2,13 @@
 
 ## Current
 
+- The AI creation usability and connection-handle goal is complete on GitHub. Feature commit `7c774c1` was pushed normally to `origin/codex/infinite-canvas`; production remains undeployed.
+- Left/right handles are now always-visible 14px circular input/output markers with distinct colors and high-contrast light/dark interaction states. Mobile `390x844` and desktop geometry passed without page overflow.
+- Testing a newly entered text/image/video key now verifies first, saves only after success, refreshes configured state immediately and never saves a failed key. Existing saved-key tests remain test-only.
+- Manual connections are persisted as `context`, automatic generation edges as `result`; reverse `AI -> image/text` manual drags are normalized as inputs and result edges are excluded from future generation context.
+- Isolated browser acceptance showed `0 段文本 · 1 张图片`, `1 张参考图`, multipart `POST /v1/images/edits` with an `image` field, a successful result node, and explicit `管理员尚未开放生图模型` feedback when the model list was empty. No real key, user draft, production database or original image was opened.
+- Final evidence: full `55/55`, build assets `index-Bo6TNF-x.css` and `index-DyRkLtAY.js`, `git diff --check`, desktop/mobile light/dark checks, zero page overflow and empty browser warning/error logs. Recovery details are in `coordination/STATUS-ai-usability.md`.
+- Cleanup is complete: the isolated browser viewport was reset, its tab closed, fixture ports `3133/3134` stopped, and `.codex-acceptance-ai-usability` removed. Real `3102/5182` were not targeted and are rechecked separately.
 - The AI creation/context and canvas node-interaction goal is complete on GitHub. All five screenshots were reviewed one original image per turn; no screenshot remains pending and no derived image was created or inspected.
 - Baseline was clean `codex/infinite-canvas` at `77e8ceff63c49f9930e73bdb4f45cc6d9573e20a`. Feature commit `ca6ed672541b70c357edc5acd9cbbd84a1f43ddb` was pushed normally to `origin/codex/infinite-canvas`; production remains undeployed and no reset or unrelated cleanup was performed.
 - The implementation now includes typed recursive text/image context, a compact AI card, one system font stack, draft-or-image top import, hidden ready-image URLs, locked/free image rendering, eight-way resize, dedicated text/note/AI drag handles and a node-local clamped/self-scrolling image toolbar.
