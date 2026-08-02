@@ -2,7 +2,7 @@
 
 > 项目名：墨屿画布（Infinite Canvas）
 > 用途：供完全没有旧聊天上下文的新 Codex 会话接管项目。
-> 最后同步：2026-08-02 22:44，Asia/Shanghai。
+> 最后同步：2026-08-02 23:00，Asia/Shanghai。
 > 这份文件是接班入口，不是代码事实的替代品；实际工作树、代码、数据库契约和新鲜测试结果始终优先。
 
 ## 一、新会话接管协议
@@ -119,24 +119,24 @@ git diff -- <本目标修改文件>
 以下是写本文时的已验证状态。新会话仍必须重新运行 `git status`，因为本文更新本身可能形成新的未提交差异。
 
 - 分支：`codex/infinite-canvas`。
-- 产品功能提交已与 `origin/codex/infinite-canvas` 一致；交接文档正在做收尾提交。
+- AI 运行时产品、交接文档和最终交付检查点均已推送到 `origin/codex/infinite-canvas`，并在 fetch 后核对远端完整 SHA。
 - 已交付产品 HEAD：`90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098`。
 - 最新功能提交：`90e091a`，`fix: repair AI text runtime and IME input`。
-- 最新交付记录提交：`3995f17`，`docs: record AI usability delivery`。
+- 主要交接文档提交：`44dd2441a9df836277905fdf784aeda0ac725c32`，`docs: refresh project handoff and runtime delivery`；其后还有本轮最终检查点提交，以实际 `git rev-parse HEAD` 为准。
 - 最近完整自动化：`npm.cmd test` 通过 `58/58`。
 - 最近生产构建：`index-Bo6TNF-x.css`、`index-Bcuyr84L.js`。
 - 最近 `git diff --check` 通过，仅有 Windows LF/CRLF 转换提示。
 - 本地前端已在 `http://127.0.0.1:5182/` 运行。
 - 本地 API 已在 `http://127.0.0.1:3102/api/health` 运行。
 - 写本文时 `3000`、`5174` 没有被本项目占用；不得使用这两个端口。
-- AI 运行时产品修复已正常推送到 GitHub `90e091a`，并经 fetch 与 `ls-remote` 核对完整 SHA；当前交接文档收尾尚待提交推送，生产仍未更新。
+- AI 运行时产品修复 `90e091a`、主要交接文档 `44dd244` 和最终交付检查点均已正常推送，并经 fetch 与 `ls-remote` 核对完整 SHA；GitHub 交付没有剩余事项，生产仍未更新。
 - 最后单独核实的生产 SHA 仍是 `3f7b52d`。在完成一次新的生产更新和验收前，不得声称生产已包含后续 GitHub 功能。
 - 当前没有待分析的用户原始截图。
 - 本轮交接文档更新是文档任务，不代表新的产品功能或生产部署。
 
 ## 三、最近完成的产品修复
 
-### 3.1 AI 运行时修复（产品提交已推送，文档收尾中）
+### 3.1 AI 运行时修复（产品与交接文档均已推送）
 
 当前工作树修复了三个关联问题：
 

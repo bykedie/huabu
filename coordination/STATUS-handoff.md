@@ -48,3 +48,13 @@
 - 修改文件：`AGENTS.md`、`DECISIONS.md`、`GOALS.md`、`HANDOFF.md`、`PLAN.md`、`PROJECT_MEMORY.md`、`SPEC.md`、`STATUS.md`、`coordination/STATUS-handoff.md`、`coordination/STATUS-ai-runtime.md`、`coordination/STATUS-ai-runtime-delivery.md`。
 - 下一步：审查并提交所有文档差异，然后正常推送和 fetch 核对。
 - 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 coordination/STATUS-ai-runtime-delivery.md`; `git status --short --branch`; `git diff`; `git diff --cached`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`; `git diff --check`。
+
+## Checkpoint: 2026-08-02 23:00 +08:00
+
+- 当前目标：确认新会话交接文档与持续检查点协议已经作为 AI 运行时 GitHub 交付的一部分完成推送和远端核对。
+- 已完成：交接入口、用户偏好、持续检查点协议和项目踩坑已在主要文档提交 `44dd2441a9df836277905fdf784aeda0ac725c32` 中正常推送；最终交付检查点随后正常推送，并在 fetch 后确认本地 HEAD、`origin/codex/infinite-canvas` 与 GitHub `ls-remote` 完整 SHA 一致。
+- 未完成：无。生产部署不属于本目标，也没有被执行。
+- 最后验证结果：交付门禁为完整测试 `58/58`、生产构建、`node --check server/app.js`、`git diff --check`、秘密/NUL/临时产物扫描通过；真实 `3102/5182` 返回 HTTP 200，隔离 `3143/3144` 无监听；最终文档差异和 staged 差异检查通过。
+- 修改文件：交接主提交包含 `AGENTS.md`、`DECISIONS.md`、`GOALS.md`、`HANDOFF.md`、`PLAN.md`、`PROJECT_MEMORY.md`、`SPEC.md`、`STATUS.md`、`coordination/STATUS-handoff.md`、`coordination/STATUS-ai-runtime.md`、`coordination/STATUS-ai-runtime-delivery.md`；最终检查点提交只同步上述权威状态文档，不含产品代码或接手前未识别修改。
+- 下一步：新会话按 `HANDOFF.md` 的顺序只读恢复，并从实际 Git/代码/测试状态建立新的目标；只有用户明确要求时才另建生产部署目标。
+- 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 GOALS.md`; `Get-Content -Encoding UTF8 STATUS.md`; `Get-Content -Encoding UTF8 coordination/STATUS-ai-runtime-delivery.md`; `git status --short --branch`; `git log -5 --oneline --decorate`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`; `git -c http.proxy=http://127.0.0.1:7891 ls-remote origin refs/heads/codex/infinite-canvas`; `npm.cmd test`; `npm.cmd run build`; `git diff --check`。

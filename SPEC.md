@@ -1,6 +1,6 @@
 # Infinite Canvas Accepted Product Baseline
 
-> Status: visual, relay/public-HTTP, web-only relay, AI creation, AI usability, and AI runtime baselines are accepted and delivered to GitHub through product commit `90e091a` on 2026-08-02. Documentation closeout is in progress; production remains a separate, not-yet-completed update.
+> Status: visual, relay/public-HTTP, web-only relay, AI creation, AI usability, and AI runtime baselines are accepted and delivered to GitHub through product commit `90e091a` and handoff documentation commit `44dd244` on 2026-08-02. The GitHub delivery closeout is complete; production remains a separate, not-yet-completed update.
 
 ## Objective
 

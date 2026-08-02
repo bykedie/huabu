@@ -4,18 +4,19 @@
 > Last update: 2026-08-02, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
-## Active Goal: AI Runtime GitHub Delivery
+## Completed Goal: AI Runtime GitHub Delivery
 
-- Status: active; product commit pushed and remotely verified; documentation closeout pending
+- Status: complete; product, handoff documentation, and final delivery checkpoint pushed and remotely verified; production undeployed
 - Started: 2026-08-02 22:30 +08:00
+- Completed: 2026-08-02 23:00 +08:00
 - Commander thread: current main thread
 - Baseline: local and `origin/codex/infinite-canvas` at `3995f17d98fa1718d4084720674693e603757cb7`
 - Objective: review, normally commit and push the accepted AI runtime repair plus completed handoff/checkpoint documentation, then fetch and verify the remote full SHA without deploying production.
-- Current evidence: product commit `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098` was normally pushed and matched local HEAD, `origin/codex/infinite-canvas`, and GitHub `ls-remote` after fetch. Full tests `58/58`, production build, server syntax, diff, secret/NUL/artifact scans and real `3102/5182` health checks passed. Documentation closeout remains; detailed recovery is in `coordination/STATUS-ai-runtime-delivery.md`.
+- Current evidence: product commit `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098` and handoff documentation commit `44dd2441a9df836277905fdf784aeda0ac725c32` were normally pushed. The final checkpoint commit was then pushed and fetched before completion; local HEAD, `origin/codex/infinite-canvas`, and GitHub `ls-remote` matched the same full SHA. Full tests `58/58`, production build, server syntax, diff, secret/NUL/artifact scans and real `3102/5182` health checks passed. Detailed recovery is in `coordination/STATUS-ai-runtime-delivery.md`.
 
 ## Completed Goal: AI Creation Runtime, Reference Context, and IME Input
 
-- Status: product implementation committed and pushed as `90e091a`; documentation closeout pending; production undeployed
+- Status: product implementation committed and pushed as `90e091a`; handoff documentation delivered as `44dd244`; production undeployed
 - Started: 2026-08-02 20:09 +08:00
 - Completed: 2026-08-02 22:00 +08:00
 - Commander thread: current main thread
@@ -43,11 +44,11 @@
 
 ### Recovery Instructions
 
-The product repair is delivered to GitHub as `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098`; only the documentation closeout for the current delivery remains. Resume from `coordination/STATUS-ai-runtime-delivery.md`, `coordination/STATUS-ai-runtime.md`, this goal and the actual Git state. Isolated acceptance used ports `3143/3144`, a temporary SQLite database, a fictitious account/key and one synthetic 1x1 data URL; all were removed and the browser tab was closed. The browser verified punctuation value length and single submission but cannot fully emulate a real Windows Chinese IME candidate session, which remains a deployment-time spot check. Real `3102/5182` remained healthy and were not opened with a browser. Production deployment remains a separate user-directed goal.
+The product repair is delivered to GitHub as `90e091aab59bdbeaf8f3b8edcdc2e28bd06c8098`, and its main handoff documentation is delivered as `44dd2441a9df836277905fdf784aeda0ac725c32`; no GitHub delivery work remains. Resume from `coordination/STATUS-ai-runtime-delivery.md`, `coordination/STATUS-ai-runtime.md`, this goal and the actual Git state. Isolated acceptance used ports `3143/3144`, a temporary SQLite database, a fictitious account/key and one synthetic 1x1 data URL; all were removed and the browser tab was closed. The browser verified punctuation value length and single submission but cannot fully emulate a real Windows Chinese IME candidate session, which remains a deployment-time spot check. Real `3102/5182` remained healthy and were not opened with a browser. Production deployment remains a separate user-directed goal.
 
 ## Completed Goal: Continuous Handoff Checkpoint Protocol
 
-- Status: complete locally; included in the active documentation closeout
+- Status: complete and delivered to GitHub in `44dd244`
 - Started: 2026-08-02 19:24 +08:00
 - Completed: 2026-08-02 19:29 +08:00
 - Commander thread: current main thread
@@ -74,11 +75,11 @@ The product repair is delivered to GitHub as `90e091aab59bdbeaf8f3b8edcdc2e28bd0
 
 ### Recovery Instructions
 
-This protocol is complete and is being delivered in the active documentation closeout. Future goals must follow `HANDOFF.md` section 1.4 and `AGENTS.md`: write a mid-goal checkpoint before context-risk work and a final checkpoint before completion.
+This protocol is complete and delivered to GitHub in `44dd244`. Future goals must follow `HANDOFF.md` section 1.4 and `AGENTS.md`: write a mid-goal checkpoint before context-risk work and a final checkpoint before completion.
 
 ## Completed Goal: New Session Handoff and User Preferences
 
-- Status: complete locally; included in the active documentation closeout
+- Status: complete and delivered to GitHub in `44dd244`
 - Started: 2026-08-02 19:06 +08:00
 - Completed: 2026-08-02 19:19 +08:00
 - Commander thread: current main thread
@@ -105,7 +106,7 @@ This protocol is complete and is being delivered in the active documentation clo
 
 ### Recovery Instructions
 
-The handoff goal is complete and is being delivered in the active documentation closeout. A replacement session starts from `HANDOFF.md`, the mandatory recovery documents, and the actual Git state; it must not read, fork or restore historical thread IDs. Preserve the running real `3102/5182` processes and all existing data/secrets.
+The handoff goal is complete and delivered to GitHub in `44dd244`. A replacement session starts from `HANDOFF.md`, the mandatory recovery documents, and the actual Git state; it must not read, fork or restore historical thread IDs. Preserve the running real `3102/5182` processes and all existing data/secrets.
 
 ## Completed Goal: AI Creation Usability and Connection Handles
 
