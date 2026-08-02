@@ -331,16 +331,31 @@ const textRelayContent = (payload, protocol) => {
     ? payload.choices[0].message.content
     : null
 }
-async function callTextRelay(baseUrl, apiKey, model, messages, maxTokens, signal) {
+async function callTextRelay(baseUrl, apiKey, model, messages, maxTokens, references, signal) {
   const headers = { authorization: 'Bearer ' + apiKey, 'content-type': 'application/json' }
   const send = (path, body) => fetch(baseUrl + path, {
     method: 'POST', redirect: 'manual', signal, headers, body: JSON.stringify(body),
   })
-  let upstream = await send('/responses', { model, input: messages, max_output_tokens: maxTokens })
+  const withReferences = (protocol, references) => {
+    if (!references.length) return messages
+    let targetIndex = -1
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === 'user') { targetIndex = index; break }
+    }
+    const textBlock = protocol === 'responses'
+      ? { type: 'input_text', text: targetIndex >= 0 ? messages[targetIndex].content : '请分析参考图。' }
+      : { type: 'text', text: targetIndex >= 0 ? messages[targetIndex].content : '请分析参考图。' }
+    const imageBlocks = protocol === 'responses'
+      ? references.map((imageUrl) => ({ type: 'input_image', image_url: imageUrl }))
+      : references.map((url) => ({ type: 'image_url', image_url: { url } }))
+    if (targetIndex < 0) return [...messages, { role: 'user', content: [textBlock, ...imageBlocks] }]
+    return messages.map((message, index) => index === targetIndex ? { ...message, content: [textBlock, ...imageBlocks] } : message)
+  }
+  let upstream = await send('/responses', { model, input: withReferences('responses', references), max_output_tokens: maxTokens, stream: false })
   let protocol = 'responses'
   if ([404, 405].includes(upstream.status)) {
     await upstream.body?.cancel().catch(() => {})
-    upstream = await send('/chat/completions', { model, messages, max_tokens: maxTokens, stream: false })
+    upstream = await send('/chat/completions', { model, messages: withReferences('chat-completions', references), max_tokens: maxTokens, stream: false })
     protocol = 'chat-completions'
   }
   if (!upstream.ok) {
@@ -362,7 +377,7 @@ async function testTextRelay(baseUrl, apiKey, model) {
   const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 30000))
   try {
     const result = await callTextRelay(
-      baseUrl, apiKey, model, [{ role: 'user', content: 'Reply with OK.' }], 8, controller.signal,
+      baseUrl, apiKey, model, [{ role: 'user', content: 'Reply with OK.' }], 8, [], controller.signal,
     )
     return { ok: true, status: result.status, model }
   } catch (error) {
@@ -1087,15 +1102,23 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
         role: z.enum(['system', 'user', 'assistant']),
         content: z.string().max(100000),
       })).min(1).max(50),
+      references: z.array(z.string().max(1600000)).max(4).default([]),
       maxTokens: z.number().int().min(16).max(8192).default(1024),
     }), req.body)
+    const references = body.references.map((value, index) => {
+      const match = /^data:(image\/(?:png|jpe?g|webp));base64,([a-z0-9+/=]+)$/i.exec(value)
+      if (!match) throw fail(400, `参考图 ${index + 1} 不是可用的 PNG、JPEG 或 WebP 图片`)
+      const bytes = Buffer.from(match[2], 'base64')
+      if (!bytes.length || bytes.length > 1200000) throw fail(413, `参考图 ${index + 1} 不能超过 1.2 MB`)
+      return value
+    })
     const relay = relaySettings('text')
     const base = relay.baseUrl
     if (!base) throw fail(503, '管理员尚未配置文字中转站')
     const model = body.model || relay.models[0]
     if (!relay.models.includes(model)) throw fail(400, '该模型未开放')
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({ model, messages: body.messages, maxTokens: body.maxTokens }))
+      .update(JSON.stringify({ model, messages: body.messages, references, maxTokens: body.maxTokens }))
       .digest('hex')
     const key = userRelayApiKey(req.auth.sub, 'text')
     assertRelayValueSafe(model, key, '文字模型名称', 400)
@@ -1126,7 +1149,7 @@ app.post('/api/ai/chat', auth, async (req, res, next) => {
     }
     let relayResult
     try {
-      relayResult = await callTextRelay(base, key, model, body.messages, body.maxTokens, AbortSignal.timeout(aiTimeout))
+      relayResult = await callTextRelay(base, key, model, body.messages, body.maxTokens, references, AbortSignal.timeout(aiTimeout))
     } catch (error) {
       if (error?.status) throw error
       if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw fail(504, '中转站响应超时')

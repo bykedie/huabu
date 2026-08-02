@@ -207,6 +207,61 @@ test('text generation prefers Responses, parses both text forms, and limits Chat
   }
 })
 
+test('text relay sends bounded references through non-streaming Responses and Chat Completions payloads', async () => {
+  const textKey = 'synthetic-multimodal-user-key'
+  const directModel = 'responses-multimodal-model'
+  const fallbackModel = 'chat-multimodal-model'
+  const calls = []
+  const upstream = await listen(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    const payload = raw ? JSON.parse(raw) : {}
+    calls.push({ url: req.url, payload, authorization: req.headers.authorization })
+    res.setHeader('content-type', 'application/json')
+    if (req.url === '/multimodal/v1/responses' && payload.model === fallbackModel) {
+      res.statusCode = 404
+      return res.end(JSON.stringify({ error: 'responses unsupported for this model' }))
+    }
+    if (payload.stream !== false) return
+    if (req.url === '/multimodal/v1/responses') return res.end(JSON.stringify({ output_text: 'responses saw image' }))
+    if (req.url === '/multimodal/v1/chat/completions') return res.end(JSON.stringify({ choices: [{ message: { content: 'chat saw image' } }] }))
+    res.statusCode = 404
+    res.end(JSON.stringify({ error: 'missing' }))
+  })
+  try {
+    await saveKey(admin.token, 'text', textKey)
+    assert.equal((await request('/admin/text-config', {
+      token: admin.token, method: 'PUT',
+      body: JSON.stringify({ baseUrl: `${upstream.root}/multimodal/v1`, models: [directModel, fallbackModel] }),
+    })).status, 200)
+    const references = ['data:image/png;base64,iVBORw0KGgo=']
+    const generate = (requestKey, model, content) => request('/ai/chat', {
+      token: admin.token, method: 'POST',
+      body: JSON.stringify({ requestKey, model, messages: [{ role: 'user', content }], references, maxTokens: 128 }),
+    })
+
+    const direct = await generate('responses-multimodal-direct', directModel, 'inspect direct reference')
+    assert.equal(direct.status, 200)
+    assert.equal(direct.body.content, 'responses saw image')
+    const fallback = await generate('responses-multimodal-fallback', fallbackModel, 'inspect fallback reference')
+    assert.equal(fallback.status, 200)
+    assert.equal(fallback.body.content, 'chat saw image')
+
+    assert.equal(calls.every((call) => call.authorization === `Bearer ${textKey}`), true)
+    assert.equal(calls.every((call) => call.payload.stream === false), true)
+    assert.deepEqual(calls[0].payload.input.at(-1).content, [
+      { type: 'input_text', text: 'inspect direct reference' },
+      { type: 'input_image', image_url: references[0] },
+    ])
+    assert.deepEqual(calls.at(-1).payload.messages.at(-1).content, [
+      { type: 'text', text: 'inspect fallback reference' },
+      { type: 'image_url', image_url: { url: references[0] } },
+    ])
+  } finally {
+    await upstream.close()
+  }
+})
+
 test('video generation reserves zero site points when billing is disabled', async () => {
   const videoKey = 'synthetic-no-billing-video-key'
   const model = 'video-no-billing-model'

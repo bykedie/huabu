@@ -13,6 +13,7 @@ import {
 import { api, ApiError, session, User } from './api'
 import { classifyCanvasImportFiles } from './canvas-import'
 import { buildGenerationContext } from './generation-context'
+import { shouldSubmitImeEnter } from './ime'
 import { createUuid, shortRequestHash } from './uuid'
 
 type CanvasData = {
@@ -519,7 +520,7 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
       ) : data.kind === 'ai' ? (
         <div className="ai-body">
           <div className="ai-prompt-section nodrag"><span className="ai-section-label">提示词</span><textarea className="nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} /></div>
-          <div className="ai-context-section nodrag"><div className="ai-context-heading"><span className="ai-section-label">连接上下文</span><small>{data.contextSummary?.textCount || 0} 段文本{mode !== 'text' ? ` · ${data.contextSummary?.imageCount || 0} 张图片` : ''}</small></div>{mode !== 'text' && Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
+          <div className="ai-context-section nodrag"><div className="ai-context-heading"><span className="ai-section-label">连接上下文</span><small>{data.contextSummary?.textCount || 0} 段文本 · {data.contextSummary?.imageCount || 0} 张图片</small></div>{Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
           <div className="ai-settings-section nodrag"><span className="ai-section-label">生成设置</span><div className="generator-settings">
               <select aria-label={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} title={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : mode === 'video' ? { videoModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
               {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
@@ -1024,12 +1025,21 @@ function CanvasAssistantPanel({ open, messages, busy, contextCount, models, mode
   onClear: () => void
 }) {
   const [value, setValue] = useState('')
-  const submit = (event: FormEvent) => { event.preventDefault(); const content = value.trim(); if (!content || !model || busy) return; setValue(''); onSend(content, model) }
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const composingRef = useRef(false)
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const content = (composerRef.current?.value || '').trim()
+    if (composingRef.current || !content || !model || busy) return
+    if (composerRef.current) composerRef.current.value = ''
+    setValue('')
+    onSend(content, model)
+  }
   return <aside className={'canvas-assistant ' + (open ? 'open' : '')} aria-hidden={!open} onClick={(event) => event.stopPropagation()}>
     <header><span><MessageSquare size={16} /><strong>画布助手</strong></span><div>{messages.length > 0 && <button title="清空对话" aria-label="清空对话" onClick={onClear}><Trash2 size={15} /></button>}<button title="收起助手" aria-label="收起助手" onClick={onClose}><PanelRightClose size={16} /></button></div></header>
     <div className="assistant-context"><span>{contextCount ? `已聚焦 ${contextCount} 个节点` : '基于整张画布'}</span><select aria-label="画布助手文字模型" title="文字模型" value={model} onChange={(event) => onModel(event.target.value)}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select></div>
     <div className="assistant-messages">{messages.length === 0 ? <div className="assistant-empty"><Sparkles size={22} /><strong>从画布继续思考</strong></div> : messages.map((message) => <article className={message.role} key={message.id}><div>{message.content}</div>{message.role === 'assistant' && <footer><button onClick={() => onInsertText(message.content)}><Text size={13} />放入画布</button><button onClick={() => onCreateImage(message.content)}><Image size={13} />转为生图</button></footer>}</article>)}{busy && <article className="assistant loading"><div>正在整理画布内容…</div></article>}</div>
-    <form className="assistant-composer" onSubmit={submit}><textarea className="nodrag nowheel" aria-label="询问画布助手" placeholder="描述下一步创作方向…" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} /><button title="发送" aria-label="发送" disabled={busy || !model || !value.trim()}><Send size={17} /></button></form>
+    <form className="assistant-composer" onSubmit={submit}><textarea ref={composerRef} className="nodrag nowheel" aria-label="询问画布助手" placeholder="描述下一步创作方向…" defaultValue="" onInput={(event) => { if (!composingRef.current) setValue(event.currentTarget.value) }} onCompositionStart={() => { composingRef.current = true }} onCompositionEnd={(event) => { composingRef.current = false; setValue(event.currentTarget.value) }} onKeyDown={(event) => { const nativeEvent = event.nativeEvent; if (!shouldSubmitImeEnter({ key: event.key, shiftKey: event.shiftKey, isComposing: composingRef.current || nativeEvent.isComposing, keyCode: nativeEvent.keyCode })) return; event.preventDefault(); event.currentTarget.form?.requestSubmit() }} /><button title="发送" aria-label="发送" disabled={busy || !model || !value.trim()}><Send size={17} /></button></form>
   </aside>
 }
 
@@ -1451,9 +1461,11 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     setNodeBusy(id, true)
     try {
       if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
-      const finalPrompt = buildGenerationContext(id, prompt, nodesRef.current, edgesRef.current).prompt
-      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, 'text:' + (model || '') + ':' + finalPrompt)
-      const result = await api<{ content: string; charged: number; cached: boolean }>('/ai/chat', { method: 'POST', body: JSON.stringify({ requestKey, model, messages: [{ role: 'user', content: finalPrompt }], maxTokens: 1024 }) })
+      const context = buildGenerationContext(id, prompt, nodesRef.current, edgesRef.current)
+      const references = await Promise.all(context.referenceImages.map((item) => referenceImageDataUrl(item.imageUrl)))
+      const requestContent = JSON.stringify({ model: model || '', prompt: context.prompt, references })
+      const { requestKey, storageKey } = await aiRequestKey(canvasId, id, 'text:' + requestContent)
+      const result = await api<{ content: string; charged: number; cached: boolean }>('/ai/chat', { method: 'POST', body: JSON.stringify({ requestKey, model, messages: [{ role: 'user', content: context.prompt }], references, maxTokens: 1024 }) })
       if (activeCanvasId.current === canvasId) { setNodeBusy(id, false); appendResultNode(id, { kind: 'text', title: `文字结果${model ? ` · ${model}` : ''}`, content: result.content }) }
       resolvedAIKeys.current.set(storageKey, revision.current)
       await refreshUser()
@@ -1541,7 +1553,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       ...node.data,
       hovered: hoveredNodeId === node.id,
       groupChildCount: node.data.kind === 'group' ? groupChildCounts.get(node.id) || 0 : undefined,
-      referenceImages: generationContext && (node.data.mode === 'image' || node.data.mode === 'video') ? generationContext.referenceImages : undefined,
+      referenceImages: generationContext ? generationContext.referenceImages : undefined,
       contextSummary: generationContext ? { textCount: generationContext.textInputs.length, imageCount: generationContext.referenceImages.length } : undefined,
       textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
       videoModels: relayConfig.videoModels,

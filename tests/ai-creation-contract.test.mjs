@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { buildGenerationContext } from '../src/generation-context.ts'
 import { classifyCanvasImportFiles } from '../src/canvas-import.ts'
+import { shouldSubmitImeEnter } from '../src/ime.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const appSource = readFileSync(join(root, 'src', 'App.tsx'), 'utf8')
@@ -106,7 +107,7 @@ test('AI creation reports a missing administrator model instead of becoming a de
   assert.match(appSource, /onMissingModel:\s*notifyMissingModel/)
 })
 
-test('text generation submits text context while image and video share typed references', () => {
+test('text image and video generation all submit typed image references', () => {
   const textStart = appSource.indexOf('const runAI = useCallback')
   const imageStart = appSource.indexOf('const runImage = useCallback', textStart)
   const videoStart = appSource.indexOf('const runVideo = useCallback', imageStart)
@@ -115,12 +116,48 @@ test('text generation submits text context while image and video share typed ref
   const imageSource = appSource.slice(imageStart, videoStart)
   const videoSource = appSource.slice(videoStart, deleteEdgeStart)
 
-  assert.match(textSource, /buildGenerationContext[^;]*\.prompt/)
-  assert.doesNotMatch(textSource, /referenceImages|references/)
+  for (const source of [textSource, imageSource, videoSource]) {
+    assert.match(source, /context\.referenceImages/)
+    assert.match(source, /referenceImageDataUrl/)
+    assert.match(source, /body:\s*JSON\.stringify\(\{[\s\S]*?references/)
+  }
   for (const source of [imageSource, videoSource]) {
     assert.match(source, /context\.referenceImages/)
     assert.match(source, /body:\s*JSON\.stringify\(\{[^}]*prompt:\s*context\.prompt[^}]*references/s)
   }
+})
+
+test('AI text mode keeps connected image count and reference previews visible', () => {
+  const contextStart = appSource.indexOf('<div className="ai-context-section nodrag">')
+  const settingsStart = appSource.indexOf('<div className="ai-settings-section nodrag">', contextStart)
+  const contextSource = appSource.slice(contextStart, settingsStart)
+
+  assert.notEqual(contextStart, -1)
+  assert.match(contextSource, /imageCount/)
+  assert.match(contextSource, /referenceImages\?\.length/)
+  assert.doesNotMatch(contextSource, /mode !== 'text'/)
+  assert.match(appSource, /referenceImages:\s*generationContext\s*\?\s*generationContext\.referenceImages\s*:\s*undefined/)
+})
+
+test('assistant composition keeps DOM-owned input and ignores IME Enter submission', () => {
+  const panelStart = appSource.indexOf('function CanvasAssistantPanel')
+  const modalStart = appSource.indexOf('function ImageToolModal', panelStart)
+  const source = appSource.slice(panelStart, modalStart)
+
+  assert.match(source, /onCompositionStart/)
+  assert.match(source, /onCompositionEnd/)
+  assert.match(source, /ref=\{composerRef\}/)
+  assert.match(source, /defaultValue=""/)
+  assert.match(source, /onInput=\{\(event\) => \{ if \(!composingRef\.current\) setValue\(event\.currentTarget\.value\) \}\}/)
+  assert.doesNotMatch(source, /value=\{value\} onChange=/)
+  assert.match(source, /composerRef\.current\?\.value/)
+  assert.match(source, /composerRef\.current\.value = ''/)
+  assert.match(source, /nativeEvent\.isComposing/)
+  assert.match(source, /shouldSubmitImeEnter/)
+  assert.equal(shouldSubmitImeEnter({ key: 'Enter', shiftKey: false, isComposing: true, keyCode: 13 }), false)
+  assert.equal(shouldSubmitImeEnter({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 229 }), false)
+  assert.equal(shouldSubmitImeEnter({ key: 'Enter', shiftKey: true, isComposing: false, keyCode: 13 }), false)
+  assert.equal(shouldSubmitImeEnter({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13 }), true)
 })
 
 test('top import classifies one draft or an image group without mixing them', () => {
