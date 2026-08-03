@@ -2,7 +2,7 @@
 
 > 项目名：墨屿画布（Infinite Canvas）
 > 用途：供完全没有旧聊天上下文的新 Codex 会话接管项目。
-> 最后同步：2026-08-03 15:34，Asia/Shanghai。
+> 最后同步：2026-08-03 16:52，Asia/Shanghai。
 > 这份文件是接班入口，不是代码事实的替代品；实际工作树、代码、数据库契约和新鲜测试结果始终优先。
 
 ## 一、新会话接管协议
@@ -118,13 +118,13 @@ git diff -- <本目标修改文件>
 
 以下是写本文时的已验证状态。新会话仍必须重新运行 `git status`，因为本文更新本身可能形成新的未提交差异。
 
-- 分支：`codex/infinite-canvas`；本轮已完成目标从本地与 `origin/codex/infinite-canvas` 共同基线 `302b1b10a1922ff651c421ad51bafe677a8eeb0a` 开始。
-- 工作树当前有未提交实现和文档修改；不得重置、覆盖或把较早“工作树干净”的历史记录当作现状。详细恢复见 `coordination/STATUS-image-relay-performance-sizes.md`。
+- 分支：`codex/infinite-canvas`；图片中转/性能/尺寸产品提交 `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` 已正常推送，并在 fetch 后由本地 HEAD、远端跟踪和 GitHub `ls-remote` 三方核对一致。
+- 产品提交后的工作树干净；本次最终交付检查点会形成最后一个文档提交，推送后必须再次 fetch 并核对远端完整 SHA。详细恢复见 `coordination/STATUS-image-relay-performance-delivery.md`。
 - 已实现：新部署三类中转地址/模型为空；图片独立 300 秒超时和 360 秒恢复阈值；常见 1K/2K/4K 尺寸白名单；画布保存与参考图预处理并行；编辑请求不再强制 PNG/base64；上游 base64 原图进入服务器 `media` 并返回签名 URL。管理员明确保存在 SQLite 的地址仍优先，不会被清空。
 - 最终自动化证据：AI 创作契约 `22/22`、生产配置 `12/12`、中转现代化 `5/5`、服务端 `20/20`、完整套件 `64/64`、Node 语法、生产 build、`git diff --check`、NUL/秘密形态检查均通过。build 产物为 `index-BX6NdpM7.css` 与 `index-B51-mZWZ.js`，只有既有 500 kB chunk warning。
 - 隔离浏览器验收已完成：桌面确认 13 个尺寸项、`3840x2160`、1 张连接参考图、multipart `/v1/images/edits`、签名媒体结果与资产收藏；`390x844` 确认 `2160x3840` 可选、长标签/创作框/Dock/资源面板无冲突、页面横向溢出为 0、console warning/error 为空。竖向值的上游原样透传另由服务端测试覆盖。
 - 隔离标签已关闭并复位 viewport；已精确停止 PID `21384/18004`，删除 `.codex-acceptance-image-performance`，确认 `3152/3153` 无监听。真实 API `3102` 和前端 `5182` 未重启、未修改，最终仍返回 HTTP 200。不得占用 `3000` 或 `5174`。
-- 本目标不包含 GitHub 推送或生产部署。最后单独核实的生产 SHA 仍是 `3f7b52d`；在新的生产更新和验收完成前，不得声称生产已包含本轮功能。
+- 本目标已经完成 GitHub 推送，但不包含生产部署。最后单独核实的生产 SHA 仍是 `3f7b52d`；在新的生产更新和验收完成前，不得声称生产已包含本轮功能。
 - 当前没有待分析的用户原始截图；本目标没有查看用户原始图片。
 
 ## 三、最近完成的产品修复

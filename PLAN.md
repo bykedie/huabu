@@ -1,11 +1,11 @@
 # Current Delivery Plan
 
-# Active Image Relay, Performance, and Sizes GitHub Delivery Plan
+# Completed Image Relay, Performance, and Sizes GitHub Delivery Plan
 
 1. Complete: fetched `origin/codex/infinite-canvas` and confirmed local HEAD, tracking, and GitHub `ls-remote` remain at `302b1b1` with `0/0` divergence.
-2. In progress: re-run final delivery gates, stage the accepted product/tests/docs scope, and create a normal commit.
-3. Pending: push normally, fetch, and verify local/tracking/`ls-remote` full SHAs match.
-4. Pending: write, commit, push, fetch, and verify the final seven-field delivery checkpoint; production remains separate.
+2. Complete: fresh production build, full `64/64`, syntax, diff, NUL/secret and real-service checks passed; staged scope was reviewed and committed as `934c2c8`.
+3. Complete: normal push succeeded, then fetch confirmed local HEAD, tracking and GitHub `ls-remote` all at full SHA `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` with `0/0` divergence.
+4. Complete: final seven-field delivery checkpoint synchronized for its own normal commit and push; production remains separate and undeployed.
 
 # Completed Image Relay, Performance, and Sizes Plan
 

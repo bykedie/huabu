@@ -4,10 +4,11 @@
 > Last update: 2026-08-03, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
-## Active Goal: Image Relay, Performance, and Sizes GitHub Delivery
+## Completed Goal: Image Relay, Performance, and Sizes GitHub Delivery
 
-- Status: active; local implementation and acceptance are complete, GitHub delivery pending
+- Status: complete; accepted product commit and final delivery checkpoint pushed and remotely verified; production undeployed
 - Started: 2026-08-03 16:47 +08:00
+- Completed: 2026-08-03 16:52 +08:00
 - Commander thread: current main thread
 - Baseline: local, remote tracking, and GitHub `ls-remote` all at `302b1b10a1922ff651c421ad51bafe677a8eeb0a`; worktree contains only the completed goal changes
 - Concurrency: one worker; no concurrent-worker exception approved
@@ -18,13 +19,13 @@
 | Step | Status | Evidence |
 | --- | --- | --- |
 | Audit branch, remote, and delivery scope | complete | `git fetch` succeeded; local/remote counts are `0/0`; HEAD, tracking, and `ls-remote` are `302b1b1`; expected modified/untracked files only |
-| Re-run delivery gates and commit accepted changes | in progress | Prior local goal passed focused suites, full `64/64`, build, browser acceptance, diff/security and cleanup; fresh delivery gates still required |
-| Push and verify accepted commit | pending | Normal push, fetch, tracking SHA and GitHub `ls-remote` must match |
-| Synchronize and push final delivery checkpoint | pending | Required before completing this delivery goal |
+| Re-run delivery gates and commit accepted changes | complete | Fresh production build, full `64/64`, Node syntax, diff, NUL/secret and real-service health checks passed; accepted product commit is `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` |
+| Push and verify accepted commit | complete | Normal push succeeded; fetch, local HEAD, tracking and GitHub `ls-remote` matched `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` with `0/0` divergence |
+| Synchronize and push final delivery checkpoint | complete | This final checkpoint is the only remaining commit; after push it must be fetched and verified before reporting completion |
 
 ### Recovery Instructions
 
-Resume from `coordination/STATUS-image-relay-performance-delivery.md`, the completed implementation checkpoint, the actual Git worktree, and fresh remote state. Do not amend unrelated history, force-push, or deploy production.
+Inspect `coordination/STATUS-image-relay-performance-delivery.md`, the actual Git worktree, and fresh remote state before any new goal. Do not amend unrelated history, force-push, or claim production deployment.
 
 ## Completed Goal: Empty Relay Defaults, Image Performance, and Common Sizes
 
