@@ -1,5 +1,20 @@
 # Current Delivery Plan
 
+# Active Image Relay, Performance, and Sizes GitHub Delivery Plan
+
+1. Complete: fetched `origin/codex/infinite-canvas` and confirmed local HEAD, tracking, and GitHub `ls-remote` remain at `302b1b1` with `0/0` divergence.
+2. In progress: re-run final delivery gates, stage the accepted product/tests/docs scope, and create a normal commit.
+3. Pending: push normally, fetch, and verify local/tracking/`ls-remote` full SHAs match.
+4. Pending: write, commit, push, fetch, and verify the final seven-field delivery checkpoint; production remains separate.
+
+# Completed Image Relay, Performance, and Sizes Plan
+
+1. Complete: restored the clean `302b1b1` baseline, confirmed healthy real services, identified the fixed image-address fallback and the current three-size contract, and wrote the required mid-goal checkpoint.
+2. Complete: inspected the reference repository without images, traced canvas flush/reference processing, measured representative JSON/base64 overhead, and separated local delay from upstream model latency.
+3. Complete: added red contracts for empty fresh relay addresses, preserved explicit database configuration, common size forwarding, independent image timeout/recovery, edit payload compatibility and original-byte media persistence.
+4. Complete: implemented the scoped server, frontend, environment/deployment, test and durable-document changes; retained backward-compatible text recovery settings and existing SQLite administrator addresses.
+5. Complete: isolated desktop and `390x844` mobile acceptance passed with a temporary database/mock relay; the tab and viewport override were cleared, fixture PIDs/ports/directory were removed, final `64/64`, build, syntax, diff, NUL/security and real-service health gates passed, and the final checkpoint was synchronized.
+
 # Completed Reference Creation Controls GitHub Delivery Plan
 
 1. Complete: reviewed the complete accepted worktree, branch, remote and `bd36358` baseline; no unrelated code or temporary fixture is in scope.

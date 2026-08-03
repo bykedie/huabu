@@ -11,6 +11,7 @@ process.env.JWT_SECRET = 'relay-modernization-test-secret-32-bytes'
 process.env.WELCOME_POINTS = '100'
 process.env.REGISTRATION_RATE_LIMIT = '100'
 process.env.AI_TIMEOUT_MS = '1000'
+process.env.AI_IMAGE_MAX_RESPONSE_BYTES = '2048'
 process.env.AI_VIDEO_TIMEOUT_MS = '30000'
 process.env.AI_VIDEO_POLL_MS = '10'
 process.env.AI_VIDEO_MAX_RESPONSE_BYTES = '2048'
@@ -69,16 +70,21 @@ async function listen(handler) {
 
 const admin = await register('Relay Admin', 'relay-modernization-admin@example.com')
 
-test('fresh relay configuration has no built-in text or image models', async () => {
+test('fresh relay configuration has no built-in addresses or models', async () => {
   const config = await request('/config', { token: admin.token })
   assert.equal(config.status, 200)
   assert.deepEqual(config.body.textModels, [])
   assert.deepEqual(config.body.imageModels, [])
+  assert.deepEqual(config.body.videoModels, [])
 
   const overview = await request('/admin/overview', { token: admin.token })
   assert.equal(overview.status, 200)
+  assert.equal(overview.body.text.baseUrl, '')
+  assert.equal(overview.body.image.baseUrl, '')
+  assert.equal(overview.body.video.baseUrl, '')
   assert.deepEqual(overview.body.text.models, [])
   assert.deepEqual(overview.body.image.models, [])
+  assert.deepEqual(overview.body.video.models, [])
 })
 
 test('text, image, and video model discovery use the administrator corresponding user key', async () => {

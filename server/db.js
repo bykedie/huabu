@@ -173,12 +173,13 @@ export function changeBalance(userId, amount, kind, reference = null, note = nul
   return next
 }
 
-export function recoverPendingGenerations(minAgeMs = 0, videoMinAgeMs = minAgeMs) {
+export function recoverPendingGenerations(minAgeMs = 0, videoMinAgeMs = minAgeMs, imageMinAgeMs = minAgeMs) {
   return transaction(() => {
     const minimumAgeSeconds = Math.max(0, Math.ceil(minAgeMs / 1000))
     const videoMinimumAgeSeconds = Math.max(0, Math.ceil(videoMinAgeMs / 1000))
-    const pending = db.prepare("SELECT id,user_id,reserved,kind FROM generations WHERE status='pending' AND ((kind='video' AND created_at <= datetime('now', ?)) OR (kind<>'video' AND created_at <= datetime('now', ?)))")
-      .all(`-${videoMinimumAgeSeconds} seconds`, `-${minimumAgeSeconds} seconds`)
+    const imageMinimumAgeSeconds = Math.max(0, Math.ceil(imageMinAgeMs / 1000))
+    const pending = db.prepare("SELECT id,user_id,reserved,kind FROM generations WHERE status='pending' AND ((kind='video' AND created_at <= datetime('now', ?)) OR (kind='image' AND created_at <= datetime('now', ?)) OR (kind NOT IN ('video','image') AND created_at <= datetime('now', ?)))")
+      .all(`-${videoMinimumAgeSeconds} seconds`, `-${imageMinimumAgeSeconds} seconds`, `-${minimumAgeSeconds} seconds`)
     let recovered = 0
     for (const item of pending) {
       const result = db.prepare("UPDATE generations SET status='failed' WHERE id=? AND status='pending'").run(item.id)

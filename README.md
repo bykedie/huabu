@@ -30,28 +30,31 @@ npm.cmd run dev
 开发环境未配置 `ADMIN_SETUP_TOKEN` 时，第一个账号会获得管理员权限。生产环境必须配置初始化码，站长首次注册时填写该值；管理员创建成功后可从 `.env` 删除 `ADMIN_SETUP_TOKEN` 并重启。点击右上角齿轮可配置三类中转地址、获取上游模型、选择开放模型并查看操作审计。
 
 生产示例默认 `WELCOME_POINTS=0`。站点尚未接入邮箱验证时不建议赠送注册积分，否则用户可通过批量注册重复领取。
-服务端默认限制每个账号 100 张画布、200 个素材，单画布或单素材 2 MiB，画布与素材合计 20 MiB；视频媒体另设每账号 512 MiB 配额，单个视频上传或中转响应默认最多 64 MiB。系统还限制同一来源 IP 每 15 分钟成功注册 5 次。登录失败会按账号持久计数，15 分钟内连续失败 5 次后锁定 15 分钟，更换来源 IP 不能绕过。可按服务器磁盘和业务套餐调整 `.env` 中的 `MAX_CANVASES_PER_USER`、`MAX_ASSETS_PER_USER`、`MAX_CANVAS_BYTES`、`MAX_USER_STORAGE_BYTES`、`AI_VIDEO_MAX_RESPONSE_BYTES`、`MAX_USER_MEDIA_BYTES` 和 `REGISTRATION_RATE_LIMIT`；`MAX_USER_MEDIA_BYTES` 不得低于 `AI_VIDEO_MAX_RESPONSE_BYTES`，也不要只依赖前端限制。
+服务端默认限制每个账号 100 张画布、200 个素材，单画布或单素材 2 MiB，画布与素材合计 20 MiB；生成图片原始字节和视频媒体共用每账号 512 MiB 的媒体配额，单次图片 JSON 响应默认最多 50 MiB，单个视频上传或中转响应默认最多 64 MiB。系统还限制同一来源 IP 每 15 分钟成功注册 5 次。登录失败会按账号持久计数，15 分钟内连续失败 5 次后锁定 15 分钟，更换来源 IP 不能绕过。可按服务器磁盘和业务套餐调整 `.env` 中的 `MAX_CANVASES_PER_USER`、`MAX_ASSETS_PER_USER`、`MAX_CANVAS_BYTES`、`MAX_USER_STORAGE_BYTES`、`AI_IMAGE_MAX_RESPONSE_BYTES`、`AI_VIDEO_MAX_RESPONSE_BYTES`、`MAX_USER_MEDIA_BYTES` 和 `REGISTRATION_RATE_LIMIT`；`MAX_USER_MEDIA_BYTES` 不得低于图片与视频两类单次响应上限，也不要只依赖前端限制。
 用户可点击右上角“API 密钥”或侧栏头像进入“账户安全”，修改密码，并分别保存、测试或清除自己的文字、图片、视频 API 密钥。密钥提交后只返回是否已配置，不返回明文；密码修改成功后，其他设备上的旧登录令牌会立即失效。
 运营管理会记录中转配置等后台操作，包含操作者与时间；审计记录由数据库禁止更新或删除。
 
 ## 对接中转站
 
-复制 `.env.example` 为 `.env`，至少设置两个部署秘密。中转地址与开放模型推荐在管理员登录后的网页“运营管理”中配置；新部署不预设文字或图片模型：
+复制 `.env.example` 为 `.env`，至少设置两个部署秘密。中转地址与开放模型推荐在管理员登录后的网页“运营管理”中配置；新部署的文字、图片、视频中转地址和模型列表全部为空：
 
 ~~~dotenv
 JWT_SECRET=使用随机生成的长密钥
 ADMIN_SETUP_TOKEN=使用另一个随机生成的长初始化码
 SITE_BILLING_ENABLED=0
+AI_BASE_URL=
+AI_IMAGE_BASE_URL=
+AI_VIDEO_BASE_URL=
 AI_MODELS=
 AI_IMAGE_MODELS=
 AI_VIDEO_MODELS=
 ~~~
 
-文字会优先调用服务器配置地址下的 `/responses`，只有上游明确返回 404/405 才回退 `/chat/completions`；图片生成调用 `/images/generations`，参考图编辑调用 `/images/edits`，视频调用 `/videos` 并按任务状态轮询。每次请求都使用当前登录用户在“账户安全”保存的对应类型密钥；三类密钥只在服务端加密保存，不会出现在运营管理、`h` 输出或 API 响应中。管理员在网页“运营管理”填写三类地址，点击“获取上游模型”后重新勾选开放模型；每次重新获取都会替换候选并清空旧勾选。
+文字会优先调用服务器配置地址下的 `/responses`，只有上游明确返回 404/405 才回退 `/chat/completions`；图片生成调用 `/images/generations`，参考图编辑调用 `/images/edits`，视频调用 `/videos` 并按任务状态轮询。图片支持自动、1K 常见方形/横竖比例、2K 1:1/16:9/9:16 和 4K 16:9/9:16 预设；实际是否支持仍由管理员开放的上游模型决定。每次请求都使用当前登录用户在“账户安全”保存的对应类型密钥；三类密钥只在服务端加密保存，不会出现在运营管理、`h` 输出或 API 响应中。管理员在网页“运营管理”填写三类地址，点击“获取上游模型”后重新勾选开放模型；每次重新获取都会替换候选并清空旧勾选。
 
 视频结果默认只允许从 `AI_VIDEO_BASE_URL` 的精确 origin 下载。如果中转站返回独立媒体 CDN，可在 `AI_VIDEO_MEDIA_ORIGINS` 中填写逗号分隔的精确 origin，例如 `https://media.example.com`；不得包含路径、凭据、查询参数或片段。应用会逐跳检查重定向与解析地址，拒绝回环、私网、链路本地和保留地址，并且不会把视频中转 Authorization 发送给这些额外媒体来源。
 
-`AI_VIDEO_PENDING_RECOVERY_MS` 必须至少为 `AI_VIDEO_TIMEOUT_MS + 10000`，避免仍在处理的任务被恢复流程提前标记失败；默认值 660000 比 10 分钟视频超时多保留 60 秒。`AI_VIDEO_MAX_RESPONSE_BYTES` 同时限制视频上传与中转下载响应，默认 64 MiB；`MAX_USER_MEDIA_BYTES` 是每位用户的媒体总配额，必须不小于该单次上限，默认 512 MiB。
+文字、图片、视频分别使用 `AI_TIMEOUT_MS`、`AI_IMAGE_TIMEOUT_MS` 和 `AI_VIDEO_TIMEOUT_MS`；默认图片超时为 300 秒，反向代理读取超时为 310 秒。对应的 `AI_PENDING_RECOVERY_MS`、`AI_IMAGE_PENDING_RECOVERY_MS`、`AI_VIDEO_PENDING_RECOVERY_MS` 都必须至少比请求超时多 10 秒，默认分别为 180000、360000 和 660000。上游返回图片 URL 时服务端直接透传；只返回 base64 时，服务端保存原始 PNG/JPEG/WebP 字节到 SQLite `media` 表并返回签名 `/api/media/...` URL，浏览器不会再把 2K/4K 结果压缩到 1600px。`AI_IMAGE_MAX_RESPONSE_BYTES` 默认 50 MiB，`AI_VIDEO_MAX_RESPONSE_BYTES` 默认 64 MiB，`MAX_USER_MEDIA_BYTES` 是每位用户的图片/视频媒体总配额，必须不小于两类单次上限，默认 512 MiB。
 
 `JWT_SECRET` 当前不仅签发登录令牌，还派生数据库中三类用户 API 密钥、管理员密码和兼容保留的旧中转密文所需的加密密钥，以及媒体访问签名。当前实现没有密钥轮换迁移机制；恢复数据库或计划轮换时必须继续使用与该数据库对应的原值，不能直接生成新值替换，否则已保存密钥无法解密且已有媒体地址会失效。
 

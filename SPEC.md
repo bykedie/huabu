@@ -27,6 +27,10 @@ The existing infinite-canvas product was brought materially closer to the eight 
 - Manual AI context edges are direction-independent and persist as `context`; automatic generated-result edges persist as `result` and cannot flow back into later generation context.
 - When an administrator has not opened a model for the selected mode, the AI action remains actionable and reports the missing model explicitly instead of silently disabling itself.
 - Formal canvases, assets, and media are server-side records. Browser localStorage is only a draft/idempotency/UI recovery layer.
+- Fresh deployments contain no implicit text, image, or video relay address or model. Explicit administrator settings stored in SQLite remain authoritative; optional environment addresses apply only when explicitly configured.
+- Image generation exposes a bounded shared client/server list covering automatic sizing, common 1K ratios, 2K square/widescreen/portrait, and 4K widescreen/portrait. Selected values are forwarded unchanged for generation and reference-image editing.
+- Image generation uses its own 300-second request timeout and 360-second pending-recovery threshold. Existing text timeout/recovery configuration remains independent and backward compatible.
+- Upstream image URLs remain URLs. Upstream base64 PNG/JPEG/WebP results are stored as original bytes in server media storage and returned as signed media URLs; generated 2K/4K results must not be browser-downsampled before entering the canvas.
 
 ## Acceptance Targets
 

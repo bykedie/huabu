@@ -28,7 +28,7 @@ delete process.env.PUBLIC_BIND
 process.env.AI_IMAGE_BASE_URL = 'https://image-relay.example.test/v1'
 process.env.AI_IMAGE_API_KEY = 'forbidden-image-environment-key'
 
-const { default: app, estimatePromptTokens } = await import('../server/app.js')
+const { default: app, estimatePromptTokens, imageSizes } = await import('../server/app.js')
 const { db, transaction, changeBalance, recoverPendingGenerations } = await import('../server/db.js')
 
 function setRelaySettings(kind, baseUrl, models, points = 7) {
@@ -77,6 +77,15 @@ async function saveRelayKey(token, kind, apiKey) {
 test('AI prompt estimation includes per-message protocol overhead', () => {
   assert.equal(estimatePromptTokens([{ role: 'user', content: '' }]), 32)
   assert.equal(estimatePromptTokens([{ role: 'system', content: 'abc' }, { role: 'user', content: '' }]), 51)
+})
+
+test('server accepts the same bounded common image sizes as the canvas', () => {
+  assert.deepEqual(imageSizes, [
+    'auto',
+    '1024x1024', '1536x1024', '1024x1536', '1360x1024', '1024x1360', '1824x1024', '1024x1824',
+    '2048x2048', '2048x1152', '1152x2048',
+    '3840x2160', '2160x3840',
+  ])
 })
 
 test('health check verifies SQLite read and write access', async () => {
@@ -336,6 +345,14 @@ test('paid canvas workflow preserves ownership and wallet invariants', async () 
   assert.equal((await request('/me', { token: member.token })).body.user.balance, balanceAfterSuccess)
   const recoveryEntries = db.prepare('SELECT amount FROM ledger WHERE reference=? ORDER BY rowid').all(interruptedId)
   assert.deepEqual(recoveryEntries.map((entry) => Number(entry.amount)), [-7, 7])
+
+  const imageRecoveryId = crypto.randomUUID()
+  db.prepare(`INSERT INTO generations (id,user_id,request_key,model,reserved,status,kind,created_at) VALUES (?,?,?,?,?,?,?,datetime('now','-2 minutes'))`)
+    .run(imageRecoveryId, member.user.id, 'interrupted-image-request-0001', 'GPT-image-2', 0, 'pending', 'image')
+  assert.equal(recoverPendingGenerations(60000, 60000, 300000), 0)
+  assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(imageRecoveryId).status, 'pending')
+  assert.equal(recoverPendingGenerations(60000, 60000, 60000), 1)
+  assert.equal(db.prepare('SELECT status FROM generations WHERE id=?').get(imageRecoveryId).status, 'failed')
 
   let releaseDelayedRelay
   const delayedRelayReady = new Promise((resolve) => { releaseDelayedRelay = resolve })
@@ -1528,8 +1545,10 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
       size: init.body.get('size'),
       imageName: init.body.get('image')?.name,
     })
+    assert.equal(init.body.get('response_format'), null)
+    assert.equal(init.body.get('output_format'), null)
     calls.push(call)
-    return new Response(JSON.stringify({ data: [{ image_url: 'https://images.example.test/edited.png' }] }), {
+    return new Response(JSON.stringify({ data: [{ b64_json: 'iVBORw0KGgo=' }] }), {
       status: 200, headers: { 'content-type': 'application/json' },
     })
   }
@@ -1605,7 +1624,7 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const otherWalletBefore = await request('/wallet', { token: other.token })
     const generated = await request('/ai/image', {
       token: owner.token, method: 'POST',
-      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '3840x2160' }),
     })
     assert.deepEqual(generated, {
       status: 200,
@@ -1617,13 +1636,26 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const edited = await request('/ai/image', {
       token: other.token, method: 'POST',
       body: JSON.stringify({
-        requestKey: 'user-owned-image-edit-0001', model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024',
+        requestKey: 'user-owned-image-edit-0001', model: 'GPT-image-2', prompt: 'edit for user b', size: '2160x3840',
         references: ['data:image/png;base64,iVBORw0KGgo='],
       }),
     })
     assert.equal(edited.status, 200)
-    assert.equal(edited.body.imageUrl, 'https://images.example.test/edited.png')
+    assert.match(edited.body.imageUrl, /^\/api\/media\/[a-f0-9-]+\?token=/)
     assert.equal(edited.body.charged, 0)
+    const editedMedia = await fetch(`http://127.0.0.1:${server.address().port}${edited.body.imageUrl}`)
+    assert.equal(editedMedia.status, 200)
+    assert.equal(editedMedia.headers.get('content-type'), 'image/png')
+    assert.deepEqual(Buffer.from(await editedMedia.arrayBuffer()), Buffer.from('iVBORw0KGgo=', 'base64'))
+    assert.deepEqual({ ...db.prepare('SELECT kind,mime_type,bytes FROM media WHERE user_id=?').get(other.user.id) }, {
+      kind: 'image', mime_type: 'image/png', bytes: 8,
+    })
+    const savedGeneratedAsset = await request('/assets', {
+      token: other.token, method: 'POST',
+      body: JSON.stringify({ kind: 'image', title: '原始生图', content: edited.body.imageUrl }),
+    })
+    assert.equal(savedGeneratedAsset.status, 201)
+    assert.equal(savedGeneratedAsset.body.asset.content, edited.body.imageUrl)
     assert.deepEqual({ ...db.prepare('SELECT reserved,charged,status FROM generations WHERE request_key=?').get('user-owned-image-edit-0001') }, {
       reserved: 0, charged: 0, status: 'succeeded',
     })
@@ -1631,14 +1663,14 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const callsBeforeReplay = calls.length
     const replay = await request('/ai/image', {
       token: owner.token, method: 'POST',
-      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '3840x2160' }),
     })
     assert.equal(replay.status, 200)
     assert.equal(replay.body.cached, true)
     assert.equal(calls.length, callsBeforeReplay)
     const conflict = await request('/ai/image', {
       token: owner.token, method: 'POST',
-      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'different content', size: '1024x1024' }),
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'different content', size: '3840x2160' }),
     })
     assert.equal(conflict.status, 409)
     assert.equal(calls.length, callsBeforeReplay)
@@ -1672,7 +1704,7 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
     const callsBeforeClearedReplay = calls.length
     const clearedReplay = await request('/ai/image', {
       token: owner.token, method: 'POST',
-      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' }),
+      body: JSON.stringify({ requestKey: 'user-owned-image-success-0001', model: 'GPT-image-2', prompt: 'generate for user a', size: '3840x2160' }),
     })
     assert.equal(clearedReplay.status, 400)
     assert.match(clearedReplay.body.error, /保存生图 API 密钥/)
@@ -1691,8 +1723,8 @@ test('user-owned image keys stay private, isolated, server-routed, and free of s
       { url: generationUrl, authorization: `Bearer ${replacementKey}` },
     ])
     assert.equal(calls.every((call) => call.redirect === 'manual'), true)
-    assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'generate for user a', size: '1024x1024' })
-    assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'edit for user b', size: '1024x1024', imageName: 'reference-1.png' })
+    assert.deepEqual(calls[2], { url: generationUrl, authorization: `Bearer ${replacementKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'generate for user a', size: '3840x2160' })
+    assert.deepEqual(calls[3], { url: editUrl, authorization: `Bearer ${otherKey}`, redirect: 'manual', model: 'GPT-image-2', prompt: 'edit for user b', size: '2160x3840', imageName: 'reference-1.png' })
     assert.deepEqual({ ...db.prepare('SELECT ai_image_base_url,ai_image_api_key_encrypted,ai_image_models,ai_image_points FROM app_settings WHERE id=1').get() }, {
       ai_image_base_url: 'https://image-relay.example.test/v1',
       ai_image_api_key_encrypted: legacySharedCiphertext,

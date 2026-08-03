@@ -39,18 +39,20 @@ const inputRate = numberSetting('AI_INPUT_POINTS_PER_1K', 1, { max: 1000000 })
 const outputRate = numberSetting('AI_OUTPUT_POINTS_PER_1K', 4, { max: 1000000 })
 const defaultVideoPoints = numberSetting('AI_VIDEO_POINTS', 24, { min: 1, max: 1000000, integer: true })
 const aiTimeout = numberSetting('AI_TIMEOUT_MS', 120000, { min: 1000, max: 120000, integer: true })
+const imageTimeout = numberSetting('AI_IMAGE_TIMEOUT_MS', 300000, { min: 1000, max: 300000, integer: true })
 const videoTimeout = numberSetting('AI_VIDEO_TIMEOUT_MS', 600000, { min: 30000, max: 1800000, integer: true })
 const videoPollMs = numberSetting('AI_VIDEO_POLL_MS', isProduction ? 2500 : 250, { min: 10, max: 30000, integer: true })
 export const aiPendingRecoveryMs = numberSetting('AI_PENDING_RECOVERY_MS', aiTimeout + 60000, { min: aiTimeout + 10000, max: 3600000, integer: true })
+export const imagePendingRecoveryMs = numberSetting('AI_IMAGE_PENDING_RECOVERY_MS', imageTimeout + 60000, { min: imageTimeout + 10000, max: 3600000, integer: true })
 export const videoPendingRecoveryMs = numberSetting('AI_VIDEO_PENDING_RECOVERY_MS', videoTimeout + 60000, { min: videoTimeout + 10000, max: 3600000, integer: true })
 const aiMaxResponseBytes = numberSetting('AI_MAX_RESPONSE_BYTES', 2 * 1024 * 1024, { min: 1024, max: 20 * 1024 * 1024, integer: true })
-const aiImageMaxResponseBytes = numberSetting('AI_IMAGE_MAX_RESPONSE_BYTES', 12 * 1024 * 1024, { min: 1024, max: 50 * 1024 * 1024, integer: true })
+const aiImageMaxResponseBytes = numberSetting('AI_IMAGE_MAX_RESPONSE_BYTES', 50 * 1024 * 1024, { min: 1024, max: 50 * 1024 * 1024, integer: true })
 const aiVideoMaxResponseBytes = numberSetting('AI_VIDEO_MAX_RESPONSE_BYTES', 64 * 1024 * 1024, { min: 1024, max: 256 * 1024 * 1024, integer: true })
 const modelDiscoveryMaxResponseBytes = Math.min(aiMaxResponseBytes, 256 * 1024)
 const centsPerPoint = numberSetting('CENTS_PER_POINT', 1, { min: 1, max: 10000000, integer: true })
 const maxCanvasesPerUser = numberSetting('MAX_CANVASES_PER_USER', 100, { min: 1, max: 10000, integer: true })
 const maxAssetsPerUser = numberSetting('MAX_ASSETS_PER_USER', 200, { min: 1, max: 10000, integer: true })
-const maxUserMediaBytes = numberSetting('MAX_USER_MEDIA_BYTES', 512 * 1024 * 1024, { min: aiVideoMaxResponseBytes, max: 10 * 1024 * 1024 * 1024, integer: true })
+const maxUserMediaBytes = numberSetting('MAX_USER_MEDIA_BYTES', 512 * 1024 * 1024, { min: Math.max(aiImageMaxResponseBytes, aiVideoMaxResponseBytes), max: 10 * 1024 * 1024 * 1024, integer: true })
 const maxCanvasBytes = numberSetting('MAX_CANVAS_BYTES', 2 * 1024 * 1024, { min: 1024, max: 10 * 1024 * 1024, integer: true })
 const maxUserStorageBytes = numberSetting('MAX_USER_STORAGE_BYTES', 20 * 1024 * 1024, { min: maxCanvasBytes, max: 1024 * 1024 * 1024, integer: true })
 const registrationRateLimit = numberSetting('REGISTRATION_RATE_LIMIT', 5, { min: 1, max: 1000, integer: true })
@@ -59,7 +61,13 @@ const envTextModels = (process.env.AI_MODELS || '').split(',').map((item) => ite
 if (envTextModels.length > 50 || envTextModels.some((model) => model.length > 100)) throw new Error('AI_MODELS 配置无效')
 const envImageModels = (process.env.AI_IMAGE_MODELS || '').split(',').map((item) => item.trim()).filter(Boolean)
 if (envImageModels.length > 50 || envImageModels.some((model) => model.length > 100)) throw new Error('AI_IMAGE_MODELS 配置无效')
-recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs)
+export const imageSizes = [
+  'auto',
+  '1024x1024', '1536x1024', '1024x1536', '1360x1024', '1024x1360', '1824x1024', '1024x1824',
+  '2048x2048', '2048x1152', '1152x2048',
+  '3840x2160', '2160x3840',
+]
+recoverPendingGenerations(aiPendingRecoveryMs, videoPendingRecoveryMs, imagePendingRecoveryMs)
 // Trust only the local reverse proxy. Public clients cannot opt into forwarded
 // headers, while domain and dual-access modes still retain the real client IP.
 const loopbackProxyAddresses = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
@@ -102,7 +110,7 @@ const normalizeRelayBaseUrl = (value, label, status = 500, kind = '') => {
   if (['text', 'image'].includes(kind) && url.pathname === '/') url.pathname = '/v1'
   return url.toString().replace(/\/+$/, '')
 }
-normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', '图片中转站', 500, 'image')
+normalizeRelayBaseUrl(process.env.AI_IMAGE_BASE_URL || '', '图片中转站', 500, 'image')
 const settingsKey = createHash('sha256').update(`ai-settings:${jwtSecret}`).digest()
 const adminLoginKey = createHash('sha256').update(`admin-login:${jwtSecret}`).digest()
 const encryptSetting = (value) => {
@@ -130,7 +138,7 @@ const relayKinds = {
   },
   image: {
     label: '图片中转站', baseColumn: 'ai_image_base_url', modelsColumn: 'ai_image_models', keyColumn: 'image_api_key_encrypted',
-    environmentBaseUrl: () => process.env.AI_IMAGE_BASE_URL || 'https://www.bkbk.baby/v1', environmentModels: () => envImageModels,
+    environmentBaseUrl: () => process.env.AI_IMAGE_BASE_URL || '', environmentModels: () => envImageModels,
   },
   video: {
     label: '视频中转站', baseColumn: 'ai_video_base_url', modelsColumn: 'ai_video_models', keyColumn: 'video_api_key_encrypted',
@@ -387,7 +395,7 @@ async function testTextRelay(baseUrl, apiKey, model) {
 async function testImageRelay(baseUrl, apiKey, model) {
   assertRelayValueSafe(model, apiKey, '生图模型名称', 400)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.min(aiTimeout, 60000))
+  const timer = setTimeout(() => controller.abort(), Math.min(imageTimeout, 60000))
   try {
     const url = await validateImageRelayUrl(baseUrl + '/images/generations')
     const upstream = await fetch(url, {
@@ -497,6 +505,21 @@ async function readUpstreamBuffer(response, maxBytes = aiVideoMaxResponseBytes) 
 
 const mediaSignature = (id, userId) => createHmac('sha256', settingsKey).update('media:' + id + ':' + userId).digest('base64url')
 const mediaUrl = (id, userId) => '/api/media/' + id + '?token=' + encodeURIComponent(mediaSignature(id, userId))
+const decodedImageMedia = (base64) => {
+  if (!/^[a-z0-9+/]+={0,2}$/i.test(base64) || base64.length % 4 === 1) throw fail(502, '生图中转站返回了无效图片数据')
+  const bytes = Buffer.from(base64, 'base64')
+  if (!bytes.length || bytes.length > aiImageMaxResponseBytes) throw fail(502, '生图中转站返回图片过大')
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return { bytes, mimeType: 'image/png', extension: 'png' }
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { bytes, mimeType: 'image/jpeg', extension: 'jpg' }
+  }
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return { bytes, mimeType: 'image/webp', extension: 'webp' }
+  }
+  throw fail(502, '生图中转站返回了不支持的图片格式')
+}
 const secureTextEqual = (actual, expected) => {
   if (typeof actual !== 'string') return false
   const left = Buffer.from(actual)
@@ -695,7 +718,7 @@ function storeVideoMedia(userId, generationId, media) {
     if (!generation) throw fail(404, '视频任务不存在')
     const charged = Number(generation.reserved)
     const used = Number(db.prepare('SELECT COALESCE(SUM(bytes),0) bytes FROM media WHERE user_id=?').get(userId).bytes)
-    if (used + media.bytes.length > maxUserMediaBytes) throw fail(413, '账户视频存储已达上限（' + Math.floor(maxUserMediaBytes / 1024 / 1024) + ' MiB）')
+    if (used + media.bytes.length > maxUserMediaBytes) throw fail(413, '账户媒体存储已达上限（' + Math.floor(maxUserMediaBytes / 1024 / 1024) + ' MiB）')
     db.prepare('INSERT INTO media (id,user_id,kind,file_name,mime_type,bytes,data) VALUES (?,?,?,?,?,?,?)')
       .run(id, userId, 'video', fileName, media.mimeType, media.bytes.length, media.bytes)
     response = { id: generationId, status: 'completed', videoUrl: mediaUrl(id, userId), mimeType: media.mimeType, charged, cached: false }
@@ -711,7 +734,7 @@ function storeUploadedVideo(userId, media) {
   const fileName = id + '.' + extension
   transaction(() => {
     const used = Number(db.prepare('SELECT COALESCE(SUM(bytes),0) bytes FROM media WHERE user_id=?').get(userId).bytes)
-    if (used + media.bytes.length > maxUserMediaBytes) throw fail(413, '账户视频存储已达上限（' + Math.floor(maxUserMediaBytes / 1024 / 1024) + ' MiB）')
+    if (used + media.bytes.length > maxUserMediaBytes) throw fail(413, '账户媒体存储已达上限（' + Math.floor(maxUserMediaBytes / 1024 / 1024) + ' MiB）')
     db.prepare('INSERT INTO media (id,user_id,kind,file_name,mime_type,bytes,data) VALUES (?,?,?,?,?,?,?)')
       .run(id, userId, 'video', fileName, media.mimeType, media.bytes.length, media.bytes)
   })
@@ -997,7 +1020,7 @@ app.post('/api/assets', auth, (req, res, next) => {
       sourceCanvasId: z.string().max(200).optional(),
       sourceNodeId: z.string().max(200).optional(),
     }), req.body)
-    if (body.kind === 'image' && !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(body.content) && !/^https?:\/\//i.test(body.content)) throw fail(400, '图片资产格式无效')
+    if (body.kind === 'image' && !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(body.content) && !/^\/api\/media\/[a-f0-9-]+\?token=[a-z0-9_-]+$/i.test(body.content) && !/^https?:\/\//i.test(body.content)) throw fail(400, '图片资产格式无效')
     if (body.kind === 'video' && !/^\/api\/media\/[a-f0-9-]+\?token=[a-z0-9_-]+$/i.test(body.content) && !/^https?:\/\//i.test(body.content)) throw fail(400, '视频资产格式无效')
     const contentBytes = Buffer.byteLength(body.content)
     if (contentBytes > maxCanvasBytes) throw fail(413, `单个资产不能超过 ${Math.floor(maxCanvasBytes / 1024)} KiB`)
@@ -1200,7 +1223,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
       requestKey: z.string().min(8).max(100),
       model: z.string().min(1).max(100).optional(),
       prompt: z.string().trim().min(1).max(10000),
-      size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024'),
+      size: z.enum(imageSizes).default('1024x1024'),
       references: z.array(z.string().max(1600000)).max(4).default([]),
     }), req.body)
     const referenceImages = body.references.map((value, index) => {
@@ -1239,7 +1262,7 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
       throw error
     }
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), aiTimeout)
+    const timer = setTimeout(() => controller.abort(), imageTimeout)
     let upstream
     let text
     try {
@@ -1249,8 +1272,6 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
         form.set('prompt', body.prompt)
         form.set('size', body.size)
         form.set('n', '1')
-        form.set('response_format', 'b64_json')
-        form.set('output_format', 'png')
         referenceImages.forEach((image, index) => form.append('image', new Blob([image.bytes], { type: image.type }), `reference-${index + 1}.${image.extension}`))
         upstream = await fetch(url, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${apiKey}` }, body: form })
       } else {
@@ -1268,14 +1289,24 @@ app.post('/api/ai/image', auth, async (req, res, next) => {
     const image = payload?.data?.[0]
     const rawImageUrl = image?.url || image?.image_url || payload?.url || payload?.result?.url || ''
     const base64 = image?.b64_json || image?.base64 || payload?.result?.b64_json || ''
-    const imageUrl = rawImageUrl || (base64 ? `data:image/png;base64,${base64}` : '')
-    if (!imageUrl || [rawImageUrl, base64].some((value) => typeof value !== 'string' || containsRelaySecret(value, apiKey))) {
+    if ((!rawImageUrl && !base64) || [rawImageUrl, base64].some((value) => typeof value !== 'string' || containsRelaySecret(value, apiKey))) {
       throw fail(502, '生图中转站未返回图片')
     }
-    const response = { imageUrl, model, charged: 0, cached: false }
+    const imageMedia = rawImageUrl ? null : decodedImageMedia(base64)
+    let response
     transaction(() => {
       const row = db.prepare('SELECT status FROM generations WHERE id=?').get(generation.id)
       if (row?.status !== 'pending') throw fail(409, '该请求已由恢复流程终止，请重新生成')
+      let imageUrl = rawImageUrl
+      if (imageMedia) {
+        const used = Number(db.prepare('SELECT COALESCE(SUM(bytes),0) bytes FROM media WHERE user_id=?').get(req.auth.sub).bytes)
+        if (used + imageMedia.bytes.length > maxUserMediaBytes) throw fail(413, '账户媒体存储已达上限（' + Math.floor(maxUserMediaBytes / 1024 / 1024) + ' MiB）')
+        const mediaId = randomUUID()
+        db.prepare('INSERT INTO media (id,user_id,kind,file_name,mime_type,bytes,data) VALUES (?,?,?,?,?,?,?)')
+          .run(mediaId, req.auth.sub, 'image', mediaId + '.' + imageMedia.extension, imageMedia.mimeType, imageMedia.bytes.length, imageMedia.bytes)
+        imageUrl = mediaUrl(mediaId, req.auth.sub)
+      }
+      response = { imageUrl, model, charged: 0, cached: false }
       db.prepare("UPDATE generations SET status='succeeded',charged=?,response=? WHERE id=? AND status='pending'")
         .run(0, JSON.stringify(response), generation.id)
     })

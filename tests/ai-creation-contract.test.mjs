@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { buildGenerationContext } from '../src/generation-context.ts'
 import { classifyCanvasImportFiles } from '../src/canvas-import.ts'
+import { imageSizeOptions, imageSizeValues, isImageSize } from '../src/image-sizes.ts'
 import { shouldSubmitImeEnter } from '../src/ime.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -125,6 +126,40 @@ test('text image and video generation all submit typed image references', () => 
     assert.match(source, /context\.referenceImages/)
     assert.match(source, /body:\s*JSON\.stringify\(\{[^}]*prompt:\s*context\.prompt[^}]*references/s)
   }
+})
+
+test('image generation exposes common ratios and resolutions through one validated preset list', () => {
+  assert.deepEqual(imageSizeValues, [
+    'auto',
+    '1024x1024', '1536x1024', '1024x1536', '1360x1024', '1024x1360', '1824x1024', '1024x1824',
+    '2048x2048', '2048x1152', '1152x2048',
+    '3840x2160', '2160x3840',
+  ])
+  assert.equal(new Set(imageSizeValues).size, imageSizeValues.length)
+  assert.equal(imageSizeOptions.some((option) => option.group === '1K' && option.ratio === '16:9'), true)
+  assert.equal(imageSizeOptions.some((option) => option.group === '2K' && option.ratio === '1:1'), true)
+  assert.equal(imageSizeOptions.some((option) => option.group === '4K' && option.ratio === '9:16'), true)
+  for (const value of imageSizeValues) assert.equal(isImageSize(value), true, value)
+  for (const value of ['1024', '1024*1024', '99999x1', '']) assert.equal(isImageSize(value), false, value)
+
+  assert.match(appSource, /imageSizeOptions\.map\(\(option\) => <option key=\{option\.value\} value=\{option\.value\}>\{option\.label\}<\/option>\)/)
+  assert.match(appSource, /if \(data\.imageSize !== undefined && !isImageSize\(data\.imageSize\)\) return null/)
+})
+
+test('image generation overlaps canvas persistence with reference preparation and avoids forced PNG base64 edits', () => {
+  const imageStart = appSource.indexOf('const runImage = useCallback')
+  const videoStart = appSource.indexOf('const runVideo = useCallback', imageStart)
+  const imageSource = appSource.slice(imageStart, videoStart)
+  const serverSource = readFileSync(join(root, 'server', 'app.js'), 'utf8')
+  const editStart = serverSource.indexOf('if (referenceImages.length)')
+  const generationStart = serverSource.indexOf('} else {', editStart)
+  const editSource = serverSource.slice(editStart, generationStart)
+
+  assert.match(imageSource, /Promise\.all\(\[\s*flushRef\.current\(\),\s*Promise\.all\(context\.referenceImages\.map\(\(item\) => referenceImageDataUrl\(item\.imageUrl\)\)\),?\s*\]\)/s)
+  assert.doesNotMatch(editSource, /response_format|output_format|b64_json|png/)
+  assert.match(serverSource, /const imageTimeout = numberSetting\('AI_IMAGE_TIMEOUT_MS', 300000/)
+  assert.match(serverSource, /setTimeout\(\(\) => controller\.abort\(\), Math\.min\(imageTimeout, 60000\)\)/)
+  assert.match(serverSource, /setTimeout\(\(\) => controller\.abort\(\), imageTimeout\)/)
 })
 
 test('AI text mode keeps connected image count and reference previews visible', () => {

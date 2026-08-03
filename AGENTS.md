@@ -90,4 +90,4 @@ The user-owned image-key migration completed on 2026-07-31. The following owners
 - Tests worker: `tests/server.test.mjs` only.
 - Main thread: coordination, `src/api.ts`, environment/deployment docs, project memory/status/decisions, integration, and final acceptance.
 
-The fixed image endpoint and image-only scope of that historical contract were superseded by the current three-key contract above. `AI_IMAGE_BASE_URL` remains a server fallback/default, not an account-displayed endpoint or a shared-key mechanism. New work must take its ownership boundaries from the current goal and status files.
+The fixed image endpoint and image-only scope of that historical contract were superseded by the current three-key contract above. Fresh deployments have no built-in image relay address; `AI_IMAGE_BASE_URL` is only an optional server environment fallback when explicitly set, not an account-displayed endpoint or a shared-key mechanism. New work must take its ownership boundaries from the current goal and status files.

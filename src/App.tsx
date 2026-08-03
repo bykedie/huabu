@@ -13,6 +13,7 @@ import {
 import { api, ApiError, session, User } from './api'
 import { classifyCanvasImportFiles } from './canvas-import'
 import { buildGenerationContext } from './generation-context'
+import { imageSizeOptions, isImageSize, type ImageSize } from './image-sizes'
 import { shouldSubmitImeEnter } from './ime'
 import { createUuid, shortRequestHash } from './uuid'
 
@@ -57,7 +58,6 @@ type CanvasData = {
   onToggleImageRatio?: (id: string) => void
   onImageTool?: (id: string, tool: 'crop' | 'split' | 'upscale' | 'view') => void
 }
-type ImageSize = '1024x1024' | '1536x1024' | '1024x1536'
 type VideoSize = '1280x720' | '720x1280' | '1024x1024'
 type VideoGenerationResult = {
   id: string
@@ -199,7 +199,7 @@ function parseDraft(value: unknown): CanvasDraft | null {
     const textFields = ['title', 'content', 'prompt', 'imageUrl', 'videoUrl', 'textModel', 'imageModel', 'videoModel'] as const
     if (textFields.some((field) => data[field] !== undefined && typeof data[field] !== 'string')) return null
     if (data.mode !== undefined && data.mode !== 'text' && data.mode !== 'image' && data.mode !== 'video') return null
-    if (data.imageSize !== undefined && !['1024x1024', '1536x1024', '1024x1536'].includes(String(data.imageSize))) return null
+    if (data.imageSize !== undefined && !isImageSize(data.imageSize)) return null
     if (data.videoSize !== undefined && !['1280x720', '720x1280', '1024x1024'].includes(String(data.videoSize))) return null
     if (data.videoSeconds !== undefined && (!Number.isInteger(data.videoSeconds) || Number(data.videoSeconds) < 1 || Number(data.videoSeconds) > 20)) return null
     const kind = data.kind as CanvasData['kind']
@@ -631,7 +631,7 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
           <div className="ai-context-section nodrag">{Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
           <div className="ai-settings-section nodrag"><div className="generator-settings">
               <select aria-label={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} title={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : mode === 'video' ? { videoModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
-              {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
+              {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}>{imageSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}
               {mode === 'video' && <><select aria-label="视频尺寸" title="视频尺寸" value={videoSize} onChange={(event) => data.onChange?.(id, { videoSize: event.target.value as VideoSize })}><option value="1280x720">横向 16:9</option><option value="720x1280">竖向 9:16</option><option value="1024x1024">方形 1:1</option></select><select aria-label="视频时长" title="视频时长" value={videoSeconds} onChange={(event) => data.onChange?.(id, { videoSeconds: Number(event.target.value) })}>{Array.from({ length: 20 }, (_item, index) => index + 1).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></>}
             </div>
           </div>
@@ -1461,7 +1461,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       const kind: Asset['kind'] = node.data.kind === 'image' ? 'image' : node.data.kind === 'video' ? 'video' : 'text'
       const rawContent = kind === 'image' ? node.data.imageUrl : kind === 'video' ? node.data.videoUrl : node.data.content
       if (!rawContent?.trim()) throw new Error('这个节点还没有可以收藏的内容')
-      const content = kind === 'image' ? await referenceImageDataUrl(rawContent) : rawContent.trim()
+      const content = kind === 'image' && !/^\/api\/media\/[a-f0-9-]+\?token=[a-z0-9_-]+$/i.test(rawContent)
+        ? await referenceImageDataUrl(rawContent)
+        : rawContent.trim()
       const result = await api<{ asset: Asset }>('/assets', {
         method: 'POST',
         body: JSON.stringify({ kind, title: node.data.title?.trim() || (kind === 'image' ? '画布图片' : kind === 'video' ? '画布视频' : '画布文本'), content, sourceCanvasId: canvasId, sourceNodeId: id }),
@@ -1592,9 +1594,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     }
     aiNodesInFlight.current.add(id); aiInFlight.current += 1; setNodeBusy(id, true)
     try {
-      if (!(await flushRef.current())) throw new Error('请先完成画布保存后再生成')
       const context = buildGenerationContext(id, prompt, nodesRef.current, edgesRef.current)
-      const references = await Promise.all(context.referenceImages.map((item) => referenceImageDataUrl(item.imageUrl)))
+      const [saved, references] = await Promise.all([
+        flushRef.current(),
+        Promise.all(context.referenceImages.map((item) => referenceImageDataUrl(item.imageUrl))),
+      ])
+      if (!saved) throw new Error('请先完成画布保存后再生成')
       const requestContent = JSON.stringify({ model: model || '', size, prompt: context.prompt, references })
       const { requestKey, storageKey } = await aiRequestKey(canvasId, id, 'image:' + requestContent)
       const result = await api<{ imageUrl: string; model?: string; cached: boolean }>('/ai/image', { method: 'POST', body: JSON.stringify({ requestKey, model, prompt: context.prompt, size, references }) })

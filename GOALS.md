@@ -4,6 +4,59 @@
 > Last update: 2026-08-03, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
+## Active Goal: Image Relay, Performance, and Sizes GitHub Delivery
+
+- Status: active; local implementation and acceptance are complete, GitHub delivery pending
+- Started: 2026-08-03 16:47 +08:00
+- Commander thread: current main thread
+- Baseline: local, remote tracking, and GitHub `ls-remote` all at `302b1b10a1922ff651c421ad51bafe677a8eeb0a`; worktree contains only the completed goal changes
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: commit and normally push the accepted empty-relay-default, image-performance, common-size, tests, and recovery-document changes to `origin/codex/infinite-canvas`, then fetch and verify the remote full SHA without deploying production.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Audit branch, remote, and delivery scope | complete | `git fetch` succeeded; local/remote counts are `0/0`; HEAD, tracking, and `ls-remote` are `302b1b1`; expected modified/untracked files only |
+| Re-run delivery gates and commit accepted changes | in progress | Prior local goal passed focused suites, full `64/64`, build, browser acceptance, diff/security and cleanup; fresh delivery gates still required |
+| Push and verify accepted commit | pending | Normal push, fetch, tracking SHA and GitHub `ls-remote` must match |
+| Synchronize and push final delivery checkpoint | pending | Required before completing this delivery goal |
+
+### Recovery Instructions
+
+Resume from `coordination/STATUS-image-relay-performance-delivery.md`, the completed implementation checkpoint, the actual Git worktree, and fresh remote state. Do not amend unrelated history, force-push, or deploy production.
+
+## Completed Goal: Empty Relay Defaults, Image Performance, and Common Sizes
+
+- Status: complete locally; implementation, automated/browser acceptance, fixture cleanup, and final checkpoint passed; changes remain uncommitted, unpushed, and undeployed
+- Started: 2026-08-03 13:14 +08:00
+- Completed: 2026-08-03 15:34 +08:00
+- Commander thread: current main thread
+- Baseline: clean local and `origin/codex/infinite-canvas` at `302b1b10a1922ff651c421ad51bafe677a8eeb0a`; real `3102/5182` healthy
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: remove implicit relay-address defaults for new deployments, identify and remove measured local image-generation delay, and add common image aspect ratios/resolutions without regressing saved administrator addresses, per-user keys, references, idempotency, persistence, or security.
+
+### Success Criteria
+
+- Fresh configuration leaves text, image, and video relay addresses empty; an administrator address explicitly stored in SQLite remains active and is not migrated or cleared.
+- Common square, landscape, portrait, and widescreen image sizes are selectable, draft-valid, server-valid, and forwarded unchanged for both generation and reference-image editing.
+- Phase timing distinguishes canvas flush, reference preprocessing, server validation/upstream wait, and result processing; any performance change removes a measured local delay without weakening SSRF or persistence boundaries.
+- Focused tests, `npm.cmd run build`, `npm.cmd test`, `git diff --check`, isolated browser acceptance, fixture cleanup, and a final seven-field checkpoint pass before completion.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Restore state and write a recoverable checkpoint | complete | Clean `302b1b1` baseline, healthy `3102/5182`, current defaults/sizes and request phases inspected; detailed recovery is in `coordination/STATUS-image-relay-performance-sizes.md` |
+| Measure the current image-generation path | complete | Canvas save and reference preparation were serialized; image used the 120-second text timeout; forced edit PNG/base64 plus browser base64 decode/downsample added local work and destroyed 2K/4K fidelity. A 6 MiB payload benchmark measured about 31.75 ms local JSON/base64 handling before network/browser image work; upstream generation remains the dominant external variable |
+| Add failing contracts and implement scoped changes | complete | Fresh relay addresses/models are empty; SQLite admin settings remain authoritative; image timeout/recovery are independently 300/360 seconds; common `auto`/1K/2K/4K presets are client/server validated; save/reference work overlaps; edit does not force PNG/base64; base64 image bytes persist in signed server media URLs |
+| Run automation and isolated browser acceptance | complete | Focused AI creation `22/22`, production config `12/12`, relay modernization `5/5`, server `20/20`, final full suite `64/64`, Node syntax, production build, `git diff --check`, NUL/security scans, desktop and `390x844` mobile acceptance passed |
+| Synchronize final handoff checkpoint | complete | Final seven-field checkpoint is in `coordination/STATUS-image-relay-performance-sizes.md`; isolated PIDs `21384/18004`, ports `3152/3153`, browser tab, viewport override, and `.codex-acceptance-image-performance` were cleaned |
+
+### Recovery Instructions
+
+Inspect `coordination/STATUS-image-relay-performance-sizes.md`, this goal, `PLAN.md`, `STATUS.md`, and the actual worktree before any next task. Do not reset the uncommitted implementation, clear a saved administrator relay address, inspect real credentials, or claim GitHub/production delivery.
+
 ## Completed Goal: Reference Creation Controls GitHub Delivery
 
 - Status: complete; product, recovery documents and final delivery checkpoint pushed and remotely verified; production undeployed

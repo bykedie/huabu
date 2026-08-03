@@ -73,15 +73,23 @@ test('production refuses unsafe secrets and invalid billing settings', () => {
   assert.notEqual(excessiveAiTimeout.status, 0)
   assert.match(excessiveAiTimeout.stderr, /AI_TIMEOUT_MS/)
 
+  const excessiveImageTimeout = runApp({ AI_IMAGE_TIMEOUT_MS: '300001' })
+  assert.notEqual(excessiveImageTimeout.status, 0)
+  assert.match(excessiveImageTimeout.stderr, /AI_IMAGE_TIMEOUT_MS/)
+
   const prematureRecovery = runApp({ AI_TIMEOUT_MS: '120000', AI_PENDING_RECOVERY_MS: '129999' })
   assert.notEqual(prematureRecovery.status, 0)
   assert.match(prematureRecovery.stderr, /AI_PENDING_RECOVERY_MS/)
+
+  const prematureImageRecovery = runApp({ AI_IMAGE_TIMEOUT_MS: '300000', AI_IMAGE_PENDING_RECOVERY_MS: '309999' })
+  assert.notEqual(prematureImageRecovery.status, 0)
+  assert.match(prematureImageRecovery.stderr, /AI_IMAGE_PENDING_RECOVERY_MS/)
 
   const prematureVideoRecovery = runApp({ AI_VIDEO_TIMEOUT_MS: '60000', AI_VIDEO_PENDING_RECOVERY_MS: '69999' })
   assert.notEqual(prematureVideoRecovery.status, 0)
   assert.match(prematureVideoRecovery.stderr, /AI_VIDEO_PENDING_RECOVERY_MS/)
 
-  const insufficientMediaStorage = runApp({ AI_VIDEO_MAX_RESPONSE_BYTES: '2048', MAX_USER_MEDIA_BYTES: '2047' })
+  const insufficientMediaStorage = runApp({ AI_IMAGE_MAX_RESPONSE_BYTES: '4096', AI_VIDEO_MAX_RESPONSE_BYTES: '2048', MAX_USER_MEDIA_BYTES: '4095' })
   assert.notEqual(insufficientMediaStorage.status, 0)
   assert.match(insufficientMediaStorage.stderr, /MAX_USER_MEDIA_BYTES/)
 })
@@ -92,7 +100,7 @@ test('production environment example exposes current video and media settings', 
     .map((line) => /^([A-Z0-9_]+)=/.exec(line)?.[1])
     .filter(Boolean))
   for (const key of [
-    'SITE_BILLING_ENABLED',
+    'SITE_BILLING_ENABLED', 'AI_IMAGE_TIMEOUT_MS', 'AI_IMAGE_PENDING_RECOVERY_MS',
     'AI_VIDEO_BASE_URL', 'AI_VIDEO_MODELS', 'AI_VIDEO_POINTS',
     'AI_VIDEO_TIMEOUT_MS', 'AI_VIDEO_POLL_MS', 'AI_VIDEO_PENDING_RECOVERY_MS',
     'AI_VIDEO_MAX_RESPONSE_BYTES', 'AI_VIDEO_MEDIA_ORIGINS', 'MAX_USER_MEDIA_BYTES',
@@ -183,7 +191,7 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(envExample, /^PUBLIC_BIND=0\.0\.0\.0$/m)
   assert.match(envExample, /^PUBLIC_PORT=3102$/m)
   assert.match(envExample, /^MOYU_ACCESS_MODE=public$/m)
-  assert.match(envExample, /^AI_IMAGE_BASE_URL=https:\/\/www\.bkbk\.baby\/v1$/m)
+  assert.match(envExample, /^AI_IMAGE_BASE_URL=$/m)
   assert.match(envExample, /^MOYU_DOMAIN=$/m)
   assert.match(envExample, /^MOYU_TLS=0$/m)
   assert.match(envExample, /^MOYU_BACKUP_ROOT=\/srv\/canvas-backups$/m)
@@ -192,7 +200,11 @@ test('public-port deployment and h management preserve the production contract',
   assert.match(envExample, /^AI_IMAGE_MODELS=$/m)
   assert.match(compose, /SITE_BILLING_ENABLED: "\$\{SITE_BILLING_ENABLED:-0\}"/)
   assert.match(compose, /AI_MODELS: "\$\{AI_MODELS:-\}"/)
+  assert.match(compose, /AI_IMAGE_BASE_URL: "\$\{AI_IMAGE_BASE_URL:-\}"/)
   assert.match(compose, /AI_IMAGE_MODELS: "\$\{AI_IMAGE_MODELS:-\}"/)
+  assert.match(compose, /AI_IMAGE_TIMEOUT_MS: "\$\{AI_IMAGE_TIMEOUT_MS:-300000\}"/)
+  assert.match(compose, /AI_IMAGE_PENDING_RECOVERY_MS: "\$\{AI_IMAGE_PENDING_RECOVERY_MS:-360000\}"/)
+  assert.match(readFileSync(join(root, 'deploy', 'nginx.conf'), 'utf8'), /proxy_read_timeout 310s;/)
   assert.doesNotMatch(envExample, /^AI_(?:VIDEO_)?API_KEY=/m)
   for (const key of ['AI_API_KEY', 'AI_IMAGE_API_KEY', 'AI_VIDEO_API_KEY']) {
     assert.doesNotMatch(compose, new RegExp(`^\\s*${key}:`, 'm'))
@@ -343,6 +355,8 @@ test('proxy trust accepts only loopback reverse proxies', () => {
 })
 
 test('production image relay requires a credential-free HTTPS base URL', () => {
+  const empty = runApp({ AI_IMAGE_BASE_URL: '' })
+  assert.equal(empty.status, 0, empty.stderr)
   for (const value of ['http://images.example.test/v1', 'https://user:password@images.example.test/v1', 'https://images.example.test/v1?target=other', 'https://images.example.test/v1#fragment']) {
     const result = runApp({ AI_IMAGE_BASE_URL: value })
     assert.notEqual(result.status, 0)
