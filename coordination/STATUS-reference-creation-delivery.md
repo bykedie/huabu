@@ -19,3 +19,13 @@
 - 修改文件：产品提交已包含 `src/App.tsx`、`src/styles/canvas-nodes-reference.css`、`tests/ai-creation-contract.test.mjs`；当前未提交文件为 `HANDOFF.md`、`GOALS.md`、`PROJECT_MEMORY.md`、`PLAN.md`、`STATUS.md`、`DECISIONS.md`、`coordination/STATUS-reference-creation-controls.md` 和本文件。全部属于本目标，无接手前无关修改。
 - 下一步：对当前文档差异运行 `git diff --check` 和秘密/NUL 检查，正常提交并推送；远端验证后再写最终完成检查点。
 - 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 GOALS.md`; `Get-Content -Encoding UTF8 PLAN.md`; `Get-Content -Encoding UTF8 STATUS.md`; `Get-Content -Encoding UTF8 coordination/STATUS-reference-creation-delivery.md`; `git status --short --branch`; `git diff`; `git log -3 --oneline --decorate`; `git diff --check`; `git -c http.proxy=http://127.0.0.1:7891 -c https.proxy=http://127.0.0.1:7891 fetch origin codex/infinite-canvas`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`。
+
+## Final Checkpoint: 2026-08-03 12:11 +08:00
+
+- 当前目标：完成参考创建控件产品、测试、恢复文档和最终检查点的 GitHub 交付，并核对最终远端完整 SHA；不部署生产。
+- 已完成：完整差异审查、远端基线核对、新鲜聚焦/完整测试、生产构建、差异与安全扫描均通过。产品提交 `d177bd0a34c1cea32273077c598e2f82c8672f1f` 已正常推送；恢复文档提交 `61516347cbe2b031f8d2ab39fda580d166c1d67d` 已正常推送并由本地 HEAD、远端跟踪和 GitHub `ls-remote` 三路核对。直连 GitHub HTTPS 返回空响应后使用已记录的 `127.0.0.1:7891` 回环代理，未强推。最终本检查点作为最后一个文档提交推送，并在目标完成前再次 fetch/`ls-remote` 核对最终分支 tip。
+- 未完成：本目标范围内无未完成事项。生产仍未部署，只有用户明确要求后才能创建独立部署目标。
+- 最后验证结果：聚焦 `20/20`；完整 `61/61`；build 生成 `index-BX6NdpM7.css`、`index--iha24vM.js`；`git diff --check` 通过；秘密、私钥、URL 凭据、NUL 和临时资产均为零；真实 API `3102` 与前端 `5182` 返回 HTTP 200；产品和恢复文档提交均通过 fetch/`ls-remote` 完整 SHA 核对，最终检查点提交同样在报告完成前核对。
+- 修改文件：产品提交包含 `src/App.tsx`、`src/styles/canvas-nodes-reference.css`、`tests/ai-creation-contract.test.mjs`；恢复与收尾提交包含 `HANDOFF.md`、`GOALS.md`、`PROJECT_MEMORY.md`、`PLAN.md`、`STATUS.md`、`DECISIONS.md`、`coordination/STATUS-reference-creation-controls.md` 和本文件。全部属于本目标，无无关修改。
+- 下一步：等待用户的下一项产品任务；若用户要求生产更新，创建独立部署目标，先核对生产当前 SHA、备份和域名/代理状态，不把本次 GitHub 推送等同于生产部署。
+- 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 GOALS.md`; `Get-Content -Encoding UTF8 STATUS.md`; `Get-Content -Encoding UTF8 coordination/STATUS-reference-creation-delivery.md`; `git status --short --branch`; `git log -4 --oneline --decorate`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`; `git -c http.proxy=http://127.0.0.1:7891 -c https.proxy=http://127.0.0.1:7891 ls-remote origin refs/heads/codex/infinite-canvas`; `git diff --check`; `Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3102/api/health`; `Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5182/`。

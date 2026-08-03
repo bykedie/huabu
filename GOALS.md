@@ -4,12 +4,13 @@
 > Last update: 2026-08-03, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
 
-## Active Goal: Reference Creation Controls GitHub Delivery
+## Completed Goal: Reference Creation Controls GitHub Delivery
 
-- Status: active; delivery scope, final gates and product push complete; handoff closeout commit, push and final remote verification pending
+- Status: complete; product, recovery documents and final delivery checkpoint pushed and remotely verified; production undeployed
 - Started: 2026-08-03 11:57 +08:00
+- Completed: 2026-08-03 12:11 +08:00
 - Commander thread: current main thread
-- Baseline: accepted product commit `d177bd0a34c1cea32273077c598e2f82c8672f1f` is pushed and verified on `origin/codex/infinite-canvas`; synchronized recovery documents remain dirty for the closeout commit
+- Baseline: product commit `d177bd0a34c1cea32273077c598e2f82c8672f1f` and recovery-document commit `61516347cbe2b031f8d2ab39fda580d166c1d67d` were normally pushed and verified before this final checkpoint closeout
 - Concurrency: one worker; no concurrent-worker exception approved
 - Objective: review, normally commit and push the accepted reference creation-controls implementation and synchronized handoff records, then fetch and verify the remote full SHA without deploying production.
 
@@ -20,15 +21,15 @@
 | Audit delivery scope and remote baseline | complete | Product changes are limited to `src/App.tsx` and `src/styles/canvas-nodes-reference.css`, focused contracts to `tests/ai-creation-contract.test.mjs`, and synchronized recovery documents; local/remote counts are `0/0` on `bd36358` |
 | Run final delivery gates | complete | Fresh focused `20/20`, full `61/61`, build, diff, NUL, secret, URL-credential, artifact and real-service health checks pass |
 | Commit and push accepted implementation | complete | Product commit `d177bd0a34c1cea32273077c598e2f82c8672f1f` was normally pushed through the existing loopback proxy after direct GitHub HTTPS returned an empty response |
-| Synchronize final delivery checkpoint | in progress | Product SHA matches local HEAD, remote tracking and GitHub `ls-remote`; recovery documents and the final closeout checkpoint still require commit/push verification |
+| Synchronize final delivery checkpoint | complete | Recovery-document commit `61516347cbe2b031f8d2ab39fda580d166c1d67d` matched local HEAD, remote tracking and GitHub `ls-remote`; this final checkpoint is the last delivery commit and must be fetched/verified before the goal result is reported |
 
 ### Recovery Instructions
 
-Resume from `coordination/STATUS-reference-creation-delivery.md`, `coordination/STATUS-reference-creation-controls.md`, this goal and the actual Git state. Preserve all current worktree changes. Do not deploy production.
+GitHub delivery is complete. Resume from `coordination/STATUS-reference-creation-delivery.md`, `coordination/STATUS-reference-creation-controls.md`, this goal and the actual Git state. Production remains a separate user-directed goal.
 
 ## Completed Goal: Reference Canvas Creation Controls
 
-- Status: product implementation delivered to GitHub as `d177bd0a34c1cea32273077c598e2f82c8672f1f`; delivery handoff closeout remains under the active goal above; production undeployed
+- Status: product implementation delivered to GitHub as `d177bd0a34c1cea32273077c598e2f82c8672f1f`; recovery documents and final delivery checkpoint also delivered; production undeployed
 - Started: 2026-08-03 00:10 +08:00
 - Completed: 2026-08-03 02:10 +08:00
 - Commander thread: current main thread
@@ -56,7 +57,7 @@ Resume from `coordination/STATUS-reference-creation-delivery.md`, `coordination/
 
 ### Recovery Instructions
 
-The local product goal is complete. Resume from `coordination/STATUS-reference-creation-controls.md`, this goal, `PLAN.md`, `STATUS.md` and the actual Git diff. The worktree is intentionally dirty and contains the accepted implementation plus handoff documents; do not reset it. Do not read the user screenshot again unless a later turn has a new image-analysis need. Preserve real `3102/5182`, user drafts, `.env`, SQLite data and all credentials. Commit/push and production deployment require separate user-directed goals.
+The product and GitHub delivery goals are complete. Resume from `coordination/STATUS-reference-creation-controls.md`, `coordination/STATUS-reference-creation-delivery.md`, this goal, `PLAN.md`, `STATUS.md` and the actual Git state. Do not read the user screenshot again unless a later turn has a new image-analysis need. Preserve real `3102/5182`, user drafts, `.env`, SQLite data and all credentials. Production deployment requires a separate user-directed goal.
 
 ## Completed Goal: AI Runtime GitHub Delivery
 

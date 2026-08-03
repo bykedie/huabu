@@ -1,11 +1,11 @@
 # Current Delivery Plan
 
-# Active Reference Creation Controls GitHub Delivery Plan
+# Completed Reference Creation Controls GitHub Delivery Plan
 
 1. Complete: reviewed the complete accepted worktree, branch, remote and `bd36358` baseline; no unrelated code or temporary fixture is in scope.
 2. Complete: fetched the remote and passed focused `20/20`, full `61/61`, production build, diff, secret, NUL, artifact and real-service health checks.
 3. Complete: normally committed the accepted product and focused tests as `d177bd0`, then pushed through the existing loopback proxy after direct GitHub HTTPS returned an empty response; local, remote tracking and `ls-remote` full SHAs match.
-4. In progress: commit and push synchronized recovery documents, then write and push the final seven-field closeout checkpoint, fetch, match local HEAD with `origin/codex/infinite-canvas` and GitHub, and complete the goal. Production deployment remains separate.
+4. Complete: recovery-document commit `6151634` was pushed and matched local HEAD, remote tracking and GitHub `ls-remote`; the final seven-field closeout checkpoint was then committed and pushed, fetched, and verified as the clean branch tip. Production deployment remains separate.
 
 # Completed Reference Creation Controls Plan
 
