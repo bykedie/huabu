@@ -1,8 +1,62 @@
 # Infinite Canvas Goals
 
 > This file is the recoverable execution ledger for accepted ideas.
-> Last update: 2026-08-02, Asia/Shanghai.
+> Last update: 2026-08-03, Asia/Shanghai.
 > User's latest explicit instruction overrides this file. Never store secrets here.
+
+## Active Goal: Reference Creation Controls GitHub Delivery
+
+- Status: active; delivery scope, final gates and product push complete; handoff closeout commit, push and final remote verification pending
+- Started: 2026-08-03 11:57 +08:00
+- Commander thread: current main thread
+- Baseline: accepted product commit `d177bd0a34c1cea32273077c598e2f82c8672f1f` is pushed and verified on `origin/codex/infinite-canvas`; synchronized recovery documents remain dirty for the closeout commit
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: review, normally commit and push the accepted reference creation-controls implementation and synchronized handoff records, then fetch and verify the remote full SHA without deploying production.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Audit delivery scope and remote baseline | complete | Product changes are limited to `src/App.tsx` and `src/styles/canvas-nodes-reference.css`, focused contracts to `tests/ai-creation-contract.test.mjs`, and synchronized recovery documents; local/remote counts are `0/0` on `bd36358` |
+| Run final delivery gates | complete | Fresh focused `20/20`, full `61/61`, build, diff, NUL, secret, URL-credential, artifact and real-service health checks pass |
+| Commit and push accepted implementation | complete | Product commit `d177bd0a34c1cea32273077c598e2f82c8672f1f` was normally pushed through the existing loopback proxy after direct GitHub HTTPS returned an empty response |
+| Synchronize final delivery checkpoint | in progress | Product SHA matches local HEAD, remote tracking and GitHub `ls-remote`; recovery documents and the final closeout checkpoint still require commit/push verification |
+
+### Recovery Instructions
+
+Resume from `coordination/STATUS-reference-creation-delivery.md`, `coordination/STATUS-reference-creation-controls.md`, this goal and the actual Git state. Preserve all current worktree changes. Do not deploy production.
+
+## Completed Goal: Reference Canvas Creation Controls
+
+- Status: product implementation delivered to GitHub as `d177bd0a34c1cea32273077c598e2f82c8672f1f`; delivery handoff closeout remains under the active goal above; production undeployed
+- Started: 2026-08-03 00:10 +08:00
+- Completed: 2026-08-03 02:10 +08:00
+- Commander thread: current main thread
+- Baseline: clean local and `origin/codex/infinite-canvas` at `bd3635825cb4a9afc9b91502a0ce59380528dc91`; real `3102/5182` already healthy
+- Concurrency: one worker; no concurrent-worker exception approved
+- Objective: migrate the screenshot-matched empty-image toolbar, compact AI generation configuration, and large canvas composer interaction from the local reference repository into the current product while preserving the current server persistence, three-user-key, open-model, typed-reference, generation-result and IME contracts.
+
+### Success Criteria
+
+- An empty image node exposes the concise `信息 / 删除 / 上传图片` hover toolbar, keeps visible circular handles, and uploads through the existing compression/persistence path.
+- An AI node presents a compact generation-configuration surface with text/image/video modes, typed input counts, model/media controls, an explicit composer toggle, and the existing generation action semantics.
+- A large canvas-local composer edits the selected AI node prompt, displays connected reference context, uses the current mode's model/settings, preserves IME-safe entry, and invokes the existing text/image/video generation functions exactly once.
+- Existing encrypted per-user keys, administrator-opened models, context/result edge roles, autosave/draft compatibility, generation idempotency and image tools do not regress.
+- Focused contracts, full build/tests, `git diff --check`, and isolated desktop/mobile dark/light browser acceptance pass; real browser drafts, `.env`, databases, credentials and production remain untouched.
+
+### Current Steps
+
+| Step | Status | Evidence |
+| --- | --- | --- |
+| Restore and inspect current/reference implementations | complete | Required recovery documents, clean `bd36358` Git state, healthy `3102/5182`, current node/generation code and reference toolbar/config/composer components inspected without reopening the screenshot |
+| Add focused regression contracts | complete | `tests/ai-creation-contract.test.mjs` now covers the empty-image toolbar, compact AI node and node-following IME-safe composer; focused suite passes `20/20` |
+| Implement scoped UI migration | complete | `src/App.tsx` and the node/reference style layer contain the three requested controls while reusing current callbacks, persistence and reference context |
+| Run automated and isolated browser acceptance | complete | Focused `20/20`, full `61/61`, build and diff check pass; desktop/mobile light/dark acceptance passed right-edge clamping, node/zoom following, single punctuation, reference count, Dock/navigation avoidance, overflow and interaction checks |
+| Synchronize final handoff checkpoint | complete | The isolated `localhost:5182` canvas was absent after the prior UI delete, the blank start screen had no conflict/pending-save state, the tab was closed, viewport reset, and the final seven-field checkpoint was synchronized |
+
+### Recovery Instructions
+
+The local product goal is complete. Resume from `coordination/STATUS-reference-creation-controls.md`, this goal, `PLAN.md`, `STATUS.md` and the actual Git diff. The worktree is intentionally dirty and contains the accepted implementation plus handoff documents; do not reset it. Do not read the user screenshot again unless a later turn has a new image-analysis need. Preserve real `3102/5182`, user drafts, `.env`, SQLite data and all credentials. Commit/push and production deployment require separate user-directed goals.
 
 ## Completed Goal: AI Runtime GitHub Delivery
 
