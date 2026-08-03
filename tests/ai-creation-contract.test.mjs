@@ -101,7 +101,7 @@ test('testing a newly entered relay key saves it only after verification and ref
 })
 
 test('AI creation reports a missing administrator model instead of becoming a dead button', () => {
-  assert.match(appSource, /disabled=\{data\.busy \|\| !data\.prompt\?\.trim\(\)\}/)
+  assert.match(appSource, /disabled=\{data\.busy \|\| !promptValue\.trim\(\)\}/)
   assert.match(appSource, /if \(!model\) \{ data\.onMissingModel\?\.\(mode\); return \}/)
   assert.match(appSource, /const notifyMissingModel = useCallback[\s\S]*?管理员尚未开放\$\{label\}模型/)
   assert.match(appSource, /onMissingModel:\s*notifyMissingModel/)
@@ -128,7 +128,7 @@ test('text image and video generation all submit typed image references', () => 
 })
 
 test('AI text mode keeps connected image count and reference previews visible', () => {
-  const contextStart = appSource.indexOf('<div className="ai-context-section nodrag">')
+  const contextStart = appSource.indexOf('<div className="ai-input-chips nodrag">')
   const settingsStart = appSource.indexOf('<div className="ai-settings-section nodrag">', contextStart)
   const contextSource = appSource.slice(contextStart, settingsStart)
 
@@ -199,16 +199,16 @@ test('text note and AI nodes expose a large drag surface outside editable contro
   assert.doesNotMatch(appSource, /className="node-drag-handle nodrag"/)
 })
 
-test('AI creation card has a compact drag header and stable prompt context settings action hierarchy', () => {
+test('AI creation card has a compact drag header and stable context settings action hierarchy', () => {
   assert.match(appSource, /className="node-drag-handle ai-node-header"[^>]*>[\s\S]*?<GripHorizontal[^>]*>[\s\S]*?data\.title \|\| 'AI 创作'[\s\S]*?<div className="generation-mode nodrag"/)
-  assert.match(appSource, /<div className="ai-body">[\s\S]*?className="ai-prompt-section nodrag"[\s\S]*?className="ai-context-section nodrag"[\s\S]*?className="ai-settings-section nodrag"[\s\S]*?className="node-actions ai-node-actions"/)
+  assert.match(appSource, /<div className="ai-body">[\s\S]*?className="ai-input-chips nodrag"[\s\S]*?className="ai-context-section nodrag"[\s\S]*?className="ai-settings-section nodrag"[\s\S]*?className="node-actions ai-node-actions"/)
   assert.match(appSource, /contextSummary:\s*generationContext\s*\?\s*\{\s*textCount:\s*generationContext\.textInputs\.length,\s*imageCount:\s*generationContext\.referenceImages\.length\s*\}/s)
   assert.match(appSource, /const minimumSize = nodeMinimumSize\(data\.kind\)[\s\S]*?<NodeResizer[^>]*minWidth=\{minimumSize\.width\} minHeight=\{minimumSize\.height\}/)
-  assert.match(appSource, /const nodeMinimumSize = \(kind: CanvasData\['kind'\]\) => kind === 'ai' \? \{ width: 300, height: 280 \} : \{ width: 220, height: 120 \}/)
+  assert.match(appSource, /const nodeMinimumSize = \(kind: CanvasData\['kind'\]\) => kind === 'ai' \? \{ width: 300, height: 190 \} : \{ width: 220, height: 120 \}/)
   assert.match(appSource, /width: Math\.max\(minimum\.width, node\.width \|\| fallback\.width\), height: Math\.max\(minimum\.height, node\.height \|\| fallback\.height\)/)
   assert.match(appSource, /const loadedNodes = result\.canvas\.document\.nodes\.map\(withNodeSize\)[\s\S]*?const loadedEdges = normalizeCanvasEdges\(result\.canvas\.document\.edges\)[\s\S]*?setNodes\(loadedNodes\)[\s\S]*?resetHistory\(loadedNodes, loadedEdges\)/)
   assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-node-header\s*\{[^}]*min-height:\s*4[0-9]px;[^}]*cursor:\s*grab;/s)
-  assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-prompt-section\s*\{[^}]*min-height:\s*0;[^}]*flex:\s*1;/s)
+  assert.match(nodeStyles, /\.ai-input-chips\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s)
   assert.match(nodeStyles, /\.canvas-node\.kind-ai \.ai-node-actions\s*\{[^}]*margin-top:\s*auto;[^}]*flex:\s*0 0 auto;/s)
 })
 
@@ -220,7 +220,7 @@ test('image toolbar stays anchored to its node and clamps inside the active canv
   assert.match(appSource, /closest<HTMLElement>\('\.react-flow__renderer'\)/)
   assert.match(appSource, /getBoundingClientRect\(\)[\s\S]*viewportShiftX[\s\S]*viewportShiftY/)
   assert.match(appSource, /const belowShift = nodeRect \? nodeRect\.bottom \+ 12 - baseTop : 0[\s\S]*preferredShiftY[\s\S]*clampShift\(baseTop, baseBottom, viewportTop, viewportBottom, preferredShiftY\)/)
-  assert.match(appSource, /const canvasDockRect = workspace\?\.querySelector<HTMLElement>\('\.canvas-dock'\)\?\.getBoundingClientRect\(\)[\s\S]*imageToolbarSettingsOpen && canvasDockRect[\s\S]*canvasDockRect\.top - 8/)
+  assert.match(appSource, /const bottomControls = \['\.canvas-dock', '\.canvas-navigation'\][\s\S]*querySelector<HTMLElement>\(selector\)\?\.getBoundingClientRect\(\)[\s\S]*baseRight > rect\.left && baseLeft < rect\.right[\s\S]*rect\.top - 8/)
   assert.match(appSource, /className="node-toolbar-scroll nodrag nopan nowheel"/)
   assert.match(nodeStyles, /\.node-toolbar-scroll\s*\{[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden;/s)
   assert.match(nodeStyles, /\.node-toolbar\.image-node-toolbar\s*\{[^}]*max-width:\s*calc\(100% - 16px\);/s)
@@ -244,4 +244,43 @@ test('left and right connection handles are always-visible polished circles in b
   assert.match(nodeStyles, /\.canvas-node \.react-flow__handle(?:\.connectingfrom|\.connectingto|\.valid)[\s\S]*box-shadow:/s)
   assert.match(nodeStyles, /\.workspace\.theme-dark \.canvas-node \.react-flow__handle\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*opacity:\s*1;/s)
   assert.match(nodeStyles, /\.workspace\.theme-dark \.canvas-node \.react-flow__handle-left[\s\S]*\.workspace\.theme-dark \.canvas-node \.react-flow__handle-right/s)
+})
+
+test('empty image nodes use the concise reference upload toolbar', () => {
+  assert.match(appSource, /const emptyImage = data\.kind === 'image' && !imageReady/)
+  assert.match(appSource, /className=\{`node-toolbar \${imageReady \? 'image-node-toolbar' : emptyImage \? 'empty-image-toolbar' : ''}/)
+  assert.match(appSource, /emptyImage && <>[\s\S]*?<button[^>]*节点信息[\s\S]*?<button className="danger"[^>]*删除节点[\s\S]*?<label className="node-toolbar-upload" title="上传图片"/s)
+  assert.match(appSource, /<span>空图片节点<\/span>/)
+  assert.match(nodeStyles, /\.node-toolbar\.empty-image-toolbar\s*\{[^}]*width:\s*max-content;[^}]*border-radius:\s*1[6-9]px;/s)
+})
+
+test('AI nodes use a compact reference configuration surface', () => {
+  const aiBodyStart = appSource.indexOf('<div className="ai-body">')
+  const aiBodyEnd = appSource.indexOf('      ) : (', aiBodyStart)
+  const aiBodySource = appSource.slice(aiBodyStart, aiBodyEnd)
+
+  assert.match(aiBodySource, /className="ai-input-chips nodrag"/)
+  assert.match(aiBodySource, /提示词[\s\S]*?contextSummary\?\.textCount/)
+  assert.match(aiBodySource, /参考图[\s\S]*?contextSummary\?\.imageCount/)
+  assert.match(aiBodySource, /className=\{`ai-composer-toggle nodrag \$\{data\.composerOpen \? 'active' : ''\}`\} onClick=\{\(\) => data\.onComposerToggle\?\.\(id\)\}/)
+  assert.match(aiBodySource, /className="ai-settings-section nodrag"[\s\S]*?className="node-actions ai-node-actions"/s)
+  assert.doesNotMatch(aiBodySource, /ai-prompt-section/)
+  assert.match(appSource, /const nodeMinimumSize = \(kind: CanvasData\['kind'\]\) => kind === 'ai' \? \{ width: 300, height: 190 \}/)
+  assert.match(nodeStyles, /\.canvas-node\.kind-ai \.node-surface\s*\{[^}]*min-height:\s*190px;/s)
+})
+
+test('the canvas AI composer follows the node and reuses current generation callbacks', () => {
+  assert.match(appSource, /function AIComposerPanel\(/)
+  assert.match(appSource, /className="ai-composer-panel nodrag nopan nowheel"/)
+  assert.match(appSource, /defaultValue=\{data\.prompt \|\| ''\}/)
+  assert.match(appSource, /onCompositionStart=\{\(\) => \{ composingRef\.current = true \}\}/)
+  assert.match(appSource, /onCompositionEnd=\{\(event\) => [\s\S]*?data\.onChange\?\.\(id, \{ prompt: next \}\)/s)
+  assert.doesNotMatch(appSource.slice(appSource.indexOf('function AIComposerPanel'), appSource.indexOf('function CanvasNodeView')), /value=\{data\.prompt/)
+  assert.match(appSource, /data\.referenceImages\?\.slice\(0, 4\)\.map/)
+  assert.match(appSource, /if \(mode === 'image'\) data\.onRunImage\?\.\(id, prompt, model, imageSize\)[\s\S]*?else if \(mode === 'video'\) data\.onRunVideo\?\.\(id, prompt, model, videoSize, videoSeconds\)[\s\S]*?else data\.onRun\?\.\(id, prompt, model\)/s)
+  assert.match(appSource, /<NodeToolbar className="ai-composer-toolbar" isVisible=\{data\.kind === 'ai' && Boolean\(data\.composerOpen\)\} position=\{Position\.Bottom\}/)
+  assert.match(appSource, /const syncComposerPlacement = useCallback[\s\S]*?closest<HTMLElement>\('\.react-flow__renderer'\)[\s\S]*?viewportRight[\s\S]*?viewportBottom[\s\S]*?toolbar\.style\.marginLeft/s)
+  assert.match(appSource, /function AIComposerPanel[\s\S]*?const bottomControls = \['\.canvas-dock', '\.canvas-navigation'\][\s\S]*?baseRight > rect\.left && baseLeft < rect\.right[\s\S]*?rect\.top - 12/)
+  assert.match(appSource, /renderer\?\.addEventListener\('pointermove', schedulePlacement\)[\s\S]*?renderer\?\.addEventListener\('wheel', schedulePlacement, \{ passive: true \}\)[\s\S]*?requestAnimationFrame/s)
+  assert.match(nodeStyles, /\.ai-composer-panel\s*\{[^}]*width:\s*min\(520px, calc\(100vw - 24px\)\);[^}]*min-height:\s*170px;/s)
 })

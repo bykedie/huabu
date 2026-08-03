@@ -135,7 +135,7 @@
 
 .canvas-node.kind-ai .node-surface {
   min-width: 300px;
-  min-height: 280px;
+  min-height: 190px;
 }
 
 .canvas-node.kind-ai .ai-node-header {
@@ -190,36 +190,35 @@
 .canvas-node.kind-ai .ai-body {
   min-height: 0;
   flex: 1;
-  gap: 6px;
+  gap: 7px;
   overflow: hidden;
   padding: 8px;
 }
 
-.canvas-node.kind-ai .ai-prompt-section {
-  min-height: 0;
-  flex: 1;
+.ai-input-chips {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ai-input-chips > span {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid rgba(79, 127, 117, .22);
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(79, 127, 117, .2);
   border-radius: 6px;
+  color: #526762;
   background: rgba(255, 255, 255, .42);
-}
-
-.ai-section-label {
-  min-height: 20px;
-  padding: 5px 8px 0;
-  color: #5f746f;
   font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
 }
 
-.canvas-node.kind-ai .ai-prompt-section textarea {
-  min-height: 48px;
-  flex: 1;
-  padding: 5px 8px 7px;
-  line-height: 1.45;
+.ai-input-chips strong {
+  margin-left: auto;
+  font-size: 11px;
 }
 
 .canvas-node.kind-ai .ai-context-section,
@@ -228,29 +227,6 @@
   flex: 0 0 auto;
   display: grid;
   gap: 4px;
-}
-
-.ai-context-heading {
-  min-width: 0;
-  min-height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.ai-context-heading .ai-section-label,
-.ai-settings-section > .ai-section-label {
-  min-height: 0;
-  padding: 0;
-}
-
-.ai-context-heading small {
-  overflow: hidden;
-  color: #7b8681;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ai-context-section .reference-strip {
@@ -275,6 +251,176 @@
   margin-top: auto;
   flex: 0 0 auto;
   padding: 0;
+}
+
+.ai-composer-toggle {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #fff;
+  background: #2f7f73;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ai-composer-toggle:hover,
+.ai-composer-toggle.active {
+  background: #276b62;
+}
+
+.ai-composer-toolbar {
+  max-width: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-composer-panel {
+  width: min(520px, calc(100vw - 24px));
+  min-height: 170px;
+  max-height: min(420px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #c9d4d0;
+  border-radius: 8px;
+  color: #292524;
+  background: rgba(250, 249, 246, .99);
+  box-shadow: 0 18px 44px rgba(41, 37, 36, .2);
+}
+
+.ai-composer-panel > header {
+  min-height: 40px;
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #e2e4df;
+}
+
+.ai-composer-panel > header > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #456b64;
+}
+
+.ai-composer-panel > header strong {
+  color: #292524;
+  font-size: 12px;
+}
+
+.ai-composer-panel > header span {
+  color: #78716c;
+  font-size: 10px;
+}
+
+.ai-composer-panel > header button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: #78716c;
+  background: transparent;
+}
+
+.ai-composer-panel > header button:hover {
+  color: #292524;
+  background: #ecebe6;
+}
+
+.ai-composer-references {
+  min-height: 38px;
+  padding: 5px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #ebece8;
+}
+
+.ai-composer-references > div {
+  min-width: 0;
+  display: flex;
+}
+
+.ai-composer-references img {
+  width: 28px;
+  height: 28px;
+  margin-right: -4px;
+  border: 2px solid #faf9f6;
+  border-radius: 5px;
+  object-fit: cover;
+  background: #e7e5e4;
+}
+
+.ai-composer-references span {
+  color: #78716c;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ai-composer-panel > textarea {
+  width: 100%;
+  min-height: 88px;
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: 12px;
+  color: #292524;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ai-composer-panel > footer {
+  min-height: 42px;
+  padding: 6px 8px 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid #e2e4df;
+}
+
+.ai-composer-panel > footer > span {
+  min-width: 0;
+  overflow: hidden;
+  color: #78716c;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-composer-panel > footer button {
+  min-width: 82px;
+  height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 5px;
+  color: #fff;
+  background: #2f7f73;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ai-composer-panel > footer button.image-run {
+  background: #2563a8;
 }
 
 .canvas-node > header {
@@ -426,6 +572,12 @@
   overflow: visible;
 }
 
+.node-toolbar.empty-image-toolbar {
+  width: max-content;
+  max-width: calc(100% - 16px);
+  border-radius: 18px;
+}
+
 .image-toolbar-settings {
   top: 50px;
   border-color: #d6d3ca;
@@ -557,17 +709,50 @@
   background: rgba(255, 255, 255, .04);
 }
 
-.workspace.theme-dark .canvas-node.kind-ai .ai-prompt-section {
-  border-color: rgba(125, 211, 199, .2);
+.workspace.theme-dark .ai-input-chips > span {
+  border-color: rgba(125, 211, 199, .18);
+  color: #b6d8d1;
   background: rgba(0, 0, 0, .12);
 }
 
-.workspace.theme-dark .ai-section-label {
-  color: #a8c8c1;
+.workspace.theme-dark .ai-composer-panel {
+  border-color: #4b5753;
+  color: #e7e5e4;
+  background: rgba(31, 35, 33, .99);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .46);
 }
 
-.workspace.theme-dark .ai-context-heading small {
+.workspace.theme-dark .ai-composer-panel > header,
+.workspace.theme-dark .ai-composer-panel > footer {
+  border-color: #3f4945;
+}
+
+.workspace.theme-dark .ai-composer-panel > header strong,
+.workspace.theme-dark .ai-composer-panel > textarea {
+  color: #f5f5f4;
+}
+
+.workspace.theme-dark .ai-composer-panel > header > div {
+  color: #8ed4c8;
+}
+
+.workspace.theme-dark .ai-composer-panel > header span,
+.workspace.theme-dark .ai-composer-panel > footer > span,
+.workspace.theme-dark .ai-composer-references span {
   color: #a8a29e;
+}
+
+.workspace.theme-dark .ai-composer-panel > header button:hover {
+  color: #fff;
+  background: #343a37;
+}
+
+.workspace.theme-dark .ai-composer-references {
+  border-color: #3a423f;
+}
+
+.workspace.theme-dark .ai-composer-references img {
+  border-color: #1f2321;
 }
 
 .workspace.theme-dark .node-toolbar {

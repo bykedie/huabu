@@ -38,12 +38,14 @@ type CanvasData = {
   groupChildCount?: number
   referenceImages?: Array<{ id: string; title: string; imageUrl: string }>
   contextSummary?: { textCount: number; imageCount: number }
+  composerOpen?: boolean
   hovered?: boolean
   busy?: boolean
   onChange?: (id: string, patch: Partial<CanvasData>) => void
   onRun?: (id: string, prompt: string, model?: string) => void
   onRunImage?: (id: string, prompt: string, model?: string, size?: ImageSize) => void
   onMissingModel?: (mode: 'text' | 'image' | 'video') => void
+  onComposerToggle?: (id: string) => void
   onInspect?: (id: string) => void
   onRunVideo?: (id: string, prompt: string, model?: string, size?: VideoSize, seconds?: number) => void
   onDuplicate?: (id: string) => void
@@ -103,8 +105,8 @@ function readImageToolbarConfig(): ImageToolbarConfig {
   }
 }
 const draftKey = (userId: string, canvasId: string) => `ink-draft:${userId}:${canvasId}`
-const nodeSize = (kind: CanvasData['kind']) => kind === 'group' ? { width: 760, height: 480 } : kind === 'ai' ? { width: 336, height: 320 } : kind === 'video' ? { width: 320, height: 292 } : kind === 'image' ? { width: 276, height: 260 } : { width: 276, height: 180 }
-const nodeMinimumSize = (kind: CanvasData['kind']) => kind === 'ai' ? { width: 300, height: 280 } : { width: 220, height: 120 }
+const nodeSize = (kind: CanvasData['kind']) => kind === 'group' ? { width: 760, height: 480 } : kind === 'ai' ? { width: 336, height: 216 } : kind === 'video' ? { width: 320, height: 292 } : kind === 'image' ? { width: 276, height: 260 } : { width: 276, height: 180 }
+const nodeMinimumSize = (kind: CanvasData['kind']) => kind === 'ai' ? { width: 300, height: 190 } : { width: 220, height: 120 }
 const withNodeSize = (node: CanvasNode): CanvasNode => {
   const fallback = nodeSize(node.data.kind)
   const minimum = nodeMinimumSize(node.data.kind)
@@ -355,6 +357,114 @@ async function upscaleImageUrl(imageUrl: string, scale: number) {
     return { imageUrl: await canvasToDataUrl(canvas), width, height }
   } finally { bitmap.close() }
 }
+
+function AIComposerPanel({ id, data, mode, model, imageSize, videoSize, videoSeconds }: {
+  id: string
+  data: CanvasData
+  mode: NonNullable<CanvasData['mode']>
+  model: string
+  imageSize: ImageSize
+  videoSize: VideoSize
+  videoSeconds: number
+}) {
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const composingRef = useRef(false)
+  const toolbarShift = useRef({ x: 0, y: 0 })
+  const [promptValue, setPromptValue] = useState(data.prompt || '')
+  const syncComposerPlacement = useCallback(() => {
+    const panel = panelRef.current
+    const toolbar = panel?.parentElement
+    const renderer = toolbar?.closest<HTMLElement>('.react-flow__renderer')
+    if (!panel || !toolbar || !renderer) return
+    const panelRect = panel.getBoundingClientRect()
+    const rendererRect = renderer.getBoundingClientRect()
+    const workspace = renderer.closest<HTMLElement>('.workspace')
+    const topbarRect = workspace?.querySelector<HTMLElement>('.topbar')?.getBoundingClientRect()
+    const current = toolbarShift.current
+    const baseLeft = panelRect.left - current.x
+    const baseRight = panelRect.right - current.x
+    const baseTop = panelRect.top - current.y
+    const baseBottom = panelRect.bottom - current.y
+    const viewportLeft = rendererRect.left + 12
+    const viewportRight = rendererRect.right - 12
+    const viewportTop = Math.max(rendererRect.top + 12, (topbarRect?.bottom || rendererRect.top) + 12)
+    const bottomControls = ['.canvas-dock', '.canvas-navigation']
+      .map((selector) => workspace?.querySelector<HTMLElement>(selector)?.getBoundingClientRect())
+      .filter((rect): rect is DOMRect => Boolean(rect))
+    const viewportBottom = bottomControls
+      .filter((rect) => baseRight > rect.left && baseLeft < rect.right)
+      .reduce((bottom, rect) => Math.min(bottom, rect.top - 12), rendererRect.bottom - 12)
+    const clampShift = (start: number, end: number, minimum: number, maximum: number) => {
+      const minimumShift = minimum - start
+      const maximumShift = maximum - end
+      return minimumShift > maximumShift ? minimumShift : Math.min(Math.max(0, minimumShift), maximumShift)
+    }
+    const next = {
+      x: clampShift(baseLeft, baseRight, viewportLeft, viewportRight),
+      y: clampShift(baseTop, baseBottom, viewportTop, viewportBottom),
+    }
+    if (next.x !== current.x) toolbar.style.marginLeft = `${next.x}px`
+    if (next.y !== current.y) toolbar.style.marginTop = `${next.y}px`
+    toolbarShift.current = next
+  }, [])
+  useEffect(() => {
+    const next = data.prompt || ''
+    if (composerRef.current && document.activeElement !== composerRef.current && !composingRef.current) composerRef.current.value = next
+    setPromptValue(next)
+  }, [data.prompt, id])
+  useLayoutEffect(() => {
+    if (!data.composerOpen) return
+    const panel = panelRef.current
+    const renderer = panel?.closest<HTMLElement>('.react-flow__renderer')
+    let placementFrame: number | null = null
+    const schedulePlacement = () => {
+      if (placementFrame !== null) window.cancelAnimationFrame(placementFrame)
+      placementFrame = window.requestAnimationFrame(() => {
+        placementFrame = null
+        syncComposerPlacement()
+      })
+    }
+    schedulePlacement()
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncComposerPlacement)
+    if (panel) resizeObserver?.observe(panel)
+    if (renderer) resizeObserver?.observe(renderer)
+    renderer?.addEventListener('pointermove', schedulePlacement)
+    renderer?.addEventListener('wheel', schedulePlacement, { passive: true })
+    window.addEventListener('resize', schedulePlacement)
+    return () => {
+      if (placementFrame !== null) window.cancelAnimationFrame(placementFrame)
+      resizeObserver?.disconnect()
+      renderer?.removeEventListener('pointermove', schedulePlacement)
+      renderer?.removeEventListener('wheel', schedulePlacement)
+      window.removeEventListener('resize', schedulePlacement)
+    }
+  }, [data.composerOpen, syncComposerPlacement])
+  const submit = () => {
+    const prompt = composerRef.current?.value.trim() || ''
+    if (!prompt || data.busy) return
+    if (!model) { data.onMissingModel?.(mode); return }
+    if (mode === 'image') data.onRunImage?.(id, prompt, model, imageSize)
+    else if (mode === 'video') data.onRunVideo?.(id, prompt, model, videoSize, videoSeconds)
+    else data.onRun?.(id, prompt, model)
+  }
+  return <div ref={panelRef} className="ai-composer-panel nodrag nopan nowheel">
+    <header><div><Sparkles size={16} /><strong>{mode === 'image' ? '图片创作' : mode === 'video' ? '视频创作' : '文字创作'}</strong><span>{data.referenceImages?.length || 0} 张参考图</span></div><button title="收起创作框" aria-label="收起创作框" onClick={() => data.onComposerToggle?.(id)}><X size={16} /></button></header>
+    {Boolean(data.referenceImages?.length) && <div className="ai-composer-references"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>已连接 {data.referenceImages?.length} 张参考图</span></div>}
+    <textarea
+      ref={composerRef}
+      aria-label="AI 创作提示词"
+      placeholder="描述你想创作的内容…"
+      defaultValue={data.prompt || ''}
+      onInput={(event) => { if (!composingRef.current) { const next = event.currentTarget.value; setPromptValue(next); data.onChange?.(id, { prompt: next }) } }}
+      onCompositionStart={() => { composingRef.current = true }}
+      onCompositionEnd={(event) => { composingRef.current = false; const next = event.currentTarget.value; setPromptValue(next); data.onChange?.(id, { prompt: next }) }}
+      onKeyDown={(event) => { const nativeEvent = event.nativeEvent; if (!shouldSubmitImeEnter({ key: event.key, shiftKey: event.shiftKey, isComposing: composingRef.current || nativeEvent.isComposing, keyCode: nativeEvent.keyCode })) return; event.preventDefault(); submit() }}
+    />
+    <footer><span title={model}>{model || '未配置模型'}</span><button className={mode === 'image' ? 'image-run' : ''} disabled={data.busy || !promptValue.trim()} onClick={submit}>{data.busy ? '生成中…' : <><Send size={15} />生成</>}</button></footer>
+  </div>
+}
+
 function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const [hovered, setHovered] = useState(false)
   const [titleEditing, setTitleEditing] = useState(false)
@@ -404,14 +514,16 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
     const baseBottom = Math.max(...floatingRects.map((rect) => rect.bottom - currentShift.y))
     const workspace = renderer.closest<HTMLElement>('.workspace')
     const topbarRect = workspace?.querySelector<HTMLElement>('.topbar')?.getBoundingClientRect()
-    const canvasDockRect = workspace?.querySelector<HTMLElement>('.canvas-dock')?.getBoundingClientRect()
     const viewportLeft = rendererRect.left + 8
     const viewportRight = rendererRect.right - 8
     const preferredTop = Math.max(rendererRect.top + 8, (topbarRect?.bottom || rendererRect.top) + 8)
     const viewportTop = preferredTop < rendererRect.bottom - 48 ? preferredTop : rendererRect.top + 8
-    const viewportBottom = imageToolbarSettingsOpen && canvasDockRect
-      ? Math.min(rendererRect.bottom - 8, canvasDockRect.top - 8)
-      : rendererRect.bottom - 8
+    const bottomControls = ['.canvas-dock', '.canvas-navigation']
+      .map((selector) => workspace?.querySelector<HTMLElement>(selector)?.getBoundingClientRect())
+      .filter((rect): rect is DOMRect => Boolean(rect))
+    const viewportBottom = bottomControls
+      .filter((rect) => baseRight > rect.left && baseLeft < rect.right)
+      .reduce((bottom, rect) => Math.min(bottom, rect.top - 8), rendererRect.bottom - 8)
     const clampShift = (start: number, end: number, minimum: number, maximum: number, preferred = 0) => {
       const minimumShift = minimum - start
       const maximumShift = maximum - end
@@ -457,6 +569,7 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   const imageToolLabel = (label: string) => imageToolbarConfig.showLabels ? <span>{label}</span> : null
   const showNodeChrome = selected || Boolean(data.hovered) || hovered || titleEditing || imageToolbarSettingsOpen
   const imageReady = data.kind === 'image' && Boolean(data.imageUrl)
+  const emptyImage = data.kind === 'image' && !imageReady
   const imagePreviewReady = Boolean(data.imageUrl && (data.imageUrl.startsWith('data:image/') || loadedImageUrl === data.imageUrl))
   const hasDragHandle = data.kind === 'text' || data.kind === 'note' || data.kind === 'ai'
   const minimumSize = nodeMinimumSize(data.kind)
@@ -490,26 +603,21 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
   return (
     <article className={`canvas-node kind-${data.kind} ${selected ? 'selected' : ''} ${titleEditing ? 'title-editing' : ''}`} onMouseEnter={keepToolbar} onMouseLeave={leaveToolbar}>
       <NodeResizer isVisible={selected} keepAspectRatio={data.kind === 'image' && !data.freeResize} minWidth={minimumSize.width} minHeight={minimumSize.height} maxWidth={1600} maxHeight={1200} lineClassName="node-resize-line" handleClassName="node-resize-handle" />
-      <NodeToolbar className={`node-toolbar ${imageReady ? 'image-node-toolbar' : ''} ${imageToolbarConfig.showLabels ? '' : 'labels-hidden'}`} isVisible={showNodeChrome} position={Position.Top} offset={48} onMouseEnter={keepToolbar} onMouseLeave={leaveToolbar} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+      <NodeToolbar className={`node-toolbar ${imageReady ? 'image-node-toolbar' : emptyImage ? 'empty-image-toolbar' : ''} ${imageToolbarConfig.showLabels ? '' : 'labels-hidden'}`} isVisible={showNodeChrome} position={Position.Top} offset={48} onMouseEnter={keepToolbar} onMouseLeave={leaveToolbar} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
         <div ref={toolbarContentRef} className="node-toolbar-scroll nodrag nopan nowheel">
-          {(!imageReady || imageToolVisible('info')) && <button title="节点信息" aria-label="节点信息" onClick={() => data.onInspect?.(id)}><Info size={15} />{imageReady ? imageToolLabel('信息') : <span>信息</span>}</button>}
-          {imageReady && imageToolVisible('delete') && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} />{imageToolLabel('删除')}</button>}
-          {(data.kind === 'text' || data.kind === 'note') && <button title="用这段内容继续创作" aria-label="用这段内容继续创作" onClick={() => data.onBranch?.(id)}><Sparkles size={15} /><span>生图</span></button>}
-          {((imageReady && imageToolVisible('download')) || (data.kind === 'video' && data.videoUrl)) && <button title={data.kind === 'video' ? '下载视频' : '下载图片'} onClick={() => data.onDownload?.(id)}><Download size={15} />{imageReady ? imageToolLabel('下载') : <span>下载</span>}</button>}
-          {((imageReady && imageToolVisible('saveAsset')) || (data.kind === 'video' && data.videoUrl) || ((data.kind === 'text' || data.kind === 'note') && data.content?.trim())) && <button title="收藏到资产库" aria-label="收藏到资产库" onClick={() => data.onSaveAsset?.(id)}><BookmarkPlus size={15} />{imageReady ? imageToolLabel('存资产') : <span>存资产</span>}</button>}
-          {imageReady && <>{imageToolVisible('edit') && <label className="node-toolbar-upload" title="编辑图片"><MessageSquare size={15} />{imageToolLabel('编辑')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('replace') && <label className="node-toolbar-upload" title="替换图片"><Upload size={15} />{imageToolLabel('替换')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('resize') && <button className={data.freeResize ? 'active' : ''} title={data.freeResize ? '切换为等比缩放' : '切换为自由缩放'} onClick={() => data.onToggleImageRatio?.(id)}>{data.freeResize ? <LockOpen size={15} /> : <Lock size={15} />}{imageToolLabel(data.freeResize ? '自由比例' : '锁比例')}</button>}{imageToolVisible('crop') && <button title="裁剪并生成新节点" onClick={() => data.onImageTool?.(id, 'crop')}><Crop size={15} />{imageToolLabel('裁剪')}</button>}{imageToolVisible('split') && <button title="按网格切分图片" onClick={() => data.onImageTool?.(id, 'split')}><Grid2X2 size={15} />{imageToolLabel('切图')}</button>}{imageToolVisible('upscale') && <button title="放大图片分辨率" onClick={() => data.onImageTool?.(id, 'upscale')}><ZoomIn size={15} />{imageToolLabel('放大')}</button>}{imageToolVisible('view') && <button title="查看大图" onClick={() => data.onImageTool?.(id, 'view')}><Maximize2 size={15} />{imageToolLabel('查看大图')}</button>}<button className={imageToolbarSettingsOpen ? 'active' : ''} title="配置快捷工具" onClick={() => setImageToolbarSettingsOpen((value) => !value)}><MoreHorizontal size={15} />{imageToolLabel('更多')}</button></>}
-          {!imageReady && <button title="复制节点" onClick={() => data.onDuplicate?.(id)}><Copy size={15} /><span>复制</span></button>}
-          {!imageReady && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} /><span>删除</span></button>}
+          {emptyImage && <><button title="节点信息" aria-label="节点信息" onClick={() => data.onInspect?.(id)}><Info size={15} /><span>信息</span></button><button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} /><span>删除</span></button><label className="node-toolbar-upload" title="上传图片"><Upload size={15} /><span>上传图片</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label></>}
+          {!emptyImage && <>{(!imageReady || imageToolVisible('info')) && <button title="节点信息" aria-label="节点信息" onClick={() => data.onInspect?.(id)}><Info size={15} />{imageReady ? imageToolLabel('信息') : <span>信息</span>}</button>}{imageReady && imageToolVisible('delete') && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} />{imageToolLabel('删除')}</button>}{(data.kind === 'text' || data.kind === 'note') && <button title="用这段内容继续创作" aria-label="用这段内容继续创作" onClick={() => data.onBranch?.(id)}><Sparkles size={15} /><span>生图</span></button>}{((imageReady && imageToolVisible('download')) || (data.kind === 'video' && data.videoUrl)) && <button title={data.kind === 'video' ? '下载视频' : '下载图片'} onClick={() => data.onDownload?.(id)}><Download size={15} />{imageReady ? imageToolLabel('下载') : <span>下载</span>}</button>}{((imageReady && imageToolVisible('saveAsset')) || (data.kind === 'video' && data.videoUrl) || ((data.kind === 'text' || data.kind === 'note') && data.content?.trim())) && <button title="收藏到资产库" aria-label="收藏到资产库" onClick={() => data.onSaveAsset?.(id)}><BookmarkPlus size={15} />{imageReady ? imageToolLabel('存资产') : <span>存资产</span>}</button>}{imageReady && <>{imageToolVisible('edit') && <label className="node-toolbar-upload" title="编辑图片"><MessageSquare size={15} />{imageToolLabel('编辑')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('replace') && <label className="node-toolbar-upload" title="替换图片"><Upload size={15} />{imageToolLabel('替换')}<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}{imageToolVisible('resize') && <button className={data.freeResize ? 'active' : ''} title={data.freeResize ? '切换为等比缩放' : '切换为自由缩放'} onClick={() => data.onToggleImageRatio?.(id)}>{data.freeResize ? <LockOpen size={15} /> : <Lock size={15} />}{imageToolLabel(data.freeResize ? '自由比例' : '锁比例')}</button>}{imageToolVisible('crop') && <button title="裁剪并生成新节点" onClick={() => data.onImageTool?.(id, 'crop')}><Crop size={15} />{imageToolLabel('裁剪')}</button>}{imageToolVisible('split') && <button title="按网格切分图片" onClick={() => data.onImageTool?.(id, 'split')}><Grid2X2 size={15} />{imageToolLabel('切图')}</button>}{imageToolVisible('upscale') && <button title="放大图片分辨率" onClick={() => data.onImageTool?.(id, 'upscale')}><ZoomIn size={15} />{imageToolLabel('放大')}</button>}{imageToolVisible('view') && <button title="查看大图" onClick={() => data.onImageTool?.(id, 'view')}><Maximize2 size={15} />{imageToolLabel('查看大图')}</button>}<button className={imageToolbarSettingsOpen ? 'active' : ''} title="配置快捷工具" onClick={() => setImageToolbarSettingsOpen((value) => !value)}><MoreHorizontal size={15} />{imageToolLabel('更多')}</button></>}{!imageReady && <button title="复制节点" onClick={() => data.onDuplicate?.(id)}><Copy size={15} /><span>复制</span></button>}{!imageReady && <button className="danger" title="删除节点" onClick={() => data.onDelete?.(id)}><Trash2 size={15} /><span>删除</span></button>}</>}
         </div>
         {imageReady && imageToolbarSettingsOpen && <div className="image-toolbar-settings nodrag nopan nowheel" role="dialog" aria-label="图片快捷工具设置" onPointerDown={(event) => event.stopPropagation()}><strong>快捷工具</strong><div>{imageToolbarToolIds.map((toolId) => <label key={toolId}><input type="checkbox" checked={imageToolbarConfig.ids.includes(toolId)} onChange={() => toggleImageToolbarTool(toolId)} /><span>{{ info: '信息', delete: '删除', saveAsset: '存资产', download: '下载', edit: '编辑', replace: '替换', resize: '比例锁定', crop: '裁剪', split: '切图', upscale: '放大', view: '查看大图' }[toolId]}</span></label>)}</div><label className="image-toolbar-label-switch"><input type="checkbox" checked={imageToolbarConfig.showLabels} onChange={(event) => saveImageToolbarConfig({ ...imageToolbarConfig, showLabels: event.target.checked })} /><span>显示文字标签</span></label><button className="image-toolbar-settings-done" onClick={() => setImageToolbarSettingsOpen(false)}>完成</button></div>}
       </NodeToolbar>
+      {data.kind === 'ai' && <NodeToolbar className="ai-composer-toolbar" isVisible={data.kind === 'ai' && Boolean(data.composerOpen)} position={Position.Bottom} offset={18} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}><AIComposerPanel id={id} data={data} mode={mode} model={model} imageSize={imageSize} videoSize={videoSize} videoSeconds={videoSeconds} /></NodeToolbar>}
       {data.kind !== 'group' && <Handle type="target" position={Position.Left} />}
       {data.kind !== 'ai' && <div className={`node-floating-title nodrag ${showNodeChrome ? 'visible' : ''}`}>{icon}{titleEditing ? <input autoFocus className="node-title" aria-label="节点标题" maxLength={64} value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} onBlur={() => setTitleEditing(false)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTitleEditing(false) }} /> : <button title="双击修改节点名称" onDoubleClick={(event) => { event.stopPropagation(); setTitleEditing(true) }}>{data.title || '未命名节点'}</button>}{data.kind === 'group' && Boolean(data.groupChildCount) && <span className="group-count">{data.groupChildCount}</span>}</div>}
       <div className="node-surface">{data.kind === 'ai' ? <div className="node-drag-handle ai-node-header" title="拖动 AI 创作节点" aria-label="拖动 AI 创作节点"><div className="ai-node-heading"><GripHorizontal size={17} />{titleEditing ? <input autoFocus className="node-title nodrag" aria-label="节点标题" maxLength={64} value={data.title || ''} onChange={(event) => data.onChange?.(id, { title: event.target.value })} onBlur={() => setTitleEditing(false)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTitleEditing(false) }} /> : <span title="双击修改节点名称" onDoubleClick={(event) => { event.stopPropagation(); setTitleEditing(true) }}>{data.title || 'AI 创作'}</span>}</div><div className="generation-mode nodrag" role="group" aria-label="生成类型"><button className={mode === 'text' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'text' })}><Bot size={13} />文字</button><button className={mode === 'image' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'image' })}><Image size={13} />生图</button><button className={mode === 'video' ? 'active' : ''} onClick={() => data.onChange?.(id, { mode: 'video' })}><Video size={13} />视频</button></div></div> : hasDragHandle && <div className="node-drag-handle" title="拖动节点" aria-label="拖动节点"><GripHorizontal size={17} /></div>}{data.kind === 'group' ? (
         <div className="group-body" />
       ) : data.kind === 'image' ? (
         <div className="image-body">
-          {data.imageUrl ? <div className={`image-preview ${data.freeResize ? 'free-resize' : 'ratio-locked'}`}><img src={data.imageUrl} alt={data.title || '画布图片'} draggable={false} onLoad={() => setLoadedImageUrl(data.imageUrl || null)} onError={() => setLoadedImageUrl(null)} /><div className="image-actions nodrag nopan"><label title="替换图片" aria-label="替换图片"><Upload size={14} /><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label><button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button></div></div> : <label className="image-drop nodrag"><Image size={24} /><span>上传图片或粘贴地址</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}
+          {data.imageUrl ? <div className={`image-preview ${data.freeResize ? 'free-resize' : 'ratio-locked'}`}><img src={data.imageUrl} alt={data.title || '画布图片'} draggable={false} onLoad={() => setLoadedImageUrl(data.imageUrl || null)} onError={() => setLoadedImageUrl(null)} /><div className="image-actions nodrag nopan"><label title="替换图片" aria-label="替换图片"><Upload size={14} /><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label><button title="下载图片" onClick={() => data.onDownload?.(id)}><Download size={14} /></button></div></div> : <label className="image-drop nodrag" title="上传图片"><Image size={24} /><span>空图片节点</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) data.onUpload?.(id, file) }} /></label>}
           {!imagePreviewReady && <input className="node-input nodrag" placeholder="图片地址" value={data.imageUrl || ''} onChange={(event) => data.onChange?.(id, { imageUrl: event.target.value })} />}
         </div>
       ) : data.kind === 'video' ? (
@@ -519,24 +627,15 @@ function CanvasNodeView({ id, data, selected }: NodeProps<CanvasNode>) {
         </div>
       ) : data.kind === 'ai' ? (
         <div className="ai-body">
-          <div className="ai-prompt-section nodrag"><span className="ai-section-label">提示词</span><textarea className="nowheel" placeholder="告诉 AI 你想探索什么…" value={data.prompt || ''} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} /></div>
-          <div className="ai-context-section nodrag"><div className="ai-context-heading"><span className="ai-section-label">连接上下文</span><small>{data.contextSummary?.textCount || 0} 段文本 · {data.contextSummary?.imageCount || 0} 张图片</small></div>{Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
-          <div className="ai-settings-section nodrag"><span className="ai-section-label">生成设置</span><div className="generator-settings">
+          <div className="ai-input-chips nodrag"><span><Text size={13} />提示词<strong>{data.contextSummary?.textCount || 0}</strong></span><span><Image size={13} />参考图<strong>{data.contextSummary?.imageCount || 0}</strong></span></div>
+          <div className="ai-context-section nodrag">{Boolean(data.referenceImages?.length) && <div className="reference-strip"><div>{data.referenceImages?.slice(0, 4).map((item) => <img key={item.id} src={item.imageUrl} alt={item.title} title={item.title} />)}</div><span>{data.referenceImages?.length} 张参考图</span></div>}</div>
+          <div className="ai-settings-section nodrag"><div className="generator-settings">
               <select aria-label={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} title={mode === 'image' ? '生图模型' : mode === 'video' ? '视频模型' : '文字模型'} value={model} onChange={(event) => data.onChange?.(id, mode === 'image' ? { imageModel: event.target.value } : mode === 'video' ? { videoModel: event.target.value } : { textModel: event.target.value })}>{models.length ? models.map((item) => <option key={item} value={item}>{item}</option>) : <option value="">未配置模型</option>}</select>
               {mode === 'image' && <select aria-label="图片尺寸" title="图片尺寸" value={imageSize} onChange={(event) => data.onChange?.(id, { imageSize: event.target.value as ImageSize })}><option value="1024x1024">方形 1:1</option><option value="1536x1024">横向 3:2</option><option value="1024x1536">竖向 2:3</option></select>}
               {mode === 'video' && <><select aria-label="视频尺寸" title="视频尺寸" value={videoSize} onChange={(event) => data.onChange?.(id, { videoSize: event.target.value as VideoSize })}><option value="1280x720">横向 16:9</option><option value="720x1280">竖向 9:16</option><option value="1024x1024">方形 1:1</option></select><select aria-label="视频时长" title="视频时长" value={videoSeconds} onChange={(event) => data.onChange?.(id, { videoSeconds: Number(event.target.value) })}>{Array.from({ length: 20 }, (_item, index) => index + 1).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></>}
             </div>
           </div>
-          <div className="node-actions ai-node-actions"><button
-            className={'node-run nodrag ' + (mode === 'image' ? 'image-run' : '')}
-            disabled={data.busy || !data.prompt?.trim()}
-            onClick={() => {
-              if (!model) { data.onMissingModel?.(mode); return }
-              if (mode === 'image') data.onRunImage?.(id, data.prompt || '', model, imageSize)
-              else if (mode === 'video') data.onRunVideo?.(id, data.prompt || '', model, videoSize, videoSeconds)
-              else data.onRun?.(id, data.prompt || '', model)
-            }}
-          >{data.busy ? '生成中…' : <><Sparkles size={14} />{mode === 'image' ? '生成图片' : mode === 'video' ? '生成视频' : '生成文字'}</>}</button></div>
+          <div className="node-actions ai-node-actions"><button className={`ai-composer-toggle nodrag ${data.composerOpen ? 'active' : ''}`} onClick={() => data.onComposerToggle?.(id)}><Sparkles size={14} />{data.composerOpen ? '收起创作框' : '打开创作框'}</button></div>
         </div>
       ) : (
         <textarea className="node-content nodrag nowheel" placeholder="写点什么…" value={data.content || ''} onChange={(event) => data.onChange?.(id, { content: event.target.value })} />
@@ -1091,6 +1190,7 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
   const [assetsLoading, setAssetsLoading] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+  const [composerNodeId, setComposerNodeId] = useState<string | null>(null)
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([])
   const assistantMessagesRef = useRef<AssistantMessage[]>([])
   const [assistantBusy, setAssistantBusy] = useState(false)
@@ -1152,6 +1252,10 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     document.documentElement.style.colorScheme = themeMode
   }, [themeMode])
   useEffect(() => setInspectedNodeId(null), [current?.id])
+  useEffect(() => setComposerNodeId(null), [current?.id])
+  useEffect(() => {
+    if (composerNodeId && !nodes.some((node) => node.id === composerNodeId && node.data.kind === 'ai')) setComposerNodeId(null)
+  }, [composerNodeId, nodes])
   useEffect(() => {
     setCanvasTitleEditing(false)
     setCanvasTitleDraft(current?.name || '')
@@ -1541,6 +1645,9 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
     const label = mode === 'image' ? '生图' : mode === 'video' ? '视频' : '文字'
     setNotice({ type: 'error', text: `管理员尚未开放${label}模型` })
   }, [])
+  const toggleNodeComposer = useCallback((id: string) => {
+    setComposerNodeId((openId) => openId === id ? null : id)
+  }, [])
   const groupChildCounts = useMemo(() => {
     const counts = new Map<string, number>()
     nodes.forEach((node) => { if (node.data.groupId) counts.set(node.data.groupId, (counts.get(node.data.groupId) || 0) + 1) })
@@ -1555,11 +1662,12 @@ function Workspace({ user, setUser }: { user: User; setUser: (user: User | null)
       groupChildCount: node.data.kind === 'group' ? groupChildCounts.get(node.id) || 0 : undefined,
       referenceImages: generationContext ? generationContext.referenceImages : undefined,
       contextSummary: generationContext ? { textCount: generationContext.textInputs.length, imageCount: generationContext.referenceImages.length } : undefined,
+      composerOpen: composerNodeId === node.id,
       textModels: relayConfig.textModels, imageModels: relayConfig.imageModels,
       videoModels: relayConfig.videoModels,
-      onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onMissingModel: notifyMissingModel, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
+      onChange: updateNode, onRun: runAI, onRunImage: runImage, onRunVideo: runVideo, onMissingModel: notifyMissingModel, onComposerToggle: toggleNodeComposer, onInspect: setInspectedNodeId, onDuplicate: duplicateNode, onDelete: deleteNode, onBranch: branchNode, onUpload: uploadNodeMedia, onDownload: downloadNodeMedia, onSaveAsset: saveNodeAsset, onToggleImageRatio: toggleImageRatio, onImageTool: openImageTool,
     } }
-  }), [branchNode, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, notifyMissingModel, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, updateNode, uploadNodeMedia])
+  }), [branchNode, composerNodeId, deleteNode, downloadNodeMedia, duplicateNode, edges, groupChildCounts, hoveredNodeId, nodes, notifyMissingModel, openImageTool, relayConfig.imageModels, relayConfig.textModels, relayConfig.videoModels, runAI, runImage, runVideo, saveNodeAsset, toggleImageRatio, toggleNodeComposer, updateNode, uploadNodeMedia])
   const selectedNodeIds = useMemo(() => new Set(nodes.filter((node) => node.selected).map((node) => node.id)), [nodes])
   const selectedNodeCount = selectedNodeIds.size
   const liveEdges = useMemo(() => edges.map((edge) => ({ ...edge, type: 'bezier', className: selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target) ? 'connected' : edge.className, data: { ...edge.data, onDelete: deleteEdge } })), [deleteEdge, edges, selectedNodeIds])
