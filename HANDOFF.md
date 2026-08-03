@@ -2,7 +2,7 @@
 
 > 项目名：墨屿画布（Infinite Canvas）
 > 用途：供完全没有旧聊天上下文的新 Codex 会话接管项目。
-> 最后同步：2026-08-03 16:52，Asia/Shanghai。
+> 最后同步：2026-08-03 16:56，Asia/Shanghai。
 > 这份文件是接班入口，不是代码事实的替代品；实际工作树、代码、数据库契约和新鲜测试结果始终优先。
 
 ## 一、新会话接管协议
@@ -118,8 +118,8 @@ git diff -- <本目标修改文件>
 
 以下是写本文时的已验证状态。新会话仍必须重新运行 `git status`，因为本文更新本身可能形成新的未提交差异。
 
-- 分支：`codex/infinite-canvas`；图片中转/性能/尺寸产品提交 `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` 已正常推送，并在 fetch 后由本地 HEAD、远端跟踪和 GitHub `ls-remote` 三方核对一致。
-- 产品提交后的工作树干净；本次最终交付检查点会形成最后一个文档提交，推送后必须再次 fetch 并核对远端完整 SHA。详细恢复见 `coordination/STATUS-image-relay-performance-delivery.md`。
+- 分支：`codex/infinite-canvas`；图片中转/性能/尺寸产品提交 `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` 与交付检查点 `96543c9888fc6deac6c85a07eaa8e1ee045e4fb3` 均已正常推送。检查点推送后，fetch、本地 HEAD、远端跟踪和 GitHub `ls-remote` 三方一致，分支差异 `0/0`，工作树干净。
+- 本次审计收尾只同步最终远端核对事实；推送后新会话仍应以实际 `git status`、tracking 和 `ls-remote` 为准。详细恢复见 `coordination/STATUS-image-relay-performance-delivery.md`。
 - 已实现：新部署三类中转地址/模型为空；图片独立 300 秒超时和 360 秒恢复阈值；常见 1K/2K/4K 尺寸白名单；画布保存与参考图预处理并行；编辑请求不再强制 PNG/base64；上游 base64 原图进入服务器 `media` 并返回签名 URL。管理员明确保存在 SQLite 的地址仍优先，不会被清空。
 - 最终自动化证据：AI 创作契约 `22/22`、生产配置 `12/12`、中转现代化 `5/5`、服务端 `20/20`、完整套件 `64/64`、Node 语法、生产 build、`git diff --check`、NUL/秘密形态检查均通过。build 产物为 `index-BX6NdpM7.css` 与 `index-B51-mZWZ.js`，只有既有 500 kB chunk warning。
 - 隔离浏览器验收已完成：桌面确认 13 个尺寸项、`3840x2160`、1 张连接参考图、multipart `/v1/images/edits`、签名媒体结果与资产收藏；`390x844` 确认 `2160x3840` 可选、长标签/创作框/Dock/资源面板无冲突、页面横向溢出为 0、console warning/error 为空。竖向值的上游原样透传另由服务端测试覆盖。

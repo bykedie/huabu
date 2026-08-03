@@ -19,3 +19,13 @@
 - 修改文件：产品提交包含 `.env.example`、`AGENTS.md`、`DECISIONS.md`、`GOALS.md`、`HANDOFF.md`、`PLAN.md`、`PROJECT_MEMORY.md`、`README.md`、`SPEC.md`、`STATUS.md`、`deploy/nginx.conf`、`docker-compose.yml`、`server/app.js`、`server/db.js`、`server/index.js`、`src/App.tsx`、`src/image-sizes.ts`、四个测试文件及两个协调状态文件；本收尾提交只应包含 `GOALS.md`、`PLAN.md`、`STATUS.md`、`HANDOFF.md` 和本文件。没有接手前不明修改。
 - 下一步：暂存上述五个文档，运行 staged `git diff --check`，提交为交付收尾，正常推送；立即 fetch 并核对 HEAD、tracking、`ls-remote`、`0/0` 和干净工作树，成功后才可报告推送完成。
 - 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 GOALS.md`; `Get-Content -Encoding UTF8 STATUS.md`; `Get-Content -Encoding UTF8 coordination/STATUS-image-relay-performance-delivery.md`; `git status --short --branch`; `git log -3 --oneline --decorate`; `git fetch origin codex/infinite-canvas`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`; `git rev-list --left-right --count HEAD...origin/codex/infinite-canvas`; `git ls-remote origin refs/heads/codex/infinite-canvas`; `git diff --check`。
+
+## Checkpoint: 2026-08-03 16:56 +08:00
+
+- 当前目标：关闭图片中转/性能/尺寸 GitHub 交付目标，把最终远端审计事实写入仓库；本检查点为纯文档收尾，生产不部署。
+- 已完成：产品提交 `934c2c8b514bf7ef7f428651f5bae0eb2ef9df82` 已正常推送并核对；交付检查点提交 `96543c9888fc6deac6c85a07eaa8e1ee045e4fb3` 也已正常推送。随后执行 fetch，确认本地 HEAD、`origin/codex/infinite-canvas` 和 GitHub `ls-remote` 均为 `96543c9888fc6deac6c85a07eaa8e1ee045e4fb3`，分支差异 `0/0`，工作树干净。
+- 未完成：只剩将本审计收尾与同步的 `GOALS.md`、`PLAN.md`、`STATUS.md`、`HANDOFF.md` 创建最后一个纯文档提交，正常推送后再次 fetch 并核对新的 HEAD/tracking/`ls-remote`、`0/0` 和干净工作树；没有产品、测试或生产事项未完成。
+- 最后验证结果：交付前生产 build、完整 `64/64`、Node 语法、diff、NUL/秘密扫描、真实 `3102/5182` HTTP 200 均通过；产品与交付检查点两次正常推送成功；最近远端审计结果为 `96543c9888fc6deac6c85a07eaa8e1ee045e4fb3` 三方一致、`0/0`、工作树干净。
+- 修改文件：本审计收尾只修改 `GOALS.md`、`PLAN.md`、`STATUS.md`、`HANDOFF.md` 和 `coordination/STATUS-image-relay-performance-delivery.md`；没有接手前修改、产品代码、测试、配置或临时夹具。
+- 下一步：暂存这五个文档并通过 staged `git diff --check`，提交 `docs: close image relay delivery`，正常推送；随即 fetch 并核对新的本地 HEAD、tracking、GitHub `ls-remote`、`0/0` 和干净工作树，成功后标记目标完成并报告最终 SHA。
+- 恢复命令：`Set-Location 'C:\Users\Administrator\Documents\无限画布'`; `Get-Content -Encoding UTF8 HANDOFF.md`; `Get-Content -Encoding UTF8 GOALS.md`; `Get-Content -Encoding UTF8 STATUS.md`; `Get-Content -Encoding UTF8 coordination/STATUS-image-relay-performance-delivery.md`; `git status --short --branch`; `git diff --check`; `git log -4 --oneline --decorate`; `git fetch origin codex/infinite-canvas`; `git rev-parse HEAD`; `git rev-parse origin/codex/infinite-canvas`; `git rev-list --left-right --count HEAD...origin/codex/infinite-canvas`; `git ls-remote origin refs/heads/codex/infinite-canvas`。
